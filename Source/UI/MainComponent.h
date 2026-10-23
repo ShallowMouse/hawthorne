@@ -4,6 +4,7 @@
 #include "../Engine/TapeEngine.h"
 #include "HawthorneLookAndFeel.h"
 #include "TrackStrip.h"
+#include "VUMeter.h"
 
 namespace hawthorne
 {
@@ -80,12 +81,14 @@ private:
                     recButton  { TransportButton::Icon::record,  "Record / punch in (R)" };
 
     juce::OwnedArray<TrackStrip> strips;
-    LevelMeter masterL, masterR;
+    juce::OwnedArray<VUMeter> vus;   // 24 tracks, then master L / R
+    juce::Rectangle<int> bridgeArea;
 
     std::unique_ptr<juce::FileChooser> chooser;
     juce::Rectangle<int> headerArea, transportArea, counterArea, statusArea;
     juce::String statusText;
     int frame = 0;
+    double lastTickMs = 0.0;
     bool lastRolling = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)

@@ -108,17 +108,22 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
         addAndMakeVisible (s);
     }
 
-    masterL.setTooltip ("Output L");
-    masterR.setTooltip ("Output R");
-    addAndMakeVisible (masterL);
-    addAndMakeVisible (masterR);
+    for (int t = 0; t < kNumTracks; ++t)
+        addAndMakeVisible (vus.add (new VUMeter (juce::String (t + 1).paddedLeft ('0', 2))));
+
+    for (auto* name : { "L", "R" })
+    {
+        auto* m = vus.add (new VUMeter (name));
+        m->setTooltip (juce::String ("Output ") + name);
+        addAndMakeVisible (m);
+    }
 
     engine.onAlert = [this] (const juce::String& t, const juce::String& m) { showAlert (t, m); };
 
     initialiseAudio();
     openInitialSession();
 
-    setSize (1400, 820);
+    setSize (1500, 500);
     startTimerHz (30);
 }
 
@@ -264,7 +269,6 @@ void MainComponent::setSession (std::unique_ptr<Session> s)
         for (int t = 0; t < kNumTracks; ++t)
         {
             strips[t]->setTrackName (session->tracks[(size_t) t].name);
-            strips[t]->resetMeter();
         }
 
         matchDeviceToSession();
@@ -395,6 +399,10 @@ void MainComponent::timerCallback()
     engine.tick();
     ++frame;
 
+    const double nowMs = juce::Time::getMillisecondCounterHiRes();
+    const float dt = lastTickMs > 0.0 ? (float) ((nowMs - lastTickMs) / 1000.0) : 1.0f / 30.0f;
+    lastTickMs = nowMs;
+
     const bool rolling = engine.isPlaying();
     const bool rec = engine.isRecording();
     const bool flash = (frame / 12) % 2 == 0;
@@ -412,13 +420,19 @@ void MainComponent::timerCallback()
     for (int t = 0; t < kNumTracks; ++t)
     {
         strips[t]->setArmed (engine.isArmed (t), rec, flash);
-        strips[t]->pushPeak (engine.popTrackPeak (t));
         if (frame % 15 == 0)
             strips[t]->setTapeSeconds ((int) ((double) engine.getTapeLength (t) / sessionRate()));
+
+        auto* vu = vus[t];
+        vu->update (engine.popTrackRms (t), engine.popTrackPeak (t), dt);
+        vu->setRecLamp (! engine.isArmed (t) ? VUMeter::RecLamp::off
+                                             : (rec ? VUMeter::RecLamp::recording : VUMeter::RecLamp::armed), flash);
+        if (session != nullptr && frame % 15 == 0)
+            vu->setTooltip (session->tracks[(size_t) t].name);
     }
 
-    masterL.pushPeak (engine.popMasterPeak (0));
-    masterR.pushPeak (engine.popMasterPeak (1));
+    for (int ch = 0; ch < 2; ++ch)
+        vus[kNumTracks + ch]->update (engine.popMasterRms (ch), engine.popMasterPeak (ch), dt);
 
     if (frame % 10 == 0)
         statusText = buildStatus();
@@ -557,14 +571,10 @@ void MainComponent::resized()
             b->setBounds (t.removeFromLeft (bw + 12));
             t.removeFromLeft (8);
         }
-
-        auto meters = t.removeFromRight (40);
-        masterL.setBounds (meters.removeFromLeft (16));
-        meters.removeFromLeft (6);
-        masterR.setBounds (meters.removeFromLeft (16));
     }
 
-    auto tracks = r.reduced (8, 8);
+    // Track strips along the bottom
+    auto tracks = r.removeFromBottom (128).reduced (8, 6);
     const float w = (float) tracks.getWidth() / (float) kNumTracks;
 
     for (int t = 0; t < kNumTracks; ++t)
@@ -573,6 +583,31 @@ void MainComponent::resized()
         const int x1 = tracks.getX() + juce::roundToInt (w * (float) (t + 1));
         strips[t]->setBounds (x0, tracks.getY(), x1 - x0, tracks.getHeight());
     }
+
+    // Meter bridge: rows of 16 analogue VUs. Row 2 = tracks 17-24, master L/R at the right.
+    bridgeArea = r;
+    auto bridge = r.reduced (8, 8);
+    constexpr int perRow = 16;
+    constexpr float aspect = 1.3f, gap = 4.0f;
+    const float slotW = (float) bridge.getWidth() / (float) perRow;
+    const float meterH = juce::jmin ((slotW - gap) / aspect, ((float) bridge.getHeight() - gap) / 2.0f);
+    const float meterW = juce::jmin (slotW - gap, meterH * aspect);
+    const float totalH = meterH * 2.0f + gap;
+    const float x0 = (float) bridge.getX() + ((float) bridge.getWidth() - slotW * perRow) * 0.5f;
+    const float y0 = (float) bridge.getY() + ((float) bridge.getHeight() - totalH) * 0.5f;
+
+    auto place = [&] (VUMeter* m, int row, int slot)
+    {
+        const float cx = x0 + slotW * ((float) slot + 0.5f);
+        const float y  = y0 + (float) row * (meterH + gap);
+        m->setBounds (juce::Rectangle<float> (meterW, meterH).withCentre ({ cx, y + meterH * 0.5f }).toNearestInt());
+    };
+
+    for (int t = 0; t < kNumTracks; ++t)
+        place (vus[t], t / perRow, t % perRow);
+
+    place (vus[kNumTracks],     1, perRow - 2);
+    place (vus[kNumTracks + 1], 1, perRow - 1);
 }
 
 } // namespace hawthorne

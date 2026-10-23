@@ -53,6 +53,10 @@ public:
     float popTrackPeak (int track) noexcept { return trackPeak[(size_t) track].exchange (0.0f); }
     float popMasterPeak (int ch) noexcept   { return masterPeak[(size_t) (ch & 1)].exchange (0.0f); }
 
+    /** RMS since last call (for VU meters). Safe from the message thread. */
+    float popTrackRms (int track) noexcept  { return trackEnergy[(size_t) track].pop(); }
+    float popMasterRms (int ch) noexcept    { return masterEnergy[(size_t) (ch & 1)].pop(); }
+
     //==========================================================================
     // Status
     double getDeviceSampleRate() const noexcept { return deviceSampleRate.load(); }
@@ -158,6 +162,30 @@ private:
     std::array<std::atomic<int>,  kNumTracks> inputChannel;
     std::array<std::atomic<float>, kNumTracks> trackPeak;
     std::array<std::atomic<float>, 2> masterPeak;
+
+    struct Energy
+    {
+        std::atomic<float> sumSq { 0.0f };
+        std::atomic<int>   count { 0 };
+
+        void add (const float* d, int n) noexcept   // audio thread
+        {
+            float s = 0.0f;
+            if (d != nullptr)
+                for (int i = 0; i < n; ++i) s += d[i] * d[i];
+            sumSq.store (sumSq.load (std::memory_order_relaxed) + s, std::memory_order_relaxed);
+            count.store (count.load (std::memory_order_relaxed) + n, std::memory_order_relaxed);
+        }
+
+        float pop() noexcept                       // UI thread
+        {
+            const auto s = sumSq.exchange (0.0f);
+            const auto c = count.exchange (0);
+            return c > 0 ? std::sqrt (s / (float) c) : 0.0f;
+        }
+    };
+    std::array<Energy, kNumTracks> trackEnergy;
+    std::array<Energy, 2> masterEnergy;
 
     // Device state
     std::atomic<bool>   deviceRunning { false }, deviceLost { false };

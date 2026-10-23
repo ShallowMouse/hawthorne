@@ -102,9 +102,6 @@ TrackStrip::TrackStrip (int i) : index (i)
     armButton.setTooltip ("Record arm");
     armButton.onClick = [this] { if (onArm) onArm (index, ! isArmed); };
     addAndMakeVisible (armButton);
-
-    meter.setTooltip ("Click to reset the clip light");
-    addAndMakeVisible (meter);
 }
 
 void TrackStrip::setTrackName (const juce::String& n)
@@ -173,9 +170,6 @@ void TrackStrip::resized()
     inputBox.setBounds (r.removeFromTop (22));
     r.removeFromTop (6);
     armButton.setBounds (r.removeFromTop (26));
-    r.removeFromTop (8);
-    r.removeFromBottom (16);
-    meter.setBounds (r.withSizeKeepingCentre (juce::jmin (r.getWidth(), 22), r.getHeight()));
 }
 
 } // namespace hawthorne

@@ -35,8 +35,6 @@ public:
     void setInputChoices (const juce::StringArray& channelNames, const juce::BigInteger& active, int selected);
     void setArmed (bool armed, bool recording, bool flashPhase);
     void setTapeSeconds (int seconds);
-    void pushPeak (float p) { meter.pushPeak (p); }
-    void resetMeter()       { meter.reset(); }
 
     std::function<void (int track, bool arm)>                onArm;
     std::function<void (int track, int inputChannel)>        onInputChanged;
@@ -50,7 +48,6 @@ private:
     juce::Label nameLabel;
     juce::ComboBox inputBox;
     juce::TextButton armButton { "REC" };
-    LevelMeter meter;
     int tapeSeconds = -1;
     bool isArmed = false;
 

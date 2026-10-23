@@ -225,6 +225,8 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         //     recording, and hear tape when just playing back.
         const float* mon = (isArmed && (! isRolling || isRec)) ? src : (hasTape ? tb : nullptr);
 
+        trackEnergy[(size_t) t].add (mon, n);
+
         if (mon != nullptr)
         {
             raisePeak (trackPeak[(size_t) t], peakOf (mon, n));
@@ -234,8 +236,8 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         }
     }
 
-    if (outL != nullptr) raisePeak (masterPeak[0], peakOf (outL, n));
-    if (outR != nullptr) raisePeak (masterPeak[1], peakOf (outR, n));
+    if (outL != nullptr) { raisePeak (masterPeak[0], peakOf (outL, n)); masterEnergy[0].add (outL, n); }
+    if (outR != nullptr) { raisePeak (masterPeak[1], peakOf (outR, n)); masterEnergy[1].add (outR, n); }
 
     // Only advance if nobody located us mid-block.
     if (isRolling)

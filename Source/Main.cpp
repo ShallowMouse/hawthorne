@@ -17,7 +17,7 @@ public:
         content = new hawthorne::MainComponent (props);
         setContentOwned (content, true);
         setResizable (true, true);
-        setResizeLimits (1000, 600, 10000, 10000);
+        setResizeLimits (1000, 470, 10000, 10000);
         centreWithSize (getWidth(), getHeight());
         setVisible (true);
         content->grabKeyboardFocus();
