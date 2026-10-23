@@ -10,7 +10,7 @@ juce_add_gui_app(Hawthorne
     PRODUCT_NAME "Hawthorne"
     COMPANY_NAME "Hawthorne"
     BUNDLE_ID "com.hawthorne.recorder"
-    VERSION "1.0.0"
+    VERSION ${PROJECT_VERSION}
 )
 
 target_sources(Hawthorne PRIVATE
@@ -23,7 +23,7 @@ target_compile_definitions(Hawthorne PRIVATE
     JUCE_DIRECTSOUND=1
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
-    HAWTHORNE_VERSION="1.0.0"
+    HAWTHORNE_VERSION="${PROJECT_VERSION}"
 )
 
 target_link_libraries(Hawthorne PRIVATE

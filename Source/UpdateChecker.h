@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_core/juce_core.h>
+#include <array>
 
 #ifndef HAWTHORNE_VERSION
 #define HAWTHORNE_VERSION "1.0.0"
@@ -43,17 +44,19 @@ private:
 
             juce::MessageManager::callAsync([latestVer, downloadUrl]()
             {
-                auto result = juce::AlertWindow::showOkCancelBox(
+                juce::AlertWindow::showOkCancelBox(
                     juce::MessageBoxIconType::InfoIcon,
                     "Update Available",
                     "Hawthorne " + latestVer + " is available.\n"
-                    "You are running " + juce::String(HAWTHORNE_VERSION) + ".\n\n"
-                    "Download now?",
-                    "Download",
-                    "Later");
-
-                if (result && downloadUrl.isNotEmpty())
-                    juce::URL(downloadUrl).launchInDefaultBrowser();
+                    "You are running " + juce::String(HAWTHORNE_VERSION) + ".",
+                    "Update",
+                    "Later",
+                    nullptr,
+                    juce::ModalCallbackFunction::create([downloadUrl](int result)
+                    {
+                        if (result != 0 && downloadUrl.isNotEmpty())
+                            juce::URL(downloadUrl).launchInDefaultBrowser();
+                    }));
             });
         }
     }

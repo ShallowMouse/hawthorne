@@ -31,7 +31,7 @@ Section "Hawthorne" SecMain
     SetOutPath "$INSTDIR"
 
     ; Main executable
-    File "..\build\Release\Hawthorne_artefacts\Release\Hawthorne.exe"
+    File "..\build\Hawthorne_artefacts\Release\Hawthorne.exe"
 
     ; ASIO SDK (if bundled)
     ; File "asio.dll"

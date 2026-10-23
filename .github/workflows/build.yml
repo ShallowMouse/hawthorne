@@ -2,8 +2,9 @@ name: Build and Release
 
 on:
   push:
+    branches: [main]  # Every push to main builds + publishes
     tags:
-      - 'v*'          # Trigger on version tags e.g. v1.0.1
+      - 'v*'
   workflow_dispatch:  # Allow manual trigger
 
 jobs:
@@ -20,10 +21,9 @@ jobs:
         id: version
         shell: bash
         run: |
-          TAG="${GITHUB_REF_NAME}"
-          # If manually triggered (not a tag), use a default
-          if [[ "$TAG" != v* ]]; then TAG="v1.0.0"; fi
-          VER="${TAG#v}"
+          # Version is single-sourced from CMakeLists.txt: project(Hawthorne VERSION x.y.z)
+          VER=$(grep -oP 'project\(Hawthorne VERSION \K[0-9.]+' CMakeLists.txt)
+          TAG="v$VER"
           echo "tag=$TAG"   >> $GITHUB_OUTPUT
           echo "ver=$VER"   >> $GITHUB_OUTPUT
 
@@ -37,7 +37,15 @@ jobs:
 
       - name: Build
         shell: bash
-        run: cmake --build build --config Release --parallel
+        run: |
+          set -o pipefail
+          cmake --build build --config Release --parallel 2>&1 | tee build.log
+
+      - name: Report build errors
+        if: failure()
+        shell: bash
+        run: |
+          grep -E "error [A-Z]+[0-9]+|fatal error" build.log | sort -u | head -20 | while IFS= read -r l; do echo "::error::$l"; done
 
       - name: Patch version into NSIS script
         shell: pwsh
