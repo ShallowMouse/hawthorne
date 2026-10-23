@@ -21,6 +21,8 @@ jobs:
         shell: bash
         run: |
           TAG="${GITHUB_REF_NAME}"
+          # If manually triggered (not a tag), use a default
+          if [[ "$TAG" != v* ]]; then TAG="v1.0.0"; fi
           VER="${TAG#v}"
           echo "tag=$TAG"   >> $GITHUB_OUTPUT
           echo "ver=$VER"   >> $GITHUB_OUTPUT
