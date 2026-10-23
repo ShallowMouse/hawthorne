@@ -1,0 +1,83 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'          # Trigger on version tags e.g. v1.0.1
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive   # pulls in JUCE submodule
+
+      - name: Get version from tag
+        id: version
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VER="${TAG#v}"
+          echo "tag=$TAG"   >> $GITHUB_OUTPUT
+          echo "ver=$VER"   >> $GITHUB_OUTPUT
+
+      - name: Configure CMake
+        shell: bash
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -A x64 \
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+
+      - name: Build
+        shell: bash
+        run: cmake --build build --config Release --parallel
+
+      - name: Patch version into NSIS script
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.version.outputs.ver }}"
+          (Get-Content installer/hawthorne.nsi) `
+            -replace '!define APP_VERSION.*', "!define APP_VERSION `"$ver`"" |
+            Set-Content installer/hawthorne.nsi
+
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+
+      - name: Build installer
+        shell: bash
+        run: |
+          "/c/Program Files (x86)/NSIS/makensis.exe" installer/hawthorne.nsi
+
+      - name: Rename installer with version
+        shell: bash
+        run: |
+          mv installer/Hawthorne-Setup-${{ steps.version.outputs.ver }}.exe \
+             Hawthorne-Setup-${{ steps.version.outputs.ver }}.exe
+
+      # ── Push installer to the public releases repo ──────────────────────────
+      - name: Publish to Hawthorne-Releases
+        uses: ncipollo/release-action@v1
+        with:
+          token: ${{ secrets.RELEASES_PAT }}
+          repo: Hawthorne-Releases
+          owner: ShallowMouse
+          tag: ${{ steps.version.outputs.tag }}
+          name: Hawthorne ${{ steps.version.outputs.ver }}
+          body: |
+            ## Hawthorne ${{ steps.version.outputs.ver }}
+
+            ### Install
+            Download `Hawthorne-Setup-${{ steps.version.outputs.ver }}.exe` and run it.
+
+            ### Changes
+            <!-- Add release notes here -->
+          artifacts: Hawthorne-Setup-${{ steps.version.outputs.ver }}.exe
+          artifactContentType: application/octet-stream
+          allowUpdates: true
+          draft: false
+          prerelease: false
