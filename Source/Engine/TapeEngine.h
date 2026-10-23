@@ -65,6 +65,8 @@ public:
     int getNumArmedTracks() const noexcept;
     /** Seconds of recording possible on the session's disk with the armed tracks. */
     double getRecordTimeRemainingSeconds() const;
+    /** Length of a track's tape in samples (0 = blank). Message thread. */
+    juce::int64 getTapeLength (int track) const;
     /** Peak disk-buffer fill seen during the current/last take, 0..1. */
     float getDiskBufferPeak() const noexcept { return diskBufferPeak.load(); }
 
@@ -116,10 +118,8 @@ private:
     struct RecordPass
     {
         std::array<std::shared_ptr<RecordingStream>, kNumTracks> streams;
-        std::array<int, kNumTracks> regionIndex {};
         std::atomic<juce::int64> startPos { -1 };
-        int  latency = 0;
-        bool startSaved = false;
+        int latency = 0;
     };
 
     //==========================================================================
@@ -144,6 +144,7 @@ private:
     juce::TimeSliceThread prefetchThread { "Hawthorne Playback Prefetch" };
     DiskWriterThread diskThread;
     std::map<juce::String, std::shared_ptr<juce::BufferingAudioReader>> readerCache;
+    std::array<int, kNumTracks> tapeGeneration {};
 
     std::atomic<PlaybackGraph*> graph { nullptr };
     std::atomic<RecordPass*>    pass  { nullptr };

@@ -413,8 +413,8 @@ void MainComponent::timerCallback()
     {
         strips[t]->setArmed (engine.isArmed (t), rec, flash);
         strips[t]->pushPeak (engine.popTrackPeak (t));
-        if (session != nullptr)
-            strips[t]->setTakeCount ((int) session->tracks[(size_t) t].regions.size());
+        if (frame % 15 == 0)
+            strips[t]->setTapeSeconds ((int) ((double) engine.getTapeLength (t) / sessionRate()));
     }
 
     masterL.pushPeak (engine.popMasterPeak (0));

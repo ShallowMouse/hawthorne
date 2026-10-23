@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_formats/juce_audio_formats.h>
+#include "Session.h"
 #include <array>
 #include <atomic>
 #include <memory>
@@ -10,7 +11,9 @@ namespace hawthorne
 
 //==============================================================================
 /**
-    One mono take being recorded to disk.
+    One track being recorded onto tape. Audio is written straight into the
+    track's tape file starting at (startPos - latency), overwriting what was
+    there - like a real tape machine.
 
     Threading contract
       - push()                       : audio thread only. Lock-free, allocation-free.
@@ -28,10 +31,14 @@ namespace hawthorne
 class RecordingStream
 {
 public:
-    RecordingStream (std::unique_ptr<juce::AudioFormatWriter> writer,
+    /** startPos is written by the audio thread when the first block is recorded;
+        nothing is written to the tape until it is known. */
+    RecordingStream (std::unique_ptr<TapeFile> tape,
                      const juce::File& file,
                      int fifoSizeSamples,
-                     int flushIntervalSamples);
+                     int flushIntervalSamples,
+                     const std::atomic<juce::int64>* startPos,
+                     int latencySamples);
     ~RecordingStream();
 
     //==========================================================================
@@ -44,8 +51,8 @@ public:
 
     //==========================================================================
     // Message thread (after audio thread has let go)
-    /** Drains everything, writes trailing gap, finalises the header and closes
-        the file. Returns false if any write failed. */
+    /** Drains everything, writes any trailing gap, finalises the header and
+        closes the tape. Returns false if any write failed. */
     bool finish();
 
     //==========================================================================
@@ -63,9 +70,12 @@ private:
     void drainLocked();
     void writeSilenceLocked (juce::int64 numSamples);
     void writeBlockLocked (int start, int num);
+    bool positionLocked();
 
     const juce::File file;
     const int flushInterval;
+    const std::atomic<juce::int64>* startPos;
+    const int latency;
 
     // FIFO shared between audio thread (writer) and disk thread (reader)
     juce::AbstractFifo fifo;
@@ -86,8 +96,9 @@ private:
 
     // Disk-side state, guarded by ioLock (disk thread + finish())
     juce::CriticalSection ioLock;
-    std::unique_ptr<juce::AudioFormatWriter> writer;
-    juce::AudioBuffer<float> silence { 1, 4096 };
+    std::unique_ptr<TapeFile> tape;
+    bool positioned = false;
+    juce::int64 skipRemaining     = 0;   // samples that fall before the start of tape
     juce::int64 streamDrained     = 0;
     juce::int64 samplesSinceFlush = 0;
 

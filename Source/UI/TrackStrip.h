@@ -34,7 +34,7 @@ public:
     void setTrackName (const juce::String&);
     void setInputChoices (const juce::StringArray& channelNames, const juce::BigInteger& active, int selected);
     void setArmed (bool armed, bool recording, bool flashPhase);
-    void setTakeCount (int n);
+    void setTapeSeconds (int seconds);
     void pushPeak (float p) { meter.pushPeak (p); }
     void resetMeter()       { meter.reset(); }
 
@@ -51,7 +51,7 @@ private:
     juce::ComboBox inputBox;
     juce::TextButton armButton { "REC" };
     LevelMeter meter;
-    int takeCount = 0;
+    int tapeSeconds = -1;
     bool isArmed = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TrackStrip)

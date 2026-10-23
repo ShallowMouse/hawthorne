@@ -141,9 +141,9 @@ void TrackStrip::setArmed (bool armed, bool recording, bool flashPhase)
     armButton.setToggleState (lit, juce::dontSendNotification);
 }
 
-void TrackStrip::setTakeCount (int n)
+void TrackStrip::setTapeSeconds (int secs)
 {
-    if (n != takeCount) { takeCount = n; repaint(); }
+    if (secs != tapeSeconds) { tapeSeconds = secs; repaint(); }
 }
 
 void TrackStrip::paint (juce::Graphics& g)
@@ -159,7 +159,8 @@ void TrackStrip::paint (juce::Graphics& g)
 
     g.setColour (Colours::textDim);
     g.setFont (monoFont (10.0f));
-    g.drawText (takeCount == 0 ? juce::String ("empty") : juce::String (takeCount) + (takeCount == 1 ? " take" : " takes"),
+    g.drawText (tapeSeconds <= 0 ? juce::String ("blank")
+                                 : juce::String (tapeSeconds / 60) + ":" + juce::String (tapeSeconds % 60).paddedLeft ('0', 2),
                 getLocalBounds().removeFromBottom (16), juce::Justification::centred);
 }
 

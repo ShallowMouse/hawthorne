@@ -3,18 +3,21 @@
 namespace hawthorne
 {
 
-RecordingStream::RecordingStream (std::unique_ptr<juce::AudioFormatWriter> w,
+RecordingStream::RecordingStream (std::unique_ptr<TapeFile> t,
                                   const juce::File& f,
                                   int fifoSizeSamples,
-                                  int flushIntervalSamples)
+                                  int flushIntervalSamples,
+                                  const std::atomic<juce::int64>* start,
+                                  int latencySamples)
     : file (f),
       flushInterval (juce::jmax (1, flushIntervalSamples)),
+      startPos (start),
+      latency (latencySamples),
       fifo (fifoSizeSamples),
       fifoBuffer (1, fifoSizeSamples),
-      writer (std::move (w))
+      tape (std::move (t))
 {
     fifoBuffer.clear();
-    silence.clear();
 }
 
 RecordingStream::~RecordingStream()
@@ -77,32 +80,61 @@ void RecordingStream::service()
     drainLocked();
 }
 
+bool RecordingStream::positionLocked()
+{
+    if (positioned)
+        return true;
+
+    const auto sp = startPos != nullptr ? startPos->load() : (juce::int64) 0;
+    if (sp < 0)
+        return false; // audio thread hasn't recorded the first block yet
+
+    // Latency compensation: the first captured sample belongs `latency` samples
+    // before the tape position at which it arrived.
+    const auto tapeStart = sp - latency;
+    skipRemaining = tapeStart < 0 ? -tapeStart : 0;
+
+    if (! tape->seek (juce::jmax ((juce::int64) 0, tapeStart)))
+        writeError = true;
+
+    positioned = true;
+    return true;
+}
+
 void RecordingStream::writeBlockLocked (int start, int num)
 {
-    if (num <= 0)
-        return;
+    const float* p = fifoBuffer.getReadPointer (0, start);
 
-    if (writer != nullptr && ! writer->writeFromAudioSampleBuffer (fifoBuffer, start, num))
+    if (skipRemaining > 0)
+    {
+        const auto k = (int) juce::jmin ((juce::int64) num, skipRemaining);
+        p += k;
+        num -= k;
+        skipRemaining -= k;
+    }
+
+    if (num > 0 && ! tape->write (p, num))
         writeError = true;
 }
 
 void RecordingStream::writeSilenceLocked (juce::int64 numSamples)
 {
-    while (numSamples > 0)
+    if (skipRemaining > 0)
     {
-        const auto n = (int) juce::jmin ((juce::int64) silence.getNumSamples(), numSamples);
-
-        if (writer != nullptr && ! writer->writeFromAudioSampleBuffer (silence, 0, n))
-            writeError = true;
-
-        numSamples        -= n;
-        samplesSinceFlush += n;
+        const auto k = juce::jmin (numSamples, skipRemaining);
+        numSamples -= k;
+        skipRemaining -= k;
     }
+
+    if (numSamples > 0 && ! tape->writeSilence (numSamples))
+        writeError = true;
+
+    samplesSinceFlush += numSamples;
 }
 
 void RecordingStream::drainLocked()
 {
-    if (writer == nullptr)
+    if (tape == nullptr || ! positionLocked())
         return;
 
     for (;;)
@@ -148,7 +180,7 @@ void RecordingStream::drainLocked()
     // (and the loader can repair even that from the file size).
     if (samplesSinceFlush >= flushInterval)
     {
-        if (! writer->flush())
+        if (! tape->flushHeader())
             writeError = true;
 
         samplesSinceFlush = 0;
@@ -159,22 +191,22 @@ bool RecordingStream::finish()
 {
     const juce::ScopedLock sl (ioLock);
 
-    if (writer == nullptr)
+    if (tape == nullptr)
         return ! writeError;
 
     drainLocked();
 
-    // Any block dropped at the very end still has to occupy timeline space.
-    if (pendingGap > 0)
+    // Any block dropped at the very end still has to occupy tape space.
+    if (positioned && pendingGap > 0)
     {
         writeSilenceLocked (pendingGap);
         pendingGap = 0;
     }
 
-    if (! writer->flush())
+    if (! tape->close())
         writeError = true;
 
-    writer.reset(); // finalises header and closes the file
+    tape.reset();
     return ! writeError;
 }
 

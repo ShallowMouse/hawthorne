@@ -16,42 +16,6 @@ namespace
         if (v > a.load (std::memory_order_relaxed))
             a.store (v, std::memory_order_relaxed);
     }
-
-    struct Piece { int region; juce::int64 start, end; };
-
-    /** Newest region wins: later regions cut holes in earlier ones. */
-    std::vector<Piece> flatten (const std::vector<Region>& regions)
-    {
-        std::vector<Piece> pieces;
-
-        for (int i = 0; i < (int) regions.size(); ++i)
-        {
-            const auto& r = regions[(size_t) i];
-            if (r.pending || r.length <= 0)
-                continue;
-
-            const auto s = r.start, e = r.start + r.length;
-            std::vector<Piece> next;
-            next.reserve (pieces.size() + 2);
-
-            for (const auto& p : pieces)
-            {
-                if (p.end <= s || p.start >= e)
-                {
-                    next.push_back (p);
-                    continue;
-                }
-                if (p.start < s) next.push_back ({ p.region, p.start, s });
-                if (p.end > e)   next.push_back ({ p.region, e, p.end });
-            }
-
-            next.push_back ({ i, s, e });
-            std::sort (next.begin(), next.end(), [] (auto& a, auto& b) { return a.start < b.start; });
-            pieces = std::move (next);
-        }
-
-        return pieces;
-    }
 }
 
 //==============================================================================
@@ -432,89 +396,31 @@ juce::String TapeEngine::beginRecordPass()
     const auto sr = session->sampleRate;
     const int fifoSize = fifoSizeOverride > 0 ? fifoSizeOverride : (int) (sr * fifoSeconds);
     const int flushInterval = (int) (sr * flushIntervalSeconds);
-    const int take = session->nextTake;
 
     auto p = std::make_unique<RecordPass>();
     p->latency = latencySamples;
-    p->regionIndex.fill (-1);
 
-    juce::WavAudioFormat wav;
-    juce::String error;
-
-    for (int t = 0; t < kNumTracks && error.isEmpty(); ++t)
+    for (int t = 0; t < kNumTracks; ++t)
     {
         if (! armed[(size_t) t])
             continue;
 
-        const auto file = session->makeTakeFile (t, take);
-        auto fos = std::make_unique<juce::FileOutputStream> (file);
+        const auto file = session->getTapeFile (t);
+        juce::String err;
 
-        if (! fos->openedOk())
+        if (! file.existsAsFile() && ! TapeFile::createEmpty (file, sr, err))
+            return err;
+
+        auto tape = std::make_unique<TapeFile>();
+        if (! tape->open (file, sr, err))
         {
-            error = "Could not create audio file:\n" + file.getFullPathName();
-            break;
+            for (auto& s : p->streams)
+                if (s != nullptr) s->finish();
+            return err;
         }
 
-        std::unique_ptr<juce::OutputStream> os (fos.release());
-        auto writer = wav.createWriterFor (os, juce::AudioFormatWriterOptions{}
-                                                   .withSampleRate (sr)
-                                                   .withNumChannels (1)
-                                                   .withBitsPerSample (session->bitDepth));
-        if (writer == nullptr)
-        {
-            os.reset();
-            file.deleteFile();
-            error = "Could not create a WAV writer for " + file.getFileName();
-            break;
-        }
-
-        p->streams[(size_t) t] = std::make_shared<RecordingStream> (std::move (writer), file, fifoSize, flushInterval);
-    }
-
-    auto rollback = [&]
-    {
-        for (int t = 0; t < kNumTracks; ++t)
-            if (auto& s = p->streams[(size_t) t])
-            {
-                s->finish();
-                s->getFile().deleteFile();
-
-                auto& regs = session->tracks[(size_t) t].regions;
-                if (p->regionIndex[(size_t) t] >= 0 && p->regionIndex[(size_t) t] < (int) regs.size())
-                    regs.erase (regs.begin() + p->regionIndex[(size_t) t]);
-            }
-    };
-
-    if (error.isNotEmpty())
-    {
-        rollback();
-        return error;
-    }
-
-    // Register the takes as pending BEFORE any audio is written: if we crash,
-    // the next load finds them and recovers the audio.
-    for (int t = 0; t < kNumTracks; ++t)
-        if (auto& s = p->streams[(size_t) t])
-        {
-            Region r;
-            r.file    = s->getFile().getRelativePathFrom (session->getFolder()).replaceCharacter ('\\', '/');
-            r.start   = -1;
-            r.take    = take;
-            r.pending = true;
-
-            auto& regs = session->tracks[(size_t) t].regions;
-            regs.push_back (r);
-            p->regionIndex[(size_t) t] = (int) regs.size() - 1;
-        }
-
-    session->nextTake = take + 1;
-
-    juce::String saveErr;
-    if (! session->save (saveErr))
-    {
-        rollback();
-        session->nextTake = take;
-        return "Could not save the session before recording:\n" + saveErr;
+        p->streams[(size_t) t] = std::make_shared<RecordingStream> (std::move (tape), file, fifoSize, flushInterval,
+                                                                    &p->startPos, p->latency);
     }
 
     for (auto& s : p->streams)
@@ -542,7 +448,6 @@ void TapeEngine::endRecordPass()
     std::unique_ptr<RecordPass> p = std::move (ownedPass);
     juce::StringArray problems;
     juce::int64 droppedThisPass = 0;
-    const auto startPos = p->startPos.load();
 
     for (int t = 0; t < kNumTracks; ++t)
     {
@@ -553,47 +458,10 @@ void TapeEngine::endRecordPass()
         diskThread.remove (s.get());
 
         if (! s->finish())
-            problems.add (session->tracks[(size_t) t].name + ": disk write failed");
+            problems.add (session->tracks[(size_t) t].name + ": writing to tape failed");
 
         droppedThisPass += s->getDroppedSamples();
-
-        auto& regs = session->tracks[(size_t) t].regions;
-        const int idx = p->regionIndex[(size_t) t];
-        if (! juce::isPositiveAndBelow (idx, (int) regs.size()))
-            continue;
-
-        auto& r = regs[(size_t) idx];
-        const auto len = s->getTimelineLength();
-
-        auto tlStart = startPos - p->latency;
-        juce::int64 offset = 0;
-        if (tlStart < 0) { offset = -tlStart; tlStart = 0; }
-
-        if (startPos < 0 || len - offset <= 0)
-        {
-            s->getFile().deleteFile();
-            regs.erase (regs.begin() + idx);
-            continue;
-        }
-
-        // Verify what actually landed on disk matches what we sent.
-        juce::int64 onDisk = -1;
-        if (std::unique_ptr<juce::AudioFormatReader> reader { formatManager.createReaderFor (s->getFile()) })
-            onDisk = reader->lengthInSamples;
-
-        if (onDisk != len)
-        {
-            problems.add (session->tracks[(size_t) t].name + ": file has " + juce::String (onDisk)
-                          + " samples, expected " + juce::String (len));
-        }
-
-        r.start   = tlStart;
-        r.offset  = offset;
-        r.length  = (onDisk >= 0 ? juce::jmin (onDisk, len) : len) - offset;
-        r.pending = false;
-
-        if (r.length <= 0)
-            regs.erase (regs.begin() + idx);
+        ++tapeGeneration[(size_t) t]; // tape contents changed: readers must reload
     }
 
     droppedTotal = droppedBeforePass.load() + droppedThisPass;
@@ -601,13 +469,12 @@ void TapeEngine::endRecordPass()
     if (! released)
         graveyard.push_back (std::shared_ptr<void> (p.release(), [] (void* x) { delete static_cast<RecordPass*> (x); }));
 
-    saveSession();
     rebuildPlaybackGraph();
 
     if (droppedThisPass > 0 && session != nullptr)
         alert ("Disk could not keep up",
                juce::String ((double) droppedThisPass / session->sampleRate * 1000.0, 0)
-               + " ms of audio was replaced with silence during that take.\n"
+               + " ms of audio was recorded as silence.\n"
                  "Timing is preserved, but use a faster drive or close other programs.");
 
     if (! problems.isEmpty())
@@ -641,47 +508,32 @@ std::shared_ptr<juce::BufferingAudioReader> TapeEngine::getReader (const juce::F
 
 void TapeEngine::rebuildPlaybackGraph()
 {
-    // Every segment gets its own read-ahead reader, so a take that resumes after
-    // a punch-in is already buffered at its resume point. Identical segments
-    // reuse the reader from the previous graph (it may be mid-playback).
+    // One reader per tape track. A track's reader is only replaced when its
+    // tape has been recorded on (generation bump); others keep playing untouched.
     auto g = std::make_unique<PlaybackGraph>();
     std::vector<Segment> fresh;
-    juce::StringArray missing;
 
     if (session != nullptr)
     {
         for (int t = 0; t < kNumTracks; ++t)
         {
-            const auto& regs = session->tracks[(size_t) t].regions;
+            const auto file = session->getTapeFile (t);
+            if (! file.existsAsFile())
+                continue;
 
-            for (const auto& piece : flatten (regs))
-            {
-                const auto& r = regs[(size_t) piece.region];
-                const auto file = session->resolve (r);
-                const auto fileStart = r.offset + (piece.start - r.start);
-                const auto key = file.getFullPathName() + "|" + juce::String (piece.start) + "|"
-                               + juce::String (piece.end) + "|" + juce::String (fileStart);
+            const auto key = file.getFullPathName() + "|" + juce::String (tapeGeneration[(size_t) t]);
+            bool isNew = false;
+            auto reader = getReader (file, key, isNew);
 
-                bool isNew = false;
-                auto reader = getReader (file, key, isNew);
+            if (reader == nullptr || reader->lengthInSamples <= 0)
+                continue;
 
-                if (reader == nullptr)
-                {
-                    missing.addIfNotAlreadyThere (r.file);
-                    continue;
-                }
+            const Segment seg { reader.get(), 0, reader->lengthInSamples, 0 };
+            g->tracks[(size_t) t].push_back (seg);
+            g->keepAlive.push_back (reader);
 
-                const auto available = reader->lengthInSamples - fileStart;
-                if (available <= 0)
-                    continue;
-
-                const Segment seg { reader.get(), piece.start, juce::jmin (piece.end, piece.start + available), fileStart };
-                g->tracks[(size_t) t].push_back (seg);
-                g->keepAlive.push_back (reader);
-
-                if (isNew)
-                    fresh.push_back (seg);
-            }
+            if (isNew)
+                fresh.push_back (seg);
         }
     }
 
@@ -698,10 +550,15 @@ void TapeEngine::rebuildPlaybackGraph()
 
     for (auto it = readerCache.begin(); it != readerCache.end();)
         it = it->second.use_count() == 1 ? readerCache.erase (it) : std::next (it);
+}
 
-    if (! missing.isEmpty())
-        alert ("Missing audio files",
-               "These files could not be found and will play as silence:\n" + missing.joinIntoString ("\n"));
+juce::int64 TapeEngine::getTapeLength (int track) const
+{
+    if (ownedGraph == nullptr || ! juce::isPositiveAndBelow (track, kNumTracks))
+        return 0;
+
+    const auto& segs = ownedGraph->tracks[(size_t) track];
+    return segs.empty() ? 0 : segs.back().end;
 }
 
 void TapeEngine::primeSegment (const Segment& seg, juce::int64 pos, bool waitUntilLoaded)
@@ -812,29 +669,6 @@ void TapeEngine::tick()
     auto* p = ownedPass.get();
     if (p == nullptr)
         return;
-
-    // Crash safety: as soon as the take's start is known, persist it.
-    if (! p->startSaved && p->startPos.load() >= 0)
-    {
-        auto tlStart = p->startPos.load() - p->latency;
-        juce::int64 offset = 0;
-        if (tlStart < 0) { offset = -tlStart; tlStart = 0; }
-
-        for (int t = 0; t < kNumTracks; ++t)
-        {
-            const int idx = p->regionIndex[(size_t) t];
-            auto& regs = session->tracks[(size_t) t].regions;
-
-            if (p->streams[(size_t) t] != nullptr && juce::isPositiveAndBelow (idx, (int) regs.size()))
-            {
-                regs[(size_t) idx].start  = tlStart;
-                regs[(size_t) idx].offset = offset;
-            }
-        }
-
-        saveSession();
-        p->startSaved = true;
-    }
 
     juce::int64 dropped = 0;
     float bufferPeak = 0.0f;
