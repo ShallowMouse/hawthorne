@@ -12,3 +12,4 @@ CMakeCache.txt
 cmake_install.cmake
 *.zip
 installer/Hawthorne-Setup-*.exe
+build-*/

@@ -62,7 +62,7 @@ private:
     }
 
     // Minimal WinINet HTTP GET — no libcurl needed
-    static juce::String fetchUrl(const juce::String& url)
+    static juce::String fetchUrl ([[maybe_unused]] const juce::String& url)
     {
 #if JUCE_WINDOWS
         // Use WinINet via JUCE's URL class with a custom user-agent

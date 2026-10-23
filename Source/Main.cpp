@@ -1,49 +1,80 @@
-#include <juce_core/juce_core.h>
-#include <juce_events/juce_events.h>
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "UI/MainComponent.h"
 #include "UpdateChecker.h"
 
 #ifndef HAWTHORNE_VERSION
-#define HAWTHORNE_VERSION "1.0.0"
+ #define HAWTHORNE_VERSION "1.0.0"
 #endif
 
+//==============================================================================
 class MainWindow : public juce::DocumentWindow
 {
 public:
-    MainWindow() : juce::DocumentWindow("Hawthorne",
-        juce::Colour(0xff1a1a1a), juce::DocumentWindow::allButtons)
+    explicit MainWindow (juce::ApplicationProperties& props)
+        : juce::DocumentWindow ("Hawthorne", hawthorne::Colours::bg, juce::DocumentWindow::allButtons)
     {
-        setUsingNativeTitleBar(true);
-        setContentOwned(new juce::Component(), true);
-        setResizable(true, true);
-        centreWithSize(600, 400);
-        setVisible(true);
+        setUsingNativeTitleBar (true);
+        content = new hawthorne::MainComponent (props);
+        setContentOwned (content, true);
+        setResizable (true, true);
+        setResizeLimits (1000, 600, 10000, 10000);
+        centreWithSize (getWidth(), getHeight());
+        setVisible (true);
+        content->grabKeyboardFocus();
     }
-    void closeButtonPressed() override { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainWindow)
+
+    void shutdown() { if (content != nullptr) content->shutdown(); }
+
+    void closeButtonPressed() override
+    {
+        juce::JUCEApplication::getInstance()->systemRequestedQuit();
+    }
+
+private:
+    hawthorne::MainComponent* content = nullptr;
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainWindow)
 };
 
-class HawthornApp : public juce::JUCEApplication
+//==============================================================================
+class HawthorneApp : public juce::JUCEApplication
 {
 public:
     const juce::String getApplicationName() override    { return "Hawthorne"; }
     const juce::String getApplicationVersion() override { return HAWTHORNE_VERSION; }
     bool moreThanOneInstanceAllowed() override          { return false; }
 
-    void initialise(const juce::String&) override
+    void initialise (const juce::String&) override
     {
-        mainWindow = std::make_unique<MainWindow>();
-        updater    = std::make_unique<UpdateChecker>();
+        juce::PropertiesFile::Options o;
+        o.applicationName     = "Hawthorne";
+        o.filenameSuffix      = ".settings";
+        o.folderName          = "Hawthorne";
+        o.osxLibrarySubFolder = "Application Support";
+        properties.setStorageParameters (o);
+
+        mainWindow = std::make_unique<MainWindow> (properties);
+
+        updater = std::make_unique<UpdateChecker>();
         updater->checkAsync();
     }
 
-    void shutdown() override { mainWindow = nullptr; }
+    void shutdown() override
+    {
+        if (mainWindow != nullptr)
+            mainWindow->shutdown();   // finalise any take before anything else goes
+
+        updater = nullptr;
+        mainWindow = nullptr;
+        properties.closeFiles();
+    }
+
     void systemRequestedQuit() override { quit(); }
-    void anotherInstanceStarted(const juce::String&) override {}
+    void anotherInstanceStarted (const juce::String&) override {}
 
 private:
-    std::unique_ptr<MainWindow>    mainWindow;
+    juce::ApplicationProperties properties;
+    std::unique_ptr<MainWindow> mainWindow;
     std::unique_ptr<UpdateChecker> updater;
 };
 
-START_JUCE_APPLICATION(HawthornApp)
+START_JUCE_APPLICATION (HawthorneApp)
