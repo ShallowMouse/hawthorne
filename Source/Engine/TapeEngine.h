@@ -49,6 +49,12 @@ public:
     bool isArmed (int track) const noexcept { return armed[(size_t) track].load(); }
     void setInput (int track, int absoluteInputChannel);
 
+    // Routing (all lock-free for the audio thread; saved with the session)
+    void setTrackToMix (int track, bool);
+    void setTrackOutputs (int track, ChannelMask deviceOutputs);
+    void setMasterInputs (int side, ChannelMask deviceInputs);    // side 0 = L, 1 = R
+    void setMasterOutputs (int side, ChannelMask deviceOutputs);
+
     /** Peak since last call (0..1+). Safe from the message thread. */
     float popTrackPeak (int track) noexcept { return trackPeak[(size_t) track].exchange (0.0f); }
     float popMasterPeak (int ch) noexcept   { return masterPeak[(size_t) (ch & 1)].exchange (0.0f); }
@@ -65,7 +71,8 @@ public:
     bool   isDeviceRunning() const noexcept     { return deviceRunning.load(); }
     juce::int64 getDroppedSamples() const noexcept  { return droppedTotal.load(); }
     juce::int64 getPlaybackUnderruns() const noexcept { return playbackUnderruns.load(); }
-    juce::StringArray getInputChannelNames() const { return inputNames; }
+    juce::StringArray getInputChannelNames() const  { return inputNames; }
+    juce::StringArray getOutputChannelNames() const { return outputNames; }
     int getNumArmedTracks() const noexcept;
     /** Seconds of recording possible on the session's disk with the armed tracks. */
     double getRecordTimeRemainingSeconds() const;
@@ -91,8 +98,10 @@ public:
 
     //==========================================================================
     // Device-independent entry points (used by the callback and by tests)
-    void prepare (double sampleRate, int maxBlockSize, const juce::BigInteger& activeInputs,
-                  const juce::StringArray& inputChannelNames, int inputLatency, int outputLatency);
+    void prepare (double sampleRate, int maxBlockSize,
+                  const juce::BigInteger& activeInputs, const juce::StringArray& inputChannelNames,
+                  const juce::BigInteger& activeOutputs, const juce::StringArray& outputChannelNames,
+                  int inputLatency, int outputLatency);
     void process (const float* const* inputs, int numInputs,
                   float* const* outputs, int numOutputs, int numSamples) noexcept;
     void release();
@@ -192,8 +201,12 @@ private:
     std::atomic<double> deviceSampleRate { 0.0 };
     std::atomic<int>    blockSize { 0 }, latencySamples { 0 };
     std::atomic<juce::uint64> callbackCount { 0 };
-    juce::StringArray inputNames;
-    std::array<int, 256> absToActive {};
+    juce::StringArray inputNames, outputNames;
+    std::array<int, 256> absToActive {}, absToActiveOut {};
+    juce::AudioBuffer<float> mixBus;
+    std::array<std::atomic<bool>, kNumTracks>        trackToMix;
+    std::array<std::atomic<ChannelMask>, kNumTracks> trackOutputs;
+    std::array<std::atomic<ChannelMask>, 2>          masterInputs, masterOutputs;
     int maxBlock = 0;
     juce::AudioBuffer<float> trackBuffers, zeros;
 

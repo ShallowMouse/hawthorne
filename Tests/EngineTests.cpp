@@ -138,7 +138,9 @@ static void prepareEngine (TapeEngine& e, int block)
     inputs.setRange (0, kNumTracks, true);
     juce::StringArray names;
     for (int i = 0; i < kNumTracks; ++i) names.add ("In " + juce::String (i + 1));
-    e.prepare (kSR, block, inputs, names, kInLat, kOutLat);
+    juce::BigInteger outs;
+    outs.setRange (0, 4, true);
+    e.prepare (kSR, block, inputs, names, outs, { "Out 1", "Out 2", "Out 3", "Out 4" }, kInLat, kOutLat);
 }
 
 //==============================================================================
@@ -406,6 +408,56 @@ static void testCrashRecovery()
 #endif
 
 //==============================================================================
+static void testRouting()
+{
+    std::printf ("[9] routing matrix: mix, direct outs, master in/out\n");
+    juce::String err;
+    auto session = Session::create (makeTempDir ("routing"), "Routing", kSR, err);
+    if (session == nullptr) { CHECK (false, "%s", err.toRawUTF8()); return; }
+
+    TapeEngine e;
+    e.setSession (session.get());
+    prepareEngine (e, 256);
+
+    for (int t = 0; t < 3; ++t) e.setArmed (t, true);       // stopped: armed tracks monitor input
+    e.setTrackToMix (2, false);                              // track 3 out of the mix...
+    e.setTrackOutputs (2, (ChannelMask) 1 << 2);             // ...direct out to output 3
+    e.setMasterInputs (0, (ChannelMask) 1 << 23);            // input 24 summed into master L
+    e.setMasterOutputs (1, ((ChannelMask) 1 << 1) | ((ChannelMask) 1 << 3)); // master R -> outs 2 and 4
+
+    const int n = 256;
+    juce::AudioBuffer<float> in (kNumTracks, n), out (4, n);
+    for (int t = 0; t < kNumTracks; ++t)
+        for (int k = 0; k < n; ++k)
+            in.setSample (t, k, encode (t, k) * 0.25f);
+
+    e.process (in.getArrayOfReadPointers(), kNumTracks, out.getArrayOfWritePointers(), 4, n);
+
+    int64 wrong = 0;
+    for (int k = 0; k < n; ++k)
+    {
+        const float mix = in.getSample (0, k) + in.getSample (1, k);
+        const float expect[4] = { mix + in.getSample (23, k), mix, in.getSample (2, k), mix };
+        for (int o = 0; o < 4; ++o)
+            if (std::abs (out.getSample (o, k) - expect[o]) > 1.0e-6f && wrong++ < 4)
+                std::printf ("    out %d sample %d: got %.6f expected %.6f\n", o + 1, k, out.getSample (o, k), expect[o]);
+    }
+    CHECK (wrong == 0, "%lld routed samples wrong", (long long) wrong);
+
+    auto reloaded = Session::load (session->getFile(), err);
+    CHECK (reloaded != nullptr, "reload");
+    if (reloaded != nullptr)
+    {
+        CHECK (! reloaded->tracks[2].toMix && reloaded->tracks[2].outputs == ((ChannelMask) 1 << 2), "track routing not saved");
+        CHECK (reloaded->master.inputs[0] == ((ChannelMask) 1 << 23), "master in not saved");
+        CHECK (reloaded->master.outputs[0] == 1 && reloaded->master.outputs[1] == (((ChannelMask) 1 << 1) | ((ChannelMask) 1 << 3)),
+               "master out not saved");
+        std::printf ("    all 4 outputs exact, routing saved and reloaded\n");
+    }
+    e.setSession (nullptr);
+}
+
+//==============================================================================
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -413,6 +465,7 @@ int main()
     testTapeMachine();
     testDiskOverflowKeepsAlignment();
     testDeviceLossDuringRecording();
+    testRouting();
    #if JUCE_LINUX || JUCE_MAC
     testCrashRecovery();
    #endif

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(Hawthorne VERSION 1.3.1)
+project(Hawthorne VERSION 1.4.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -46,6 +46,8 @@ if(HAWTHORNE_BUILD_APP)
         Source/UI/TrackStrip.cpp
         Source/UI/VUMeter.h
         Source/UI/VUMeter.cpp
+        Source/UI/RoutingMatrix.h
+        Source/UI/RoutingMatrix.cpp
         Source/UI/MainComponent.h
         Source/UI/MainComponent.cpp
     )

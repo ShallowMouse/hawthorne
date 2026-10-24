@@ -5,6 +5,7 @@
 #include "HawthorneLookAndFeel.h"
 #include "TrackStrip.h"
 #include "VUMeter.h"
+#include "RoutingMatrix.h"
 #include "../Updater.h"
 
 namespace hawthorne
@@ -51,6 +52,8 @@ private:
     void newSession();
     void openSession();
     void showAudioSettings();
+    void showRouting();
+    void updateRoutingDevice();
     void matchDeviceToSession();
     void refreshInputChoices();
     void showAlert (const juce::String& title, const juce::String& message);
@@ -75,7 +78,8 @@ private:
     juce::AudioDeviceManager deviceManager;
     std::unique_ptr<Session> session;
 
-    juce::TextButton newButton { "NEW" }, openButton { "OPEN" }, audioButton { "AUDIO SETTINGS" }, updateButton;
+    juce::TextButton newButton { "NEW" }, openButton { "OPEN" }, routingButton { "ROUTING" },
+                     audioButton { "AUDIO SETTINGS" }, updateButton;
     Updater updater;
     TransportButton rtzButton  { TransportButton::Icon::rtz,     "Return to zero (Enter)" },
                     rewButton  { TransportButton::Icon::rewind,  "Back 5 seconds (Left)" },
@@ -87,6 +91,7 @@ private:
     juce::OwnedArray<TrackStrip> strips;
     juce::OwnedArray<VUMeter> vus;   // 24 tracks, then master L / R
     juce::Rectangle<int> bridgeArea;
+    std::unique_ptr<RoutingWindow> routingWindow;
 
     std::unique_ptr<juce::FileChooser> chooser;
     juce::Rectangle<int> headerArea, transportArea, counterArea, statusArea;

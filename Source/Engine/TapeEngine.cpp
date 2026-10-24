@@ -29,10 +29,16 @@ TapeEngine::TapeEngine()
     {
         armed[(size_t) t] = false;
         inputChannel[(size_t) t] = t;
+        trackToMix[(size_t) t] = true;
+        trackOutputs[(size_t) t] = 0;
         trackPeak[(size_t) t] = 0.0f;
     }
 
     masterPeak[0] = masterPeak[1] = 0.0f;
+    masterInputs[0] = masterInputs[1] = 0;
+    masterOutputs[0] = 1;
+    masterOutputs[1] = 2;
+    absToActiveOut.fill (-1);
 }
 
 TapeEngine::~TapeEngine()
@@ -56,11 +62,21 @@ void TapeEngine::setSession (Session* s)
     playbackUnderruns = 0;
 
     if (s != nullptr)
+    {
         for (int t = 0; t < kNumTracks; ++t)
         {
             armed[(size_t) t]        = s->tracks[(size_t) t].armed;
             inputChannel[(size_t) t] = s->tracks[(size_t) t].input;
+            trackToMix[(size_t) t]   = s->tracks[(size_t) t].toMix;
+            trackOutputs[(size_t) t] = s->tracks[(size_t) t].outputs;
         }
+
+        for (int side = 0; side < 2; ++side)
+        {
+            masterInputs[(size_t) side]  = s->master.inputs[(size_t) side];
+            masterOutputs[(size_t) side] = s->master.outputs[(size_t) side];
+        }
+    }
 
     rebuildPlaybackGraph();
 }
@@ -68,22 +84,32 @@ void TapeEngine::setSession (Session* s)
 //==============================================================================
 // Device
 
-void TapeEngine::prepare (double sampleRate, int maxBlockSize, const juce::BigInteger& activeInputs,
-                          const juce::StringArray& names, int inputLatency, int outputLatency)
+void TapeEngine::prepare (double sampleRate, int maxBlockSize,
+                          const juce::BigInteger& activeInputs, const juce::StringArray& inNames,
+                          const juce::BigInteger& activeOutputs, const juce::StringArray& outNames,
+                          int inputLatency, int outputLatency)
 {
     maxBlock = juce::jmax (16, maxBlockSize);
     trackBuffers.setSize (kNumTracks, maxBlock);
     trackBuffers.clear();
+    mixBus.setSize (2, maxBlock);
+    mixBus.clear();
     zeros.setSize (1, maxBlock);
     zeros.clear();
 
-    absToActive.fill (-1);
-    int idx = 0;
-    for (int ch = 0; ch < (int) absToActive.size(); ++ch)
-        if (activeInputs[ch])
-            absToActive[(size_t) ch] = idx++;
+    auto buildMap = [] (std::array<int, 256>& map, const juce::BigInteger& active)
+    {
+        map.fill (-1);
+        int idx = 0;
+        for (int ch = 0; ch < (int) map.size(); ++ch)
+            if (active[ch])
+                map[(size_t) ch] = idx++;
+    };
+    buildMap (absToActive, activeInputs);
+    buildMap (absToActiveOut, activeOutputs);
 
-    inputNames = names;
+    inputNames = inNames;
+    outputNames = outNames;
     deviceSampleRate = sampleRate;
     blockSize = maxBlockSize;
     latencySamples = juce::jmax (0, inputLatency) + juce::jmax (0, outputLatency);
@@ -102,6 +128,8 @@ void TapeEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
              device->getCurrentBufferSizeSamples(),
              device->getActiveInputChannels(),
              device->getInputChannelNames(),
+             device->getActiveOutputChannels(),
+             device->getOutputChannelNames(),
              device->getInputLatencyInSamples(),
              device->getOutputLatencyInSamples());
 }
@@ -177,14 +205,32 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     if (rp != nullptr && rp->startPos.load() < 0)
         rp->startPos.store (pos);
 
-    float* outL = numOutputs > 0 ? outputs[0] : nullptr;
-    float* outR = numOutputs > 1 ? outputs[1] : nullptr;
+    float* mixL = mixBus.getWritePointer (0);
+    float* mixR = mixBus.getWritePointer (1);
+    juce::FloatVectorOperations::clear (mixL, n);
+    juce::FloatVectorOperations::clear (mixR, n);
+
+    auto inputFor = [&] (int absCh) -> const float*
+    {
+        const int a = juce::isPositiveAndBelow (absCh, (int) absToActive.size()) ? absToActive[(size_t) absCh] : -1;
+        return juce::isPositiveAndBelow (a, numInputs) ? inputs[a] : nullptr;
+    };
+
+    // Adds a signal to every device output set in a mask.
+    auto sendToOutputs = [&] (const float* sig, ChannelMask mask)
+    {
+        for (int ch = 0; mask != 0 && ch < kMaxRoutedChannels; ++ch, mask >>= 1)
+            if (mask & 1u)
+            {
+                const int a = absToActiveOut[(size_t) ch];
+                if (juce::isPositiveAndBelow (a, numOutputs) && outputs[a] != nullptr)
+                    juce::FloatVectorOperations::add (outputs[a], sig, n);
+            }
+    };
 
     for (int t = 0; t < kNumTracks; ++t)
     {
-        const int ch = inputChannel[(size_t) t].load (std::memory_order_relaxed);
-        const int active = juce::isPositiveAndBelow (ch, (int) absToActive.size()) ? absToActive[(size_t) ch] : -1;
-        const float* src = juce::isPositiveAndBelow (active, numInputs) ? inputs[active] : nullptr;
+        const float* src = inputFor (inputChannel[(size_t) t].load (std::memory_order_relaxed));
         const bool isArmed = armed[(size_t) t].load (std::memory_order_relaxed);
 
         // --- Record: push every armed track, silence if its input vanished,
@@ -231,13 +277,31 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         {
             raisePeak (trackPeak[(size_t) t], peakOf (mon, n));
 
-            if (outL != nullptr) juce::FloatVectorOperations::add (outL, mon, n);
-            if (outR != nullptr) juce::FloatVectorOperations::add (outR, mon, n);
+            if (trackToMix[(size_t) t].load (std::memory_order_relaxed))
+            {
+                juce::FloatVectorOperations::add (mixL, mon, n);
+                juce::FloatVectorOperations::add (mixR, mon, n);
+            }
+
+            sendToOutputs (mon, trackOutputs[(size_t) t].load (std::memory_order_relaxed));
         }
     }
 
-    if (outL != nullptr) { raisePeak (masterPeak[0], peakOf (outL, n)); masterEnergy[0].add (outL, n); }
-    if (outR != nullptr) { raisePeak (masterPeak[1], peakOf (outR, n)); masterEnergy[1].add (outR, n); }
+    // --- Master bus: mix + patched-in inputs, then out to its outputs
+    for (int side = 0; side < 2; ++side)
+    {
+        float* bus = side == 0 ? mixL : mixR;
+        auto inMask = masterInputs[(size_t) side].load (std::memory_order_relaxed);
+
+        for (int ch = 0; inMask != 0 && ch < kMaxRoutedChannels; ++ch, inMask >>= 1)
+            if (inMask & 1u)
+                if (auto* in = inputFor (ch))
+                    juce::FloatVectorOperations::add (bus, in, n);
+
+        raisePeak (masterPeak[(size_t) side], peakOf (bus, n));
+        masterEnergy[(size_t) side].add (bus, n);
+        sendToOutputs (bus, masterOutputs[(size_t) side].load (std::memory_order_relaxed));
+    }
 
     // Only advance if nobody located us mid-block.
     if (isRolling)
@@ -347,6 +411,34 @@ void TapeEngine::setInput (int t, int ch)
         session->tracks[(size_t) t].input = ch;
         saveSession();
     }
+}
+
+void TapeEngine::setTrackToMix (int t, bool on)
+{
+    if (! juce::isPositiveAndBelow (t, kNumTracks)) return;
+    trackToMix[(size_t) t] = on;
+    if (session != nullptr) { session->tracks[(size_t) t].toMix = on; saveSession(); }
+}
+
+void TapeEngine::setTrackOutputs (int t, ChannelMask mask)
+{
+    if (! juce::isPositiveAndBelow (t, kNumTracks)) return;
+    trackOutputs[(size_t) t] = mask;
+    if (session != nullptr) { session->tracks[(size_t) t].outputs = mask; saveSession(); }
+}
+
+void TapeEngine::setMasterInputs (int side, ChannelMask mask)
+{
+    side &= 1;
+    masterInputs[(size_t) side] = mask;
+    if (session != nullptr) { session->master.inputs[(size_t) side] = mask; saveSession(); }
+}
+
+void TapeEngine::setMasterOutputs (int side, ChannelMask mask)
+{
+    side &= 1;
+    masterOutputs[(size_t) side] = mask;
+    if (session != nullptr) { session->master.outputs[(size_t) side] = mask; saveSession(); }
 }
 
 int TapeEngine::getNumArmedTracks() const noexcept

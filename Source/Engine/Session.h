@@ -8,12 +8,28 @@ namespace hawthorne
 
 static constexpr int kNumTracks = 24;
 
+/** Bit masks over absolute device channels (channel n = bit n), up to 64 channels. */
+using ChannelMask = juce::uint64;
+static constexpr int kMaxRoutedChannels = 64;
+
 struct TrackInfo
 {
     juce::String name;
-    int  input = -1;   // absolute device input channel, -1 = none
+    int  input = -1;          // absolute device input channel, -1 = none
     bool armed = false;
+    bool toMix = true;        // feeds the master bus
+    ChannelMask outputs = 0;  // direct outs to device outputs
 };
+
+/** The master is a stereo bus: the mix of the tracks plus any patched-in inputs. */
+struct MasterRouting
+{
+    std::array<ChannelMask, 2> inputs  { 0, 0 };          // device inputs summed into L / R
+    std::array<ChannelMask, 2> outputs { 1u << 0, 1u << 1 }; // L -> out 1, R -> out 2
+};
+
+juce::String maskToString (ChannelMask);          // "1,2,5" (1-based)
+ChannelMask  maskFromString (const juce::String&);
 
 //==============================================================================
 /**
@@ -50,6 +66,7 @@ public:
     double sampleRate = 48000.0;
     int    bitDepth   = 24;
     std::array<TrackInfo, kNumTracks> tracks;
+    MasterRouting master;
 
     /** Filled by load(): notes on anything repaired after a crash. */
     juce::StringArray recoveryLog;

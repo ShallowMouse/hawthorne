@@ -9,7 +9,7 @@ namespace
     void initDefaultTracks (std::array<TrackInfo, kNumTracks>& tracks)
     {
         for (int i = 0; i < kNumTracks; ++i)
-            tracks[(size_t) i] = { "Track " + juce::String (i + 1), i, false };
+            tracks[(size_t) i] = { "Track " + juce::String (i + 1), i, false, true, 0 };
     }
 
     juce::uint32 readLE32 (const juce::uint8* p)
@@ -120,7 +120,15 @@ std::unique_ptr<juce::XmlElement> Session::toXml() const
         te->setAttribute ("name", tr.name);
         te->setAttribute ("input", tr.input);
         te->setAttribute ("armed", tr.armed);
+        te->setAttribute ("toMix", tr.toMix);
+        te->setAttribute ("outputs", maskToString (tr.outputs));
     }
+
+    auto* me = root->createNewChildElement ("Master");
+    me->setAttribute ("inL",  maskToString (master.inputs[0]));
+    me->setAttribute ("inR",  maskToString (master.inputs[1]));
+    me->setAttribute ("outL", maskToString (master.outputs[0]));
+    me->setAttribute ("outR", maskToString (master.outputs[1]));
 
     return root;
 }
@@ -146,6 +154,16 @@ bool Session::fromXml (const juce::XmlElement& root, juce::String& error)
         tr.name  = te->getStringAttribute ("name", tr.name);
         tr.input = te->getIntAttribute ("input", tr.input);
         tr.armed = te->getBoolAttribute ("armed", false);
+        tr.toMix = te->getBoolAttribute ("toMix", true);
+        tr.outputs = maskFromString (te->getStringAttribute ("outputs"));
+    }
+
+    if (auto* me = root.getChildByName ("Master"))
+    {
+        master.inputs[0]  = maskFromString (me->getStringAttribute ("inL"));
+        master.inputs[1]  = maskFromString (me->getStringAttribute ("inR"));
+        master.outputs[0] = maskFromString (me->getStringAttribute ("outL", "1"));
+        master.outputs[1] = maskFromString (me->getStringAttribute ("outR", "2"));
     }
 
     return true;
@@ -179,6 +197,28 @@ bool Session::save (juce::String& error)
     }
 
     return true;
+}
+
+//==============================================================================
+juce::String maskToString (ChannelMask m)
+{
+    juce::StringArray parts;
+    for (int ch = 0; ch < kMaxRoutedChannels; ++ch)
+        if ((m >> ch) & 1u)
+            parts.add (juce::String (ch + 1));
+    return parts.joinIntoString (",");
+}
+
+ChannelMask maskFromString (const juce::String& s)
+{
+    ChannelMask m = 0;
+    for (auto& p : juce::StringArray::fromTokens (s, ",", {}))
+    {
+        const int ch = p.trim().getIntValue() - 1;
+        if (juce::isPositiveAndBelow (ch, kMaxRoutedChannels))
+            m |= (ChannelMask) 1 << ch;
+    }
+    return m;
 }
 
 //==============================================================================

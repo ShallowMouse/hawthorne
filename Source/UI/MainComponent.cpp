@@ -60,8 +60,9 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     juce::LookAndFeel::setDefaultLookAndFeel (&lnf);
     setWantsKeyboardFocus (true);
 
-    for (auto* b : { &newButton, &openButton, &audioButton })
+    for (auto* b : { &newButton, &openButton, &routingButton, &audioButton })
         addAndMakeVisible (b);
+    routingButton.onClick = [this] { showRouting(); };
 
     newButton.onClick   = [this] { newSession(); };
     openButton.onClick  = [this] { openSession(); };
@@ -192,6 +193,7 @@ void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
         props.saveIfNeeded();
     }
 
+    updateRoutingDevice();
     refreshInputChoices();
 }
 
@@ -222,6 +224,35 @@ void MainComponent::refreshInputChoices()
 
     for (int t = 0; t < kNumTracks; ++t)
         strips[t]->setInputChoices (names, active, session != nullptr ? session->tracks[(size_t) t].input : -1);
+
+    if (routingWindow != nullptr)
+        routingWindow->getMatrix().repaint();
+}
+
+void MainComponent::showRouting()
+{
+    if (routingWindow == nullptr)
+    {
+        routingWindow = std::make_unique<RoutingWindow> (engine, [this] { return session.get(); });
+        routingWindow->getMatrix().onChanged = [this] { refreshInputChoices(); };
+        updateRoutingDevice();
+        routingWindow->fitToMatrix();
+    }
+
+    routingWindow->setVisible (true);
+    routingWindow->toFront (true);
+}
+
+void MainComponent::updateRoutingDevice()
+{
+    if (routingWindow == nullptr)
+        return;
+
+    if (auto* dev = deviceManager.getCurrentAudioDevice())
+        routingWindow->getMatrix().setDevice (dev->getInputChannelNames(), dev->getActiveInputChannels(),
+                                              dev->getOutputChannelNames(), dev->getActiveOutputChannels());
+    else
+        routingWindow->getMatrix().setDevice ({}, {}, {}, {});
 }
 
 void MainComponent::showAudioSettings()
@@ -559,7 +590,8 @@ void MainComponent::paint (juce::Graphics& g)
 
     g.setFont (monoFont (14.0f, true));
     g.setColour (Colours::text);
-    auto sessionArea = headerArea.withTrimmedLeft (330).withTrimmedRight (420);
+    const int firstButtonX = updateButton.isVisible() ? updateButton.getX() : newButton.getX();
+    auto sessionArea = headerArea.withTrimmedLeft (330).withRight (firstButtonX - 16);
     g.drawText (session != nullptr ? session->getName() : "No session", sessionArea, juce::Justification::centredLeft);
     g.setColour (Colours::textDim);
     g.setFont (monoFont (11.0f));
@@ -602,6 +634,8 @@ void MainComponent::resized()
     {
         auto h = headerArea.reduced (12, 11);
         audioButton.setBounds (h.removeFromRight (150));
+        h.removeFromRight (8);
+        routingButton.setBounds (h.removeFromRight (100));
         h.removeFromRight (8);
         openButton.setBounds (h.removeFromRight (90));
         h.removeFromRight (8);
