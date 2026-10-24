@@ -6,10 +6,15 @@ namespace hawthorne
 
 namespace
 {
-    void initDefaultTracks (std::array<TrackInfo, kNumTracks>& tracks)
+    void initDefaultTracks (std::array<TrackInfo, kMaxTracks>& tracks)
     {
-        for (int i = 0; i < kNumTracks; ++i)
-            tracks[(size_t) i] = { "Track " + juce::String (i + 1), i, false, true, 0 };
+        for (int i = 0; i < kMaxTracks; ++i)
+        {
+            TrackInfo t;
+            t.name  = "Track " + juce::String (i + 1);
+            t.input = i;
+            tracks[(size_t) i] = t;
+        }
     }
 
     juce::uint32 readLE32 (const juce::uint8* p)
@@ -23,7 +28,7 @@ namespace
 
 //==============================================================================
 std::unique_ptr<Session> Session::create (const juce::File& parentFolder, const juce::String& name,
-                                          double sampleRate, juce::String& error)
+                                          double sampleRate, int numTracks, juce::String& error)
 {
     const auto cleanName = juce::File::createLegalFileName (name.trim());
 
@@ -44,7 +49,11 @@ std::unique_ptr<Session> Session::create (const juce::File& parentFolder, const 
     std::unique_ptr<Session> s (new Session());
     s->sessionFile = folder.getChildFile (cleanName + fileExtension);
     s->sampleRate  = sampleRate > 0 ? sampleRate : 48000.0;
+    s->numTracks   = juce::jlimit (1, kMaxTracks, numTracks);
     initDefaultTracks (s->tracks);
+    s->info.set ("Title", cleanName);
+    s->info.set ("Date", juce::Time::getCurrentTime().formatted ("%d %b %Y"));
+    s->info.set ("Reel No.", "1");
 
     if (! s->getAudioFolder().createDirectory())
     {
@@ -85,7 +94,7 @@ std::unique_ptr<Session> Session::load (const juce::File& file, juce::String& er
     s->getAudioFolder().createDirectory();
 
     // A crash mid-record leaves audio on disk beyond what the header says.
-    for (int t = 0; t < kNumTracks; ++t)
+    for (int t = 0; t < kMaxTracks; ++t)
     {
         const auto tape = s->getTapeFile (t);
         if (! tape.existsAsFile())
@@ -101,18 +110,90 @@ std::unique_ptr<Session> Session::load (const juce::File& file, juce::String& er
                                 + juce::String ((double) frames / s->sampleRate, 1) + " s)");
     }
 
+    juce::String padError;
+    s->equaliseTapeLengths (padError);
+    if (padError.isNotEmpty())
+        s->recoveryLog.add (padError);
+
     return s;
+}
+
+//==============================================================================
+const juce::StringArray& Session::infoFields()
+{
+    static const juce::StringArray fields { "Artist", "Title", "Client / Label", "Producer", "Engineer", "Tape Op",
+                                            "Studio", "Date", "Job No.", "Reel No.", "Tape Stock", "Speed", "EQ",
+                                            "Alignment", "Noise Reduction", "Tones", "Notes" };
+    return fields;
+}
+
+int Session::addMarker (juce::int64 position, const juce::String& name)
+{
+    markers.push_back ({ juce::jmax ((juce::int64) 0, position), name });
+    sortMarkers();
+
+    for (int i = (int) markers.size(); --i >= 0;)
+        if (markers[(size_t) i].position == position && markers[(size_t) i].name == name)
+            return i;
+    return -1;
+}
+
+void Session::sortMarkers()
+{
+    std::stable_sort (markers.begin(), markers.end(),
+                      [] (const Marker& a, const Marker& b) { return a.position < b.position; });
+}
+
+juce::int64 Session::getReelLength() const
+{
+    juce::int64 reel = 0;
+
+    for (int t = 0; t < kMaxTracks; ++t)
+    {
+        WavLayout l;
+        const auto f = getTapeFile (t);
+        if (f.existsAsFile() && readWavLayout (f, l))
+            reel = juce::jmax (reel, l.headerFrames);
+    }
+
+    return reel;
+}
+
+juce::Array<int> Session::equaliseTapeLengths (juce::String& error)
+{
+    juce::Array<int> changed;
+    const auto reel = getReelLength();
+
+    for (int t = 0; t < kMaxTracks; ++t)
+    {
+        WavLayout l;
+        const auto f = getTapeFile (t);
+
+        if (! f.existsAsFile() || ! readWavLayout (f, l) || l.headerFrames >= reel)
+            continue;
+
+        TapeFile tape;
+        juce::String err;
+        if (tape.open (f, sampleRate, err) && tape.extendTo (reel) && tape.close())
+            changed.add (t);
+        else
+            error = "Track " + juce::String (t + 1) + ": could not pad the tape to the reel length. " + err;
+    }
+
+    return changed;
 }
 
 //==============================================================================
 std::unique_ptr<juce::XmlElement> Session::toXml() const
 {
     auto root = std::make_unique<juce::XmlElement> ("HawthorneSession");
-    root->setAttribute ("formatVersion", 2);
+    root->setAttribute ("formatVersion", 3);
     root->setAttribute ("sampleRate", sampleRate);
     root->setAttribute ("bitDepth", bitDepth);
+    root->setAttribute ("numTracks", numTracks);
+    root->setAttribute ("nextTake", nextTake);
 
-    for (int t = 0; t < kNumTracks; ++t)
+    for (int t = 0; t < kMaxTracks; ++t)
     {
         const auto& tr = tracks[(size_t) t];
         auto* te = root->createNewChildElement ("Track");
@@ -121,14 +202,47 @@ std::unique_ptr<juce::XmlElement> Session::toXml() const
         te->setAttribute ("input", tr.input);
         te->setAttribute ("armed", tr.armed);
         te->setAttribute ("toMix", tr.toMix);
-        te->setAttribute ("outputs", maskToString (tr.outputs));
+        te->setAttribute ("outputs", channelsToString (tr.outputs));
+        if (tr.instrument.isNotEmpty()) te->setAttribute ("instrument", tr.instrument);
+        if (tr.mic.isNotEmpty())        te->setAttribute ("mic", tr.mic);
+        if (tr.notes.isNotEmpty())      te->setAttribute ("notes", tr.notes);
     }
 
     auto* me = root->createNewChildElement ("Master");
-    me->setAttribute ("inL",  maskToString (master.inputs[0]));
-    me->setAttribute ("inR",  maskToString (master.inputs[1]));
-    me->setAttribute ("outL", maskToString (master.outputs[0]));
-    me->setAttribute ("outR", maskToString (master.outputs[1]));
+    me->setAttribute ("inL",  channelsToString (master.inputs[0]));
+    me->setAttribute ("inR",  channelsToString (master.inputs[1]));
+    me->setAttribute ("outL", channelsToString (master.outputs[0]));
+    me->setAttribute ("outR", channelsToString (master.outputs[1]));
+
+    auto* ie = root->createNewChildElement ("Info");
+    for (auto& key : info.getAllKeys())
+    {
+        auto* f = ie->createNewChildElement ("Field");
+        f->setAttribute ("name", key);
+        f->setAttribute ("value", info[key]);
+    }
+
+    auto* mk = root->createNewChildElement ("Markers");
+    for (auto& m : markers)
+    {
+        auto* e = mk->createNewChildElement ("Marker");
+        e->setAttribute ("pos", juce::String (m.position));
+        e->setAttribute ("name", m.name);
+    }
+
+    auto* tl = root->createNewChildElement ("TakeLog");
+    for (auto& tk : takeLog)
+    {
+        auto* e = tl->createNewChildElement ("Take");
+        e->setAttribute ("take", tk.take);
+        e->setAttribute ("when", tk.when);
+        e->setAttribute ("start", juce::String (tk.start));
+        e->setAttribute ("end", juce::String (tk.end));
+        e->setAttribute ("tracks", tk.tracks);
+        e->setAttribute ("song", tk.song);
+        e->setAttribute ("status", tk.status);
+        e->setAttribute ("comments", tk.comments);
+    }
 
     return root;
 }
@@ -137,6 +251,8 @@ bool Session::fromXml (const juce::XmlElement& root, juce::String& error)
 {
     sampleRate = root.getDoubleAttribute ("sampleRate", 48000.0);
     bitDepth   = 24;
+    numTracks  = juce::jlimit (1, kMaxTracks, root.getIntAttribute ("numTracks", kDefaultTracks));
+    nextTake   = juce::jmax (1, root.getIntAttribute ("nextTake", 1));
 
     if (sampleRate < 8000.0 || sampleRate > 768000.0)
     {
@@ -147,24 +263,51 @@ bool Session::fromXml (const juce::XmlElement& root, juce::String& error)
     for (auto* te : root.getChildWithTagNameIterator ("Track"))
     {
         const int t = te->getIntAttribute ("index", -1);
-        if (! juce::isPositiveAndBelow (t, kNumTracks))
+        if (! juce::isPositiveAndBelow (t, kMaxTracks))
             continue;
 
         auto& tr = tracks[(size_t) t];
-        tr.name  = te->getStringAttribute ("name", tr.name);
-        tr.input = te->getIntAttribute ("input", tr.input);
-        tr.armed = te->getBoolAttribute ("armed", false);
-        tr.toMix = te->getBoolAttribute ("toMix", true);
-        tr.outputs = maskFromString (te->getStringAttribute ("outputs"));
+        tr.name       = te->getStringAttribute ("name", tr.name);
+        tr.input      = te->getIntAttribute ("input", tr.input);
+        tr.armed      = te->getBoolAttribute ("armed", false);
+        tr.toMix      = te->getBoolAttribute ("toMix", true);
+        tr.outputs    = channelsFromString (te->getStringAttribute ("outputs"));
+        tr.instrument = te->getStringAttribute ("instrument");
+        tr.mic        = te->getStringAttribute ("mic");
+        tr.notes      = te->getStringAttribute ("notes");
     }
 
     if (auto* me = root.getChildByName ("Master"))
     {
-        master.inputs[0]  = maskFromString (me->getStringAttribute ("inL"));
-        master.inputs[1]  = maskFromString (me->getStringAttribute ("inR"));
-        master.outputs[0] = maskFromString (me->getStringAttribute ("outL", "1"));
-        master.outputs[1] = maskFromString (me->getStringAttribute ("outR", "2"));
+        master.inputs[0]  = channelsFromString (me->getStringAttribute ("inL"));
+        master.inputs[1]  = channelsFromString (me->getStringAttribute ("inR"));
+        master.outputs[0] = channelsFromString (me->getStringAttribute ("outL", "1"));
+        master.outputs[1] = channelsFromString (me->getStringAttribute ("outR", "2"));
     }
+
+    if (auto* ie = root.getChildByName ("Info"))
+        for (auto* f : ie->getChildWithTagNameIterator ("Field"))
+            info.set (f->getStringAttribute ("name"), f->getStringAttribute ("value"));
+
+    if (auto* mk = root.getChildByName ("Markers"))
+        for (auto* e : mk->getChildWithTagNameIterator ("Marker"))
+            markers.push_back ({ e->getStringAttribute ("pos").getLargeIntValue(), e->getStringAttribute ("name") });
+    sortMarkers();
+
+    if (auto* tl = root.getChildByName ("TakeLog"))
+        for (auto* e : tl->getChildWithTagNameIterator ("Take"))
+        {
+            TakeEntry tk;
+            tk.take     = e->getIntAttribute ("take");
+            tk.when     = e->getStringAttribute ("when");
+            tk.start    = e->getStringAttribute ("start").getLargeIntValue();
+            tk.end      = e->getStringAttribute ("end").getLargeIntValue();
+            tk.tracks   = e->getStringAttribute ("tracks");
+            tk.song     = e->getStringAttribute ("song");
+            tk.status   = e->getStringAttribute ("status");
+            tk.comments = e->getStringAttribute ("comments");
+            takeLog.push_back (tk);
+        }
 
     return true;
 }
@@ -200,25 +343,25 @@ bool Session::save (juce::String& error)
 }
 
 //==============================================================================
-juce::String maskToString (ChannelMask m)
+juce::String channelsToString (const ChannelList& list)
 {
     juce::StringArray parts;
-    for (int ch = 0; ch < kMaxRoutedChannels; ++ch)
-        if ((m >> ch) & 1u)
-            parts.add (juce::String (ch + 1));
+    for (auto ch : list)
+        parts.add (juce::String (ch + 1));
     return parts.joinIntoString (",");
 }
 
-ChannelMask maskFromString (const juce::String& s)
+ChannelList channelsFromString (const juce::String& s)
 {
-    ChannelMask m = 0;
+    ChannelList list;
     for (auto& p : juce::StringArray::fromTokens (s, ",", {}))
     {
         const int ch = p.trim().getIntValue() - 1;
-        if (juce::isPositiveAndBelow (ch, kMaxRoutedChannels))
-            m |= (ChannelMask) 1 << ch;
+        if (ch >= 0)
+            list.addIfNotAlreadyThere (ch);
     }
-    return m;
+    list.sort();
+    return list;
 }
 
 //==============================================================================
@@ -398,17 +541,32 @@ bool TapeFile::seek (juce::int64 frame)
     if (out == nullptr || frame < 0)
         return false;
 
-    if (frame > length)
-    {
-        // Past the end of the tape: lay down silence up to the new position.
-        if (! out->setPosition (layout.dataStart + length * 3))
-            return false;
-        position = length;
-        return writeFrames (nullptr, frame - length);
-    }
+    if (frame > length && ! extendTo (frame))   // past the end: lay down silence first
+        return false;
 
     position = frame;
     return out->setPosition (layout.dataStart + frame * 3);
+}
+
+bool TapeFile::extendTo (juce::int64 frames)
+{
+    if (out == nullptr)
+        return false;
+
+    if (frames <= length)
+        return true;
+
+    if (layout.dataStart + frames * 3 > maxRiffBytes)
+        return false;
+
+    // Growing the file reads back as zeros (sparse on Linux, lazily zeroed on NTFS),
+    // so even hours of padding are instant.
+    if (! out->setPosition (layout.dataStart + frames * 3) || out->truncate().failed())
+        return false;
+
+    length = frames;
+    position = frames;
+    return flushHeader();
 }
 
 bool TapeFile::write (const float* samples, int numSamples)

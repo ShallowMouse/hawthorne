@@ -11,7 +11,7 @@ namespace hawthorne
 
 //==============================================================================
 /**
-    The 24-track machine.
+    The multitrack machine (up to 96 tracks).
 
     Realtime rules (audio thread):
       - no locks, no allocation, no file I/O
@@ -49,11 +49,15 @@ public:
     bool isArmed (int track) const noexcept { return armed[(size_t) track].load(); }
     void setInput (int track, int absoluteInputChannel);
 
-    // Routing (all lock-free for the audio thread; saved with the session)
+    int getNumTracks() const noexcept { return numTracks.load(); }
+    /** Change the session's track count (not while recording). */
+    juce::String setNumTracks (int);
+
+    // Routing (swapped in atomically for the audio thread; saved with the session)
     void setTrackToMix (int track, bool);
-    void setTrackOutputs (int track, ChannelMask deviceOutputs);
-    void setMasterInputs (int side, ChannelMask deviceInputs);    // side 0 = L, 1 = R
-    void setMasterOutputs (int side, ChannelMask deviceOutputs);
+    void setTrackOutputs (int track, const ChannelList& deviceOutputs);
+    void setMasterInputs (int side, const ChannelList& deviceInputs);    // side 0 = L, 1 = R
+    void setMasterOutputs (int side, const ChannelList& deviceOutputs);
 
     /** Peak since last call (0..1+). Safe from the message thread. */
     float popTrackPeak (int track) noexcept { return trackPeak[(size_t) track].exchange (0.0f); }
@@ -78,6 +82,8 @@ public:
     double getRecordTimeRemainingSeconds() const;
     /** Length of a track's tape in samples (0 = blank). Message thread. */
     juce::int64 getTapeLength (int track) const;
+    /** Length of the reel (longest track). Message thread. */
+    juce::int64 getReelLength() const;
     /** Peak disk-buffer fill seen during the current/last take, 0..1. */
     float getDiskBufferPeak() const noexcept { return diskBufferPeak.load(); }
 
@@ -88,9 +94,13 @@ public:
     /** Called on the message thread with anything the user must know about. */
     std::function<void (const juce::String& title, const juce::String& message)> onAlert;
 
+    /** Called on the message thread after every take; the entry is already in the take log. */
+    std::function<void (const TakeEntry&)> onTakeLogged;
+
     //==========================================================================
     // Tunables (exposed for tests)
-    static constexpr double fifoSeconds          = 20.0;
+    static constexpr double fifoSeconds          = 20.0;     // per track, reduced when many tracks are armed
+    static constexpr double fifoBudgetBytes      = 256.0 * 1024.0 * 1024.0;
     static constexpr double flushIntervalSeconds = 1.0;
     static constexpr juce::int64 minFreeBytesToRecord = 500LL * 1024 * 1024;
     static constexpr juce::int64 stopRecordingBelowBytes = 200LL * 1024 * 1024;
@@ -125,12 +135,20 @@ private:
     struct PlaybackGraph
     {
         std::vector<std::shared_ptr<juce::BufferingAudioReader>> keepAlive;
-        std::array<std::vector<Segment>, kNumTracks> tracks;
+        std::array<std::vector<Segment>, kMaxTracks> tracks;
+    };
+
+    struct RoutingTable
+    {
+        std::array<int, kMaxTracks>              input;     // absolute device input, -1 = none
+        std::array<bool, kMaxTracks>             toMix;
+        std::array<std::vector<int>, kMaxTracks> outputs;   // absolute device outputs
+        std::array<std::vector<int>, 2>          masterIn, masterOut;
     };
 
     struct RecordPass
     {
-        std::array<std::shared_ptr<RecordingStream>, kNumTracks> streams;
+        std::array<std::shared_ptr<RecordingStream>, kMaxTracks> streams;
         std::atomic<juce::int64> startPos { -1 };
         int latency = 0;
     };
@@ -143,6 +161,7 @@ private:
     juce::String beginRecordPass();
     void endRecordPass();
     void rebuildPlaybackGraph();
+    void rebuildRouting();
     void primeReaders (juce::int64 pos);
     bool waitForAudioThread();
     template <typename T> void retire (std::unique_ptr<T>);
@@ -157,19 +176,21 @@ private:
     juce::TimeSliceThread prefetchThread { "Hawthorne Playback Prefetch" };
     DiskWriterThread diskThread;
     std::map<juce::String, std::shared_ptr<juce::BufferingAudioReader>> readerCache;
-    std::array<int, kNumTracks> tapeGeneration {};
+    std::array<int, kMaxTracks> tapeGeneration {};
 
     std::atomic<PlaybackGraph*> graph { nullptr };
     std::atomic<RecordPass*>    pass  { nullptr };
+    std::atomic<RoutingTable*>  routing { nullptr };
+    std::unique_ptr<RoutingTable> ownedRouting;
     std::unique_ptr<PlaybackGraph> ownedGraph;
     std::unique_ptr<RecordPass>    ownedPass;
     std::vector<std::shared_ptr<void>> graveyard; // things we could not prove were released
 
     std::atomic<bool> playing { false }, recording { false };
     std::atomic<juce::int64> position { 0 };
-    std::array<std::atomic<bool>, kNumTracks> armed;
-    std::array<std::atomic<int>,  kNumTracks> inputChannel;
-    std::array<std::atomic<float>, kNumTracks> trackPeak;
+    std::atomic<int> numTracks { kDefaultTracks };
+    std::array<std::atomic<bool>, kMaxTracks> armed;
+    std::array<std::atomic<float>, kMaxTracks> trackPeak;
     std::array<std::atomic<float>, 2> masterPeak;
 
     struct Energy
@@ -193,7 +214,7 @@ private:
             return c > 0 ? std::sqrt (s / (float) c) : 0.0f;
         }
     };
-    std::array<Energy, kNumTracks> trackEnergy;
+    std::array<Energy, kMaxTracks> trackEnergy;
     std::array<Energy, 2> masterEnergy;
 
     // Device state
@@ -204,9 +225,6 @@ private:
     juce::StringArray inputNames, outputNames;
     std::array<int, 256> absToActive {}, absToActiveOut {};
     juce::AudioBuffer<float> mixBus;
-    std::array<std::atomic<bool>, kNumTracks>        trackToMix;
-    std::array<std::atomic<ChannelMask>, kNumTracks> trackOutputs;
-    std::array<std::atomic<ChannelMask>, 2>          masterInputs, masterOutputs;
     int maxBlock = 0;
     juce::AudioBuffer<float> trackBuffers, zeros;
 

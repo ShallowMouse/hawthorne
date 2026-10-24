@@ -14,8 +14,8 @@ void RoutingMatrix::setDevice (const juce::StringArray& in, const juce::BigInteg
 {
     inNames = in;   inActive = inA;
     outNames = out; outActive = outA;
-    numIn  = juce::jmin (in.size(),  kMaxRoutedChannels);
-    numOut = juce::jmin (out.size(), kMaxRoutedChannels);
+    numIn  = in.size();
+    numOut = out.size();
     layout();
     repaint();
 }
@@ -23,14 +23,14 @@ void RoutingMatrix::setDevice (const juce::StringArray& in, const juce::BigInteg
 void RoutingMatrix::layout()
 {
     const int w = labelW + juce::jmax (1, numIn) * cell + colGap + cell + 4 + juce::jmax (1, numOut) * cell + 12;
-    const int h = titleH + numbersH + kNumTracks * cell + rowGap + 2 * cell + 12;
+    const int h = titleH + numbersH + tracks() * cell + rowGap + 2 * cell + 12;
     setSize (w, h);
 }
 
 //==============================================================================
 int RoutingMatrix::rowY (int row) const
 {
-    return titleH + numbersH + row * cell + (row >= kNumTracks ? rowGap : 0);
+    return titleH + numbersH + row * cell + (row >= tracks() ? rowGap : 0);
 }
 
 int RoutingMatrix::colX (const Col& c) const
@@ -51,7 +51,7 @@ int RoutingMatrix::colX (const Col& c) const
 
 int RoutingMatrix::rowAt (int y) const
 {
-    for (int r = 0; r < numRows; ++r)
+    for (int r = 0; r < numRows(); ++r)
         if (y >= rowY (r) && y < rowY (r) + cell)
             return r;
     return -1;
@@ -91,9 +91,9 @@ bool RoutingMatrix::isOn (int row, const Col& c) const
     if (s == nullptr || row < 0)
         return false;
 
-    const auto bit = [&] (ChannelMask m) { return c.channel >= 0 && ((m >> c.channel) & 1u) != 0; };
+    const auto bit = [&] (const ChannelList& l) { return l.contains (c.channel); };
 
-    if (row < kNumTracks)
+    if (row < tracks())
     {
         const auto& tr = s->tracks[(size_t) row];
         switch (c.kind)
@@ -106,7 +106,7 @@ bool RoutingMatrix::isOn (int row, const Col& c) const
         return false;
     }
 
-    const int side = row - kNumTracks;
+    const int side = row - tracks();
     switch (c.kind)
     {
         case ColKind::input:  return bit (s->master.inputs[(size_t) side]);
@@ -119,8 +119,8 @@ bool RoutingMatrix::isOn (int row, const Col& c) const
 
 juce::String RoutingMatrix::rowName (int row) const
 {
-    if (row >= kNumTracks)
-        return row == kNumTracks ? "MASTER L" : "MASTER R";
+    if (row >= tracks())
+        return row == tracks() ? "MASTER L" : "MASTER R";
 
     auto* s = getSession();
     return juce::String (row + 1).paddedLeft ('0', 2) + "  "
@@ -175,10 +175,10 @@ void RoutingMatrix::paint (juce::Graphics& g)
     }
 
     // Rows
-    for (int r = 0; r < numRows; ++r)
+    for (int r = 0; r < numRows(); ++r)
     {
         const int y = rowY (r);
-        const bool isMaster = r >= kNumTracks;
+        const bool isMaster = r >= tracks();
         const bool hotRow = r == hoverRow;
 
         g.setFont (isMaster ? monoFont (12.0f, true) : uiFont (12.0f, hotRow));
@@ -217,7 +217,7 @@ void RoutingMatrix::paint (juce::Graphics& g)
 
     // Divider above the master rows
     g.setColour (Colours::mustardDim);
-    g.drawHorizontalLine (rowY (kNumTracks) - rowGap / 2, 8.0f, (float) getWidth() - 8.0f);
+    g.drawHorizontalLine (rowY (tracks()) - rowGap / 2, 8.0f, (float) getWidth() - 8.0f);
 }
 
 //==============================================================================
@@ -248,7 +248,7 @@ juce::String RoutingMatrix::getTooltip()
     if (! isEnabled (hoverCol))
         return colName (hoverCol) + " is not enabled - turn it on in Audio Settings";
 
-    const bool isMaster = hoverRow >= kNumTracks;
+    const bool isMaster = hoverRow >= tracks();
     if (isMaster && hoverCol.kind == ColKind::mix)
         return {};
 
@@ -270,9 +270,14 @@ void RoutingMatrix::mouseDown (const juce::MouseEvent& e)
     if (s == nullptr || r < 0 || c.kind == ColKind::none || ! isEnabled (c))
         return;
 
-    const auto flip = [&] (ChannelMask m) { return m ^ ((ChannelMask) 1 << c.channel); };
+    const auto flip = [&] (ChannelList l)
+    {
+        if (l.contains (c.channel)) l.removeFirstMatchingValue (c.channel);
+        else                        { l.add (c.channel); l.sort(); }
+        return l;
+    };
 
-    if (r < kNumTracks)
+    if (r < tracks())
     {
         auto& tr = s->tracks[(size_t) r];
         switch (c.kind)
@@ -285,7 +290,7 @@ void RoutingMatrix::mouseDown (const juce::MouseEvent& e)
     }
     else
     {
-        const int side = r - kNumTracks;
+        const int side = r - tracks();
         switch (c.kind)
         {
             case ColKind::input:  engine.setMasterInputs (side, flip (s->master.inputs[(size_t) side])); break;

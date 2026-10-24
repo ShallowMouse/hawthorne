@@ -37,7 +37,14 @@ private:
     struct Col { ColKind kind = ColKind::none; int channel = -1; };
 
     static constexpr int cell = 22, labelW = 150, titleH = 22, numbersH = 30, rowGap = 10, colGap = 12;
-    static constexpr int numRows = kNumTracks + 2;
+    int tracks() const { auto* s = getSession(); return s != nullptr ? s->numTracks : kDefaultTracks; }
+    int numRows() const { return tracks() + 2; }
+
+public:
+    /** Call when the track count changes. */
+    void tracksChanged() { layout(); repaint(); }
+
+private:
 
     void layout();
     int rowAt (int y) const;

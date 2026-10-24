@@ -2,15 +2,18 @@
 
 #include <juce_core/juce_core.h>
 #include <array>
+#include <vector>
 
 namespace hawthorne
 {
 
-static constexpr int kNumTracks = 24;
+static constexpr int kMaxTracks     = 96;
+static constexpr int kDefaultTracks = 24;
 
-/** Bit masks over absolute device channels (channel n = bit n), up to 64 channels. */
-using ChannelMask = juce::uint64;
-static constexpr int kMaxRoutedChannels = 64;
+/** Absolute device channels (0-based), kept sorted. */
+using ChannelList = juce::Array<int>;
+juce::String channelsToString (const ChannelList&);      // "1,2,5" (1-based)
+ChannelList  channelsFromString (const juce::String&);
 
 struct TrackInfo
 {
@@ -18,37 +21,53 @@ struct TrackInfo
     int  input = -1;          // absolute device input channel, -1 = none
     bool armed = false;
     bool toMix = true;        // feeds the master bus
-    ChannelMask outputs = 0;  // direct outs to device outputs
+    ChannelList outputs;      // direct outs
+
+    // Track sheet
+    juce::String instrument, mic, notes;
 };
 
 /** The master is a stereo bus: the mix of the tracks plus any patched-in inputs. */
 struct MasterRouting
 {
-    std::array<ChannelMask, 2> inputs  { 0, 0 };          // device inputs summed into L / R
-    std::array<ChannelMask, 2> outputs { 1u << 0, 1u << 1 }; // L -> out 1, R -> out 2
+    std::array<ChannelList, 2> inputs, outputs;
+    MasterRouting() { outputs[0].add (0); outputs[1].add (1); }
 };
 
-juce::String maskToString (ChannelMask);          // "1,2,5" (1-based)
-ChannelMask  maskFromString (const juce::String&);
+struct Marker
+{
+    juce::int64 position = 0;
+    juce::String name;
+};
+
+/** One line of the recording sheet - added automatically for every take. */
+struct TakeEntry
+{
+    int take = 0;
+    juce::String when;              // local date / time the take started
+    juce::int64 start = 0, end = 0; // tape position
+    juce::String tracks;            // e.g. "1-4, 7"
+    juce::String song, status, comments;
+};
 
 //==============================================================================
 /**
-    A reel of 24-track tape.
+    A reel of multitrack tape (up to 96 tracks).
 
     Each track is ONE continuous mono WAV file (Audio/Track01.wav ...). Recording
-    overwrites that file in place at the tape position - exactly like tape there
-    is no undo. Message thread only.
+    overwrites that file in place at the tape position - like tape there is no
+    undo. Every recorded track file is kept the same length as the reel; unrecorded
+    stretches are silence. Message thread only.
 */
 class Session
 {
 public:
     static constexpr const char* fileExtension = ".hawthorne";
 
-    /** Creates <parentFolder>/<name>/<name>.hawthorne plus an Audio folder. */
     static std::unique_ptr<Session> create (const juce::File& parentFolder, const juce::String& name,
-                                            double sampleRate, juce::String& error);
+                                            double sampleRate, int numTracks, juce::String& error);
 
-    /** Loads a session and repairs any tape left mid-write by a crash. */
+    /** Loads a session, repairs any tape left mid-write by a crash and evens up tape lengths. */
     static std::unique_ptr<Session> load (const juce::File& sessionFile, juce::String& error);
 
     /** Atomic save (temp file + rename, previous version kept as .bak). */
@@ -63,10 +82,29 @@ public:
         return getAudioFolder().getChildFile ("Track" + juce::String (track + 1).paddedLeft ('0', 2) + ".wav");
     }
 
+    /** Longest recorded track, in samples. */
+    juce::int64 getReelLength() const;
+
+    /** Pads every recorded track with silence up to the reel length.
+        Returns the tracks whose files changed. */
+    juce::Array<int> equaliseTapeLengths (juce::String& error);
+
+    // Markers - always kept in time order
+    int  addMarker (juce::int64 position, const juce::String& name);   // returns its index
+    void sortMarkers();
+
+    // Session sheet fields, in display order
+    static const juce::StringArray& infoFields();
+
     double sampleRate = 48000.0;
     int    bitDepth   = 24;
-    std::array<TrackInfo, kNumTracks> tracks;
+    int    numTracks  = kDefaultTracks;
+    std::array<TrackInfo, kMaxTracks> tracks;
     MasterRouting master;
+    std::vector<Marker> markers;
+    juce::StringPairArray info;
+    std::vector<TakeEntry> takeLog;
+    int nextTake = 1;
 
     /** Filled by load(): notes on anything repaired after a crash. */
     juce::StringArray recoveryLog;
@@ -109,6 +147,7 @@ public:
 
     bool open (const juce::File&, double expectedSampleRate, juce::String& error);
     bool seek (juce::int64 frame);              // extends with silence if past the end
+    bool extendTo (juce::int64 frames);         // pad with silence (fast: file is extended, not written)
     bool write (const float* samples, int numSamples);
     bool writeSilence (juce::int64 numSamples);
     bool flushHeader();

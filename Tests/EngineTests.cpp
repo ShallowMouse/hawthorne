@@ -35,13 +35,13 @@ static bool matches (int track, float v, int64 clock) { return std::abs (v - enc
 //==============================================================================
 struct FakeDevice : juce::Thread
 {
-    FakeDevice (TapeEngine& e, double speedFactor, int maxBlockSize, bool variable)
-        : juce::Thread ("FakeAudio"), engine (e), speed (speedFactor), maxBlock (maxBlockSize), variableBlocks (variable) {}
+    FakeDevice (TapeEngine& e, double speedFactor, int maxBlockSize, bool variable, int inputs = kDefaultTracks)
+        : juce::Thread ("FakeAudio"), engine (e), speed (speedFactor), maxBlock (maxBlockSize), variableBlocks (variable), numIn (inputs) {}
     ~FakeDevice() override { stopThread (5000); }
 
     void run() override
     {
-        juce::AudioBuffer<float> in (kNumTracks, maxBlock), out (2, maxBlock);
+        juce::AudioBuffer<float> in (numIn, maxBlock), out (2, maxBlock);
         std::mt19937 rng (1234);
         const double t0 = juce::Time::getMillisecondCounterHiRes();
         int64 rendered = 0;
@@ -50,13 +50,13 @@ struct FakeDevice : juce::Thread
         {
             const int n = variableBlocks ? 1 + (int) (rng() % (unsigned) maxBlock) : maxBlock;
 
-            for (int t = 0; t < kNumTracks; ++t)
+            for (int t = 0; t < numIn; ++t)
                 for (int k = 0; k < n; ++k)
                     in.setSample (t, k, encode (t, clock + k));
 
             const auto posBefore = engine.getPosition();
             const bool rolling = engine.isPlaying();
-            engine.process (in.getArrayOfReadPointers(), kNumTracks, out.getArrayOfWritePointers(), 2, n);
+            engine.process (in.getArrayOfReadPointers(), numIn, out.getArrayOfWritePointers(), 2, n);
 
             if (capture.load() && rolling)
             {
@@ -79,6 +79,7 @@ struct FakeDevice : juce::Thread
     const double speed;
     const int maxBlock;
     const bool variableBlocks;
+    const int numIn;
     std::atomic<int64> clock { 0 };
     std::atomic<bool> capture { false };
     juce::CriticalSection captureLock;
@@ -132,12 +133,12 @@ static juce::File makeTempDir (const juce::String& name)
     return d;
 }
 
-static void prepareEngine (TapeEngine& e, int block)
+static void prepareEngine (TapeEngine& e, int block, int numIn = kDefaultTracks)
 {
     juce::BigInteger inputs;
-    inputs.setRange (0, kNumTracks, true);
+    inputs.setRange (0, numIn, true);
     juce::StringArray names;
-    for (int i = 0; i < kNumTracks; ++i) names.add ("In " + juce::String (i + 1));
+    for (int i = 0; i < numIn; ++i) names.add ("In " + juce::String (i + 1));
     juce::BigInteger outs;
     outs.setRange (0, 4, true);
     e.prepare (kSR, block, inputs, names, outs, { "Out 1", "Out 2", "Out 3", "Out 4" }, kInLat, kOutLat);
@@ -149,7 +150,7 @@ static void testTapeMachine()
     std::printf ("[1] record 24 tracks from zero, %.0fx realtime, variable blocks\n", testSpeed());
     juce::String err;
     auto dir = makeTempDir ("tape");
-    auto session = Session::create (dir, "Tape", kSR, err);
+    auto session = Session::create (dir, "Tape", kSR, kDefaultTracks, err);
     CHECK (session != nullptr, "create: %s", err.toRawUTF8());
     if (session == nullptr) return;
 
@@ -162,7 +163,7 @@ static void testTapeMachine()
     FakeDevice dev (e, testSpeed(), 512, true);
     dev.startThread (juce::Thread::Priority::highest);
 
-    for (int t = 0; t < kNumTracks; ++t) e.setArmed (t, true);
+    for (int t = 0; t < kDefaultTracks; ++t) e.setArmed (t, true);
     CHECK (e.record().isEmpty(), "record");
     pump (e, 5000);
     const auto recordedTimeline = e.getPosition();
@@ -171,9 +172,9 @@ static void testTapeMachine()
     CHECK (e.getDroppedSamples() == 0, "dropped %lld", (long long) e.getDroppedSamples());
     CHECK (alerts.isEmpty(), "alerts: %s", alerts.joinIntoString (" | ").toRawUTF8());
 
-    std::array<Tape, kNumTracks> tapes;
+    std::array<Tape, kDefaultTracks> tapes;
     int64 firstBase = -1;
-    for (int t = 0; t < kNumTracks; ++t)
+    for (int t = 0; t < kDefaultTracks; ++t)
     {
         tapes[(size_t) t] = readTape (*session, t);
         auto& d = tapes[(size_t) t];
@@ -192,7 +193,7 @@ static void testTapeMachine()
     //--------------------------------------------------------------------------
     auto checkPlayback = [&] (const char* label)
     {
-        for (int t = 0; t < kNumTracks; ++t) { tapes[(size_t) t] = readTape (*session, t); e.setArmed (t, false); }
+        for (int t = 0; t < kDefaultTracks; ++t) { tapes[(size_t) t] = readTape (*session, t); e.setArmed (t, false); }
         e.locate (0);
         { const juce::ScopedLock sl (dev.captureLock); dev.captured.clear(); }
         dev.capture = true;
@@ -288,7 +289,7 @@ static void testDiskOverflowKeepsAlignment()
 {
     std::printf ("[6] disk overflow: tiny buffer, 60x realtime\n");
     juce::String err;
-    auto session = Session::create (makeTempDir ("overflow"), "Overflow", kSR, err);
+    auto session = Session::create (makeTempDir ("overflow"), "Overflow", kSR, kDefaultTracks, err);
     if (session == nullptr) { CHECK (false, "%s", err.toRawUTF8()); return; }
 
     TapeEngine e;
@@ -328,7 +329,7 @@ static void testDeviceLossDuringRecording()
 {
     std::printf ("[7] audio device dies mid-take\n");
     juce::String err;
-    auto session = Session::create (makeTempDir ("devloss"), "DevLoss", kSR, err);
+    auto session = Session::create (makeTempDir ("devloss"), "DevLoss", kSR, kDefaultTracks, err);
     if (session == nullptr) { CHECK (false, "%s", err.toRawUTF8()); return; }
 
     TapeEngine e;
@@ -364,7 +365,7 @@ static void testCrashRecovery()
     if (pid == 0)
     {
         juce::String err;
-        auto session = Session::create (dir, "Crash", kSR, err);
+        auto session = Session::create (dir, "Crash", kSR, kDefaultTracks, err);
         TapeEngine e;
         e.setSession (session.get());
         prepareEngine (e, 256);
@@ -412,7 +413,7 @@ static void testRouting()
 {
     std::printf ("[9] routing matrix: mix, direct outs, master in/out\n");
     juce::String err;
-    auto session = Session::create (makeTempDir ("routing"), "Routing", kSR, err);
+    auto session = Session::create (makeTempDir ("routing"), "Routing", kSR, kDefaultTracks, err);
     if (session == nullptr) { CHECK (false, "%s", err.toRawUTF8()); return; }
 
     TapeEngine e;
@@ -421,17 +422,17 @@ static void testRouting()
 
     for (int t = 0; t < 3; ++t) e.setArmed (t, true);       // stopped: armed tracks monitor input
     e.setTrackToMix (2, false);                              // track 3 out of the mix...
-    e.setTrackOutputs (2, (ChannelMask) 1 << 2);             // ...direct out to output 3
-    e.setMasterInputs (0, (ChannelMask) 1 << 23);            // input 24 summed into master L
-    e.setMasterOutputs (1, ((ChannelMask) 1 << 1) | ((ChannelMask) 1 << 3)); // master R -> outs 2 and 4
+    e.setTrackOutputs (2, ChannelList { 2 });                // ...direct out to output 3
+    e.setMasterInputs (0, ChannelList { 23 });               // input 24 summed into master L
+    e.setMasterOutputs (1, ChannelList { 1, 3 });            // master R -> outs 2 and 4
 
     const int n = 256;
-    juce::AudioBuffer<float> in (kNumTracks, n), out (4, n);
-    for (int t = 0; t < kNumTracks; ++t)
+    juce::AudioBuffer<float> in (kDefaultTracks, n), out (4, n);
+    for (int t = 0; t < kDefaultTracks; ++t)
         for (int k = 0; k < n; ++k)
             in.setSample (t, k, encode (t, k) * 0.25f);
 
-    e.process (in.getArrayOfReadPointers(), kNumTracks, out.getArrayOfWritePointers(), 4, n);
+    e.process (in.getArrayOfReadPointers(), kDefaultTracks, out.getArrayOfWritePointers(), 4, n);
 
     int64 wrong = 0;
     for (int k = 0; k < n; ++k)
@@ -448,12 +449,127 @@ static void testRouting()
     CHECK (reloaded != nullptr, "reload");
     if (reloaded != nullptr)
     {
-        CHECK (! reloaded->tracks[2].toMix && reloaded->tracks[2].outputs == ((ChannelMask) 1 << 2), "track routing not saved");
-        CHECK (reloaded->master.inputs[0] == ((ChannelMask) 1 << 23), "master in not saved");
-        CHECK (reloaded->master.outputs[0] == 1 && reloaded->master.outputs[1] == (((ChannelMask) 1 << 1) | ((ChannelMask) 1 << 3)),
+        CHECK (! reloaded->tracks[2].toMix && reloaded->tracks[2].outputs == ChannelList { 2 }, "track routing not saved");
+        CHECK (reloaded->master.inputs[0] == ChannelList { 23 }, "master in not saved");
+        CHECK (reloaded->master.outputs[0] == ChannelList { 0 } && reloaded->master.outputs[1] == ChannelList (1, 3),
                "master out not saved");
         std::printf ("    all 4 outputs exact, routing saved and reloaded\n");
     }
+    e.setSession (nullptr);
+}
+
+//==============================================================================
+static void testEqualLengthsAndPaperwork()
+{
+    std::printf ("[10] every recorded track the same length; markers, sheets, take log\n");
+    juce::String err;
+    auto session = Session::create (makeTempDir ("equal"), "Equal", kSR, kDefaultTracks, err);
+    if (session == nullptr) { CHECK (false, "%s", err.toRawUTF8()); return; }
+
+    TapeEngine e;
+    std::vector<TakeEntry> logged;
+    e.onTakeLogged = [&] (const TakeEntry& t) { logged.push_back (t); };
+    e.setSession (session.get());
+    prepareEngine (e, 256);
+    FakeDevice dev (e, testSpeed(), 256, false);
+    dev.startThread (juce::Thread::Priority::highest);
+
+    // Take 1: tracks 1-3 and 5 from zero
+    for (int t : { 0, 1, 2, 4 }) e.setArmed (t, true);
+    CHECK (e.record().isEmpty(), "record take 1");
+    pump (e, 300);
+    e.stop();
+    for (int t : { 0, 1, 2, 4 }) e.setArmed (t, false);
+
+    // Take 2: track 9 only, starting later and running past the end of the reel
+    e.setArmed (8, true);
+    e.locate ((int64) (kSR * 3));
+    CHECK (e.record().isEmpty(), "record take 2");
+    pump (e, 600);
+    e.stop();
+    dev.stopThread (2000);
+
+    const auto reel = (int64) readTape (*session, 8).size();
+    for (int t : { 0, 1, 2, 4, 8 })
+        CHECK ((int64) readTape (*session, t).size() == reel, "track %d is %zu samples, reel is %lld",
+               t + 1, readTape (*session, t).size(), (long long) reel);
+    CHECK (! session->getTapeFile (3).existsAsFile(), "an unrecorded track got a file");
+
+    const auto t1 = readTape (*session, 0);
+    int64 nonZeroTail = 0;
+    for (int64 k = (int64) (kSR * 3); k < (int64) t1.size(); ++k) nonZeroTail += t1[(size_t) k] != 0.0f ? 1 : 0;
+    CHECK (nonZeroTail == 0, "padding on track 1 is not silent");
+
+    CHECK (logged.size() == 2 && session->takeLog.size() == 2, "take log has %zu entries", session->takeLog.size());
+    if (session->takeLog.size() == 2)
+    {
+        CHECK (session->takeLog[0].tracks == "1-3, 5", "take 1 tracks '%s'", session->takeLog[0].tracks.toRawUTF8());
+        CHECK (session->takeLog[1].tracks == "9" && session->takeLog[1].take == 2, "take 2 entry");
+        CHECK (std::llabs (session->takeLog[1].start - ((int64) (kSR * 3) - kLat)) < 4096, "take 2 start");
+    }
+
+    // Markers stay in time order; sheet fields persist
+    session->addMarker ((int64) (kSR * 30), "Chorus");
+    session->addMarker ((int64) (kSR * 5), "Verse");
+    session->addMarker (0, "Count-in");
+    session->info.set ("Producer", "George");
+    session->tracks[0].instrument = "Kick";
+    session->tracks[0].mic = "D112";
+    session->takeLog[0].status = "Keeper";
+    CHECK (session->save (err), "save");
+
+    auto re = Session::load (session->getFile(), err);
+    CHECK (re != nullptr, "reload");
+    if (re != nullptr)
+    {
+        CHECK (re->markers.size() == 3 && re->markers[0].name == "Count-in" && re->markers[1].name == "Verse"
+               && re->markers[2].name == "Chorus", "markers not in time order");
+        CHECK (re->info["Producer"] == "George" && re->tracks[0].instrument == "Kick" && re->tracks[0].mic == "D112",
+               "sheet fields lost");
+        CHECK (re->takeLog.size() == 2 && re->takeLog[0].status == "Keeper" && re->nextTake == 3, "take log lost");
+        std::printf ("    reel %.2f s: 5 tracks identical length, padding silent; markers sorted; paperwork saved\n",
+                     (double) reel / kSR);
+    }
+    e.setSession (nullptr);
+}
+
+static void test96Tracks()
+{
+    std::printf ("[11] 96-track session: record all 96 at once\n");
+    juce::String err;
+    auto session = Session::create (makeTempDir ("t96"), "Ninety-six", kSR, kMaxTracks, err);
+    if (session == nullptr) { CHECK (false, "%s", err.toRawUTF8()); return; }
+
+    TapeEngine e;
+    juce::StringArray alerts;
+    e.onAlert = [&] (auto& t, auto&) { alerts.add (t); };
+    e.setSession (session.get());
+    prepareEngine (e, 512, kMaxTracks);
+    CHECK (e.getNumTracks() == kMaxTracks, "engine has %d tracks", e.getNumTracks());
+
+    FakeDevice dev (e, juce::jmax (1.0, testSpeed() / 4), 512, true, kMaxTracks);
+    dev.startThread (juce::Thread::Priority::highest);
+    for (int t = 0; t < kMaxTracks; ++t) e.setArmed (t, true);
+    CHECK (e.record().isEmpty(), "record");
+    pump (e, 2000);
+    e.stop();
+    dev.stopThread (2000);
+
+    CHECK (e.getDroppedSamples() == 0 && alerts.isEmpty(), "drops/alerts with 96 tracks");
+    int64 firstBase = -1, len = -1;
+    int bad = 0;
+    for (int t = 0; t < kMaxTracks; ++t)
+    {
+        auto d = readTape (*session, t);
+        int64 silent;
+        if (len < 0) len = (int64) d.size();
+        const auto base = d.empty() ? -1 : decode (t, d[0]);
+        if (firstBase < 0) firstBase = base;
+        if ((int64) d.size() != len || base != firstBase || contiguousRun (t, d, 0, false, silent) != (int64) d.size())
+            ++bad;
+    }
+    CHECK (bad == 0, "%d of 96 tracks wrong", bad);
+    std::printf ("    96 tracks x %.2f s, all aligned and identical length\n", (double) len / kSR);
     e.setSession (nullptr);
 }
 
@@ -466,6 +582,8 @@ int main()
     testDiskOverflowKeepsAlignment();
     testDeviceLossDuringRecording();
     testRouting();
+    testEqualLengthsAndPaperwork();
+    test96Tracks();
    #if JUCE_LINUX || JUCE_MAC
     testCrashRecovery();
    #endif

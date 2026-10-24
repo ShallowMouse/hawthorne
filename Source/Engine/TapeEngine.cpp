@@ -25,20 +25,15 @@ TapeEngine::TapeEngine()
     prefetchThread.startThread (juce::Thread::Priority::high);
     absToActive.fill (-1);
 
-    for (int t = 0; t < kNumTracks; ++t)
+    for (int t = 0; t < kMaxTracks; ++t)
     {
         armed[(size_t) t] = false;
-        inputChannel[(size_t) t] = t;
-        trackToMix[(size_t) t] = true;
-        trackOutputs[(size_t) t] = 0;
         trackPeak[(size_t) t] = 0.0f;
     }
 
     masterPeak[0] = masterPeak[1] = 0.0f;
-    masterInputs[0] = masterInputs[1] = 0;
-    masterOutputs[0] = 1;
-    masterOutputs[1] = 2;
     absToActiveOut.fill (-1);
+    rebuildRouting();
 }
 
 TapeEngine::~TapeEngine()
@@ -47,6 +42,9 @@ TapeEngine::~TapeEngine()
     auto old = std::move (ownedGraph);
     graph.store (nullptr);
     retire (std::move (old));
+    auto oldRouting = std::move (ownedRouting);
+    routing.store (nullptr);
+    retire (std::move (oldRouting));
     readerCache.clear();
     prefetchThread.stopThread (2000);
 }
@@ -61,23 +59,12 @@ void TapeEngine::setSession (Session* s)
     droppedBeforePass = 0;
     playbackUnderruns = 0;
 
-    if (s != nullptr)
-    {
-        for (int t = 0; t < kNumTracks; ++t)
-        {
-            armed[(size_t) t]        = s->tracks[(size_t) t].armed;
-            inputChannel[(size_t) t] = s->tracks[(size_t) t].input;
-            trackToMix[(size_t) t]   = s->tracks[(size_t) t].toMix;
-            trackOutputs[(size_t) t] = s->tracks[(size_t) t].outputs;
-        }
+    numTracks = s != nullptr ? s->numTracks : kDefaultTracks;
 
-        for (int side = 0; side < 2; ++side)
-        {
-            masterInputs[(size_t) side]  = s->master.inputs[(size_t) side];
-            masterOutputs[(size_t) side] = s->master.outputs[(size_t) side];
-        }
-    }
+    for (int t = 0; t < kMaxTracks; ++t)
+        armed[(size_t) t] = s != nullptr && t < s->numTracks && s->tracks[(size_t) t].armed;
 
+    rebuildRouting();
     rebuildPlaybackGraph();
 }
 
@@ -90,7 +77,7 @@ void TapeEngine::prepare (double sampleRate, int maxBlockSize,
                           int inputLatency, int outputLatency)
 {
     maxBlock = juce::jmax (16, maxBlockSize);
-    trackBuffers.setSize (kNumTracks, maxBlock);
+    trackBuffers.setSize (kMaxTracks, maxBlock);
     trackBuffers.clear();
     mixBus.setSize (2, maxBlock);
     mixBus.clear();
@@ -217,20 +204,22 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     };
 
     // Adds a signal to every device output set in a mask.
-    auto sendToOutputs = [&] (const float* sig, ChannelMask mask)
+    auto sendToOutputs = [&] (const float* sig, const std::vector<int>& chans)
     {
-        for (int ch = 0; mask != 0 && ch < kMaxRoutedChannels; ++ch, mask >>= 1)
-            if (mask & 1u)
-            {
-                const int a = absToActiveOut[(size_t) ch];
-                if (juce::isPositiveAndBelow (a, numOutputs) && outputs[a] != nullptr)
-                    juce::FloatVectorOperations::add (outputs[a], sig, n);
-            }
+        for (auto ch : chans)
+        {
+            const int a = juce::isPositiveAndBelow (ch, (int) absToActiveOut.size()) ? absToActiveOut[(size_t) ch] : -1;
+            if (juce::isPositiveAndBelow (a, numOutputs) && outputs[a] != nullptr)
+                juce::FloatVectorOperations::add (outputs[a], sig, n);
+        }
     };
 
-    for (int t = 0; t < kNumTracks; ++t)
+    auto* rt = routing.load();
+    const int nt = numTracks.load();
+
+    for (int t = 0; t < nt; ++t)
     {
-        const float* src = inputFor (inputChannel[(size_t) t].load (std::memory_order_relaxed));
+        const float* src = rt != nullptr ? inputFor (rt->input[(size_t) t]) : nullptr;
         const bool isArmed = armed[(size_t) t].load (std::memory_order_relaxed);
 
         // --- Record: push every armed track, silence if its input vanished,
@@ -277,13 +266,14 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         {
             raisePeak (trackPeak[(size_t) t], peakOf (mon, n));
 
-            if (trackToMix[(size_t) t].load (std::memory_order_relaxed))
+            if (rt != nullptr && rt->toMix[(size_t) t])
             {
                 juce::FloatVectorOperations::add (mixL, mon, n);
                 juce::FloatVectorOperations::add (mixR, mon, n);
             }
 
-            sendToOutputs (mon, trackOutputs[(size_t) t].load (std::memory_order_relaxed));
+            if (rt != nullptr)
+                sendToOutputs (mon, rt->outputs[(size_t) t]);
         }
     }
 
@@ -291,16 +281,15 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     for (int side = 0; side < 2; ++side)
     {
         float* bus = side == 0 ? mixL : mixR;
-        auto inMask = masterInputs[(size_t) side].load (std::memory_order_relaxed);
-
-        for (int ch = 0; inMask != 0 && ch < kMaxRoutedChannels; ++ch, inMask >>= 1)
-            if (inMask & 1u)
+        if (rt != nullptr)
+            for (auto ch : rt->masterIn[(size_t) side])
                 if (auto* in = inputFor (ch))
                     juce::FloatVectorOperations::add (bus, in, n);
 
         raisePeak (masterPeak[(size_t) side], peakOf (bus, n));
         masterEnergy[(size_t) side].add (bus, n);
-        sendToOutputs (bus, masterOutputs[(size_t) side].load (std::memory_order_relaxed));
+        if (rt != nullptr)
+            sendToOutputs (bus, rt->masterOut[(size_t) side]);
     }
 
     // Only advance if nobody located us mid-block.
@@ -387,7 +376,7 @@ void TapeEngine::locate (juce::int64 samplePos)
 
 void TapeEngine::setArmed (int t, bool shouldArm)
 {
-    if (! juce::isPositiveAndBelow (t, kNumTracks) || recording)
+    if (! juce::isPositiveAndBelow (t, numTracks.load()) || recording)
         return;
 
     armed[(size_t) t] = shouldArm;
@@ -399,53 +388,122 @@ void TapeEngine::setArmed (int t, bool shouldArm)
     }
 }
 
+juce::String TapeEngine::setNumTracks (int n)
+{
+    n = juce::jlimit (1, kMaxTracks, n);
+    if (session == nullptr)
+        return "No session is open.";
+    if (recording)
+        return "Stop recording first.";
+
+    juce::StringArray withTape;
+    for (int t = n; t < session->numTracks; ++t)
+        if (session->getTapeFile (t).existsAsFile())
+            withTape.add (juce::String (t + 1));
+
+    if (! withTape.isEmpty())
+        return "Tracks " + withTape.joinIntoString (", ") + " have recordings on them, so they can't be removed.";
+
+    for (int t = n; t < kMaxTracks; ++t)
+    {
+        armed[(size_t) t] = false;
+        session->tracks[(size_t) t].armed = false;
+    }
+
+    session->numTracks = n;
+    numTracks = n;
+    rebuildPlaybackGraph();
+    saveSession();
+    return {};
+}
+
 void TapeEngine::setInput (int t, int ch)
 {
-    if (! juce::isPositiveAndBelow (t, kNumTracks) || (recording && armed[(size_t) t]))
+    if (session == nullptr || ! juce::isPositiveAndBelow (t, numTracks.load()) || (recording && armed[(size_t) t]))
         return;
 
-    inputChannel[(size_t) t] = ch;
-
-    if (session != nullptr)
-    {
-        session->tracks[(size_t) t].input = ch;
-        saveSession();
-    }
+    session->tracks[(size_t) t].input = ch;
+    rebuildRouting();
+    saveSession();
 }
 
 void TapeEngine::setTrackToMix (int t, bool on)
 {
-    if (! juce::isPositiveAndBelow (t, kNumTracks)) return;
-    trackToMix[(size_t) t] = on;
-    if (session != nullptr) { session->tracks[(size_t) t].toMix = on; saveSession(); }
+    if (session == nullptr || ! juce::isPositiveAndBelow (t, kMaxTracks)) return;
+    session->tracks[(size_t) t].toMix = on;
+    rebuildRouting();
+    saveSession();
 }
 
-void TapeEngine::setTrackOutputs (int t, ChannelMask mask)
+void TapeEngine::setTrackOutputs (int t, const ChannelList& outs)
 {
-    if (! juce::isPositiveAndBelow (t, kNumTracks)) return;
-    trackOutputs[(size_t) t] = mask;
-    if (session != nullptr) { session->tracks[(size_t) t].outputs = mask; saveSession(); }
+    if (session == nullptr || ! juce::isPositiveAndBelow (t, kMaxTracks)) return;
+    session->tracks[(size_t) t].outputs = outs;
+    rebuildRouting();
+    saveSession();
 }
 
-void TapeEngine::setMasterInputs (int side, ChannelMask mask)
+void TapeEngine::setMasterInputs (int side, const ChannelList& ins)
 {
-    side &= 1;
-    masterInputs[(size_t) side] = mask;
-    if (session != nullptr) { session->master.inputs[(size_t) side] = mask; saveSession(); }
+    if (session == nullptr) return;
+    session->master.inputs[(size_t) (side & 1)] = ins;
+    rebuildRouting();
+    saveSession();
 }
 
-void TapeEngine::setMasterOutputs (int side, ChannelMask mask)
+void TapeEngine::setMasterOutputs (int side, const ChannelList& outs)
 {
-    side &= 1;
-    masterOutputs[(size_t) side] = mask;
-    if (session != nullptr) { session->master.outputs[(size_t) side] = mask; saveSession(); }
+    if (session == nullptr) return;
+    session->master.outputs[(size_t) (side & 1)] = outs;
+    rebuildRouting();
+    saveSession();
+}
+
+void TapeEngine::rebuildRouting()
+{
+    auto r = std::make_unique<RoutingTable>();
+
+    for (int t = 0; t < kMaxTracks; ++t)
+    {
+        if (session != nullptr)
+        {
+            const auto& tr = session->tracks[(size_t) t];
+            r->input[(size_t) t] = tr.input;
+            r->toMix[(size_t) t] = tr.toMix;
+            r->outputs[(size_t) t].assign (tr.outputs.begin(), tr.outputs.end());
+        }
+        else
+        {
+            r->input[(size_t) t] = t;
+            r->toMix[(size_t) t] = true;
+        }
+    }
+
+    for (int side = 0; side < 2; ++side)
+    {
+        if (session != nullptr)
+        {
+            const auto& m = session->master;
+            r->masterIn[(size_t) side].assign (m.inputs[(size_t) side].begin(), m.inputs[(size_t) side].end());
+            r->masterOut[(size_t) side].assign (m.outputs[(size_t) side].begin(), m.outputs[(size_t) side].end());
+        }
+        else
+        {
+            r->masterOut[(size_t) side] = { side };
+        }
+    }
+
+    auto old = std::move (ownedRouting);
+    ownedRouting = std::move (r);
+    routing.store (ownedRouting.get());
+    retire (std::move (old));
 }
 
 int TapeEngine::getNumArmedTracks() const noexcept
 {
     int n = 0;
-    for (auto& a : armed)
-        n += a.load() ? 1 : 0;
+    for (int t = 0; t < numTracks.load(); ++t)
+        n += armed[(size_t) t].load() ? 1 : 0;
     return n;
 }
 
@@ -468,13 +526,13 @@ juce::String TapeEngine::beginRecordPass()
 
     int numArmed = 0;
 
-    for (int t = 0; t < kNumTracks; ++t)
+    for (int t = 0; t < numTracks.load(); ++t)
     {
         if (! armed[(size_t) t])
             continue;
 
         ++numArmed;
-        const int ch = inputChannel[(size_t) t];
+        const int ch = session->tracks[(size_t) t].input;
 
         if (! juce::isPositiveAndBelow (ch, (int) absToActive.size()) || absToActive[(size_t) ch] < 0)
             return session->tracks[(size_t) t].name + " is armed but has no active input.\n"
@@ -488,13 +546,15 @@ juce::String TapeEngine::beginRecordPass()
         return "Not enough free disk space to record safely.\nAt least 500 MB is required.";
 
     const auto sr = session->sampleRate;
-    const int fifoSize = fifoSizeOverride > 0 ? fifoSizeOverride : (int) (sr * fifoSeconds);
+    // 20 s of buffer per track, less when very many tracks are armed (keeps RAM sane at 96 tracks).
+    const double secs = juce::jlimit (5.0, fifoSeconds, fifoBudgetBytes / ((double) numArmed * sr * sizeof (float)));
+    const int fifoSize = fifoSizeOverride > 0 ? fifoSizeOverride : (int) (sr * secs);
     const int flushInterval = (int) (sr * flushIntervalSeconds);
 
     auto p = std::make_unique<RecordPass>();
     p->latency = latencySamples;
 
-    for (int t = 0; t < kNumTracks; ++t)
+    for (int t = 0; t < numTracks.load(); ++t)
     {
         if (! armed[(size_t) t])
             continue;
@@ -541,9 +601,10 @@ void TapeEngine::endRecordPass()
 
     std::unique_ptr<RecordPass> p = std::move (ownedPass);
     juce::StringArray problems;
-    juce::int64 droppedThisPass = 0;
+    juce::int64 droppedThisPass = 0, passLength = 0;
+    juce::Array<int> recorded;
 
-    for (int t = 0; t < kNumTracks; ++t)
+    for (int t = 0; t < kMaxTracks; ++t)
     {
         auto& s = p->streams[(size_t) t];
         if (s == nullptr)
@@ -555,14 +616,51 @@ void TapeEngine::endRecordPass()
             problems.add (session->tracks[(size_t) t].name + ": writing to tape failed");
 
         droppedThisPass += s->getDroppedSamples();
+        passLength = juce::jmax (passLength, s->getTimelineLength());
         ++tapeGeneration[(size_t) t]; // tape contents changed: readers must reload
+        recorded.add (t);
     }
 
     droppedTotal = droppedBeforePass.load() + droppedThisPass;
 
+    // Every recorded track is kept the length of the reel (silence where unrecorded).
+    juce::String padError;
+    for (auto t : session->equaliseTapeLengths (padError))
+        ++tapeGeneration[(size_t) t];
+    if (padError.isNotEmpty())
+        problems.add (padError);
+
+    // Recording sheet: one line per take
+    if (const auto startPos = p->startPos.load(); startPos >= 0 && passLength > 0)
+    {
+        TakeEntry e;
+        e.take   = session->nextTake++;
+        e.when   = (juce::Time::getCurrentTime() - juce::RelativeTime::seconds ((double) passLength / session->sampleRate))
+                       .formatted ("%d %b %Y  %H:%M");
+        e.start  = juce::jmax ((juce::int64) 0, startPos - p->latency);
+        e.end    = startPos - p->latency + passLength;
+
+        // "1-4, 7" style track list
+        juce::StringArray parts;
+        for (int i = 0; i < recorded.size();)
+        {
+            int j = i;
+            while (j + 1 < recorded.size() && recorded[j + 1] == recorded[j] + 1) ++j;
+            parts.add (i == j ? juce::String (recorded[i] + 1)
+                              : juce::String (recorded[i] + 1) + "-" + juce::String (recorded[j] + 1));
+            i = j + 1;
+        }
+        e.tracks = parts.joinIntoString (", ");
+        session->takeLog.push_back (e);
+
+        if (onTakeLogged)
+            onTakeLogged (e);
+    }
+
     if (! released)
         graveyard.push_back (std::shared_ptr<void> (p.release(), [] (void* x) { delete static_cast<RecordPass*> (x); }));
 
+    saveSession();
     rebuildPlaybackGraph();
 
     if (droppedThisPass > 0 && session != nullptr)
@@ -609,7 +707,7 @@ void TapeEngine::rebuildPlaybackGraph()
 
     if (session != nullptr)
     {
-        for (int t = 0; t < kNumTracks; ++t)
+        for (int t = 0; t < session->numTracks; ++t)
         {
             const auto file = session->getTapeFile (t);
             if (! file.existsAsFile())
@@ -646,9 +744,17 @@ void TapeEngine::rebuildPlaybackGraph()
         it = it->second.use_count() == 1 ? readerCache.erase (it) : std::next (it);
 }
 
+juce::int64 TapeEngine::getReelLength() const
+{
+    juce::int64 reel = 0;
+    for (int t = 0; t < kMaxTracks; ++t)
+        reel = juce::jmax (reel, getTapeLength (t));
+    return reel;
+}
+
 juce::int64 TapeEngine::getTapeLength (int track) const
 {
-    if (ownedGraph == nullptr || ! juce::isPositiveAndBelow (track, kNumTracks))
+    if (ownedGraph == nullptr || ! juce::isPositiveAndBelow (track, kMaxTracks))
         return 0;
 
     const auto& segs = ownedGraph->tracks[(size_t) track];

@@ -30,6 +30,9 @@ public:
 
     static constexpr float referenceDbfs = -18.0f;   // level that reads 0 VU
 
+    std::function<void()> onDoubleClick;
+    void mouseDoubleClick (const juce::MouseEvent&) override { if (onDoubleClick) onDoubleClick(); }
+
     void paint (juce::Graphics&) override;
     void resized() override;
 

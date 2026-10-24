@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "UIHelpers.h"
 
 #ifndef HAWTHORNE_VERSION
  #define HAWTHORNE_VERSION "dev"
@@ -8,48 +9,75 @@ namespace hawthorne
 {
 
 //==============================================================================
-void TransportButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
+void TransportKey::paintButton (juce::Graphics& g, bool highlighted, bool down)
 {
     auto r = getLocalBounds().toFloat().reduced (1.0f);
-    const bool isRec = icon == Icon::record;
 
-    auto fill = lit ? (isRec ? Colours::red : Colours::mustard) : Colours::panelLight;
-    if (down)             fill = fill.darker (0.3f);
-    else if (highlighted) fill = fill.brighter (0.1f);
+    // key body
+    juce::ColourGradient body (Colours::panelLight.brighter (0.15f), r.getX(), r.getY(),
+                               Colours::panelLight.darker (0.25f), r.getX(), r.getBottom(), false);
+    g.setGradientFill (body);
+    g.fillRoundedRectangle (r, 3.0f);
+    if (down)             { g.setColour (juce::Colour (0x40000000)); g.fillRoundedRectangle (r, 3.0f); }
+    else if (highlighted) { g.setColour (juce::Colour (0x12ffffff)); g.fillRoundedRectangle (r, 3.0f); }
+    g.setColour (Colours::black);
+    g.drawRoundedRectangle (r, 3.0f, 1.0f);
 
-    g.setColour (fill);
-    g.fillRoundedRectangle (r, 4.0f);
-    g.setColour (Colours::edge);
-    g.drawRoundedRectangle (r, 4.0f, 1.0f);
-
-    const auto ic = r.withSizeKeepingCentre (r.getHeight() * 0.42f, r.getHeight() * 0.42f);
-    g.setColour (lit ? Colours::black : (isRec ? Colours::red : Colours::text));
-
-    auto tri = [] (juce::Rectangle<float> b, bool right)
+    // lamp strip
+    auto lampRect = r.removeFromTop (5.0f).reduced (6.0f, 1.0f);
+    if (lit)
     {
-        juce::Path p;
-        if (right) p.addTriangle (b.getX(), b.getY(), b.getRight(), b.getCentreY(), b.getX(), b.getBottom());
-        else       p.addTriangle (b.getRight(), b.getY(), b.getX(), b.getCentreY(), b.getRight(), b.getBottom());
-        return p;
-    };
+        g.setColour (lamp.withAlpha (0.35f));
+        g.fillRoundedRectangle (lampRect.expanded (2.0f, 2.0f), 2.0f);
+    }
+    g.setColour (lit ? lamp : lamp.darker (2.4f));
+    g.fillRoundedRectangle (lampRect, 1.5f);
 
-    switch (icon)
+    g.setColour (getButtonText() == "REC" ? Colours::red.brighter (0.2f) : Colours::text);
+    g.setFont (uiFont (13.0f, true));
+    g.drawText (getButtonText(), r, juce::Justification::centred);
+}
+
+//==============================================================================
+int MeterBridge::layoutForWidth (int width, int minHeight)
+{
+    const int pad = 10, gap = 8;
+    const float moduleW = ((float) (width - 2 * pad) - (float) (perRow - 1) * gap) / (float) perRow;
+    const int meterH = (int) (moduleW / ChannelModule::meterAspect);
+    const int moduleH = meterH + ChannelModule::controlsHeight + 4;
+    const int rows = (modules.size() + perRow - 1) / perRow;
+    const int needed = pad + rows * (moduleH + 2 * gap);
+    const int top = juce::jmax (0, (minHeight - needed) / 2);   // centre when there's room
+
+    rowPanels.clear();
+    for (int row = 0; row < rows; ++row)
     {
-        case Icon::play:   g.fillPath (tri (ic, true)); break;
-        case Icon::stop:   g.fillRect (ic.reduced (ic.getWidth() * 0.06f)); break;
-        case Icon::record: g.fillEllipse (ic); break;
-        case Icon::rewind:
-            g.fillPath (tri (ic.withWidth (ic.getWidth() * 0.55f), false));
-            g.fillPath (tri (ic.withTrimmedLeft (ic.getWidth() * 0.45f), false));
-            break;
-        case Icon::forward:
-            g.fillPath (tri (ic.withWidth (ic.getWidth() * 0.55f), true));
-            g.fillPath (tri (ic.withTrimmedLeft (ic.getWidth() * 0.45f), true));
-            break;
-        case Icon::rtz:
-            g.fillRect (ic.withWidth (ic.getWidth() * 0.16f));
-            g.fillPath (tri (ic.withTrimmedLeft (ic.getWidth() * 0.22f), false));
-            break;
+        const int y = top + pad + row * (moduleH + 2 * gap);
+        rowPanels.push_back ({ pad / 2, y - gap / 2, width - pad, moduleH + gap });
+
+        for (int col = 0; col < perRow; ++col)
+        {
+            const int i = row * perRow + col;
+            if (i >= modules.size()) break;
+            const int x = pad + juce::roundToInt ((float) col * (moduleW + (float) gap));
+            modules[i]->setBounds (x, y, juce::roundToInt (moduleW), moduleH);
+        }
+    }
+
+    const int h = juce::jmax (needed, minHeight);
+    setSize (width, h);
+    return h;
+}
+
+void MeterBridge::paint (juce::Graphics& g)
+{
+    g.fillAll (Colours::bg);
+    for (auto& p : rowPanels)
+    {
+        g.setColour (Colours::black.brighter (0.04f));
+        g.fillRoundedRectangle (p.toFloat(), 4.0f);
+        g.setColour (Colours::edge.withAlpha (0.6f));
+        g.drawRoundedRectangle (p.toFloat().reduced (0.5f), 4.0f, 1.0f);
     }
 }
 
@@ -60,66 +88,50 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     juce::LookAndFeel::setDefaultLookAndFeel (&lnf);
     setWantsKeyboardFocus (true);
 
-    for (auto* b : { &newButton, &openButton, &routingButton, &audioButton })
-        addAndMakeVisible (b);
-    routingButton.onClick = [this] { showRouting(); };
-
-    newButton.onClick   = [this] { newSession(); };
-    openButton.onClick  = [this] { openSession(); };
-    audioButton.onClick = [this] { showAudioSettings(); };
-
-    for (auto* b : { &rtzButton, &rewButton, &ffwButton, &stopButton, &playButton, &recButton })
+    for (auto* b : { &newButton, &openButton, &sheetButton, &routingButton, &audioButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (b);
     }
+    newButton.onClick     = [this] { newSession(); };
+    openButton.onClick    = [this] { openSession(); };
+    sheetButton.onClick   = [this] { showSheet(); };
+    routingButton.onClick = [this] { showRouting(); };
+    audioButton.onClick   = [this] { showAudioSettings(); };
 
-    rtzButton.onClick  = [this] { if (! engine.isRecording()) engine.locate (0); };
-    rewButton.onClick  = [this] { nudge (-5.0); };
-    ffwButton.onClick  = [this] { nudge (5.0); };
-    stopButton.onClick = [this] { doStop(); };
-    playButton.onClick = [this] { doPlay(); };
-    recButton.onClick  = [this] { doRecord(); };
+    for (auto* k : { &rtzKey, &rewKey, &ffwKey, &stopKey, &playKey, &recKey, &markKey })
+        addAndMakeVisible (k);
+    rtzKey.onClick  = [this] { locate (0); };
+    rewKey.onClick  = [this] { nudge (-5.0); };
+    ffwKey.onClick  = [this] { nudge (5.0); };
+    stopKey.onClick = [this] { doStop(); };
+    playKey.onClick = [this] { doPlay(); };
+    recKey.onClick  = [this] { doRecord(); };
+    markKey.onClick = [this] { addMarker(); };
 
-    for (int t = 0; t < kNumTracks; ++t)
-    {
-        auto* s = strips.add (new TrackStrip (t));
+    bridgeView.setViewedComponent (&bridge, false);
+    bridgeView.setWantsKeyboardFocus (false);
+    bridgeView.setScrollBarsShown (true, false);
+    bridgeView.setScrollBarThickness (10);
+    addAndMakeVisible (bridgeView);
 
-        s->onArm = [this] (int track, bool arm)
-        {
-            if (engine.isRecording())
-                return; // arming is locked during a take
-            engine.setArmed (track, arm);
-        };
+    masterL.setTooltip ("Master L");
+    masterR.setTooltip ("Master R");
+    addAndMakeVisible (masterL);
+    addAndMakeVisible (masterR);
 
-        s->onInputChanged = [this] (int track, int ch)
-        {
-            engine.setInput (track, ch);
-            refreshInputChoices();
-        };
-
-        s->onRename = [this] (int track, const juce::String& name)
-        {
-            if (session == nullptr) return;
-            session->tracks[(size_t) track].name = name;
-            juce::String err;
-            if (! session->save (err)) showAlert ("Could not save session", err);
-        };
-
-        addAndMakeVisible (s);
-    }
-
-    for (int t = 0; t < kNumTracks; ++t)
-        addAndMakeVisible (vus.add (new VUMeter (juce::String (t + 1).paddedLeft ('0', 2))));
-
-    for (auto* name : { "L", "R" })
-    {
-        auto* m = vus.add (new VUMeter (name));
-        m->setTooltip (juce::String ("Output ") + name);
-        addAndMakeVisible (m);
-    }
+    markers.onLocate    = [this] (juce::int64 pos) { locate (pos); };
+    markers.onAddMarker = [this] { addMarker(); };
+    markers.onChanged   = [this] { saveSession(); };
+    markers.getPlayhead = [this] { return engine.getPosition(); };
+    addAndMakeVisible (markers);
 
     engine.onAlert = [this] (const juce::String& t, const juce::String& m) { showAlert (t, m); };
+    engine.onTakeLogged = [this] (const TakeEntry&)
+    {
+        if (sheetWindow != nullptr)
+            sheetWindow->getSheet().refresh();
+    };
 
     // Updates: checked in the background every time Hawthorne starts (like PEQUOD Host)
     updateButton.setColour (juce::TextButton::buttonColourId, Colours::mustard);
@@ -136,13 +148,15 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     initialiseAudio();
     openInitialSession();
 
-    setSize (1500, 720);
+    setSize (1600, 900);
     startTimerHz (30);
 }
 
 MainComponent::~MainComponent()
 {
     shutdown();
+    sheetWindow = nullptr;
+    routingWindow = nullptr;
     juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
     setLookAndFeel (nullptr);
 }
@@ -164,7 +178,7 @@ void MainComponent::initialiseAudio()
 {
     auto saved = props.getUserSettings()->getXmlValue ("audioDeviceState");
 
-    const auto err = deviceManager.initialise (kNumTracks, 2, saved.get(), true);
+    const auto err = deviceManager.initialise (kDefaultTracks, 2, saved.get(), true);
 
     if (saved == nullptr)
     {
@@ -211,54 +225,10 @@ void MainComponent::matchDeviceToSession()
     }
 }
 
-void MainComponent::refreshInputChoices()
-{
-    juce::StringArray names;
-    juce::BigInteger active;
-
-    if (auto* dev = deviceManager.getCurrentAudioDevice())
-    {
-        names  = dev->getInputChannelNames();
-        active = dev->getActiveInputChannels();
-    }
-
-    for (int t = 0; t < kNumTracks; ++t)
-        strips[t]->setInputChoices (names, active, session != nullptr ? session->tracks[(size_t) t].input : -1);
-
-    if (routingWindow != nullptr)
-        routingWindow->getMatrix().repaint();
-}
-
-void MainComponent::showRouting()
-{
-    if (routingWindow == nullptr)
-    {
-        routingWindow = std::make_unique<RoutingWindow> (engine, [this] { return session.get(); });
-        routingWindow->getMatrix().onChanged = [this] { refreshInputChoices(); };
-        updateRoutingDevice();
-        routingWindow->fitToMatrix();
-    }
-
-    routingWindow->setVisible (true);
-    routingWindow->toFront (true);
-}
-
-void MainComponent::updateRoutingDevice()
-{
-    if (routingWindow == nullptr)
-        return;
-
-    if (auto* dev = deviceManager.getCurrentAudioDevice())
-        routingWindow->getMatrix().setDevice (dev->getInputChannelNames(), dev->getActiveInputChannels(),
-                                              dev->getOutputChannelNames(), dev->getActiveOutputChannels());
-    else
-        routingWindow->getMatrix().setDevice ({}, {}, {}, {});
-}
-
 void MainComponent::showAudioSettings()
 {
     auto* selector = new juce::AudioDeviceSelectorComponent (deviceManager, 0, 256, 2, 256, false, false, false, false);
-    selector->setSize (560, 520);
+    selector->setSize (560, 560);
 
     juce::DialogWindow::LaunchOptions o;
     o.content.setOwned (selector);
@@ -292,7 +262,7 @@ void MainComponent::openInitialSession()
               ? deviceManager.getCurrentAudioDevice()->getCurrentSampleRate() : 48000.0;
 
     auto name = "Untitled " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H%M");
-    if (auto s = Session::create (root, name, rate, err))
+    if (auto s = Session::create (root, name, rate, kDefaultTracks, err))
         setSession (std::move (s));
     else
         showAlert ("Could not create a session", err);
@@ -301,39 +271,55 @@ void MainComponent::openInitialSession()
 void MainComponent::setSession (std::unique_ptr<Session> s)
 {
     engine.setSession (nullptr);
+    markers.setSession (nullptr);
     session = std::move (s);
     engine.setSession (session.get());
+    markers.setSession (session.get());
 
     if (session != nullptr)
     {
         props.getUserSettings()->setValue ("lastSession", session->getFile().getFullPathName());
         props.saveIfNeeded();
-
-        for (int t = 0; t < kNumTracks; ++t)
-        {
-            strips[t]->setTrackName (session->tracks[(size_t) t].name);
-        }
-
         matchDeviceToSession();
 
         if (! session->recoveryLog.isEmpty())
-            showAlert ("Recovered after an unexpected shutdown",
-                       session->recoveryLog.joinIntoString ("\n"));
+            showAlert ("Recovered after an unexpected shutdown", session->recoveryLog.joinIntoString ("\n"));
     }
 
-    refreshInputChoices();
+    rebuildModules();
+
+    if (routingWindow != nullptr) routingWindow->getMatrix().tracksChanged();
+    if (sheetWindow != nullptr)   sheetWindow->getSheet().refresh();
     repaint();
 }
 
 void MainComponent::newSession()
 {
     doStop();
+
+    auto* w = new juce::AlertWindow ("New Session", "How many tracks?", juce::MessageBoxIconType::NoIcon, this);
+    w->addComboBox ("tracks", { "8", "16", "24", "32", "48", "64", "72", "96" });
+    if (auto* box = w->getComboBoxComponent ("tracks"))
+        box->setSelectedItemIndex (2);
+    w->addButton ("Next", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int r)
+    {
+        const int n = w->getComboBoxComponent ("tracks")->getText().getIntValue();
+        if (r == 1)
+            juce::MessageManager::callAsync ([this, n] { createSessionWithTracks (n); });
+    }), true);
+}
+
+void MainComponent::createSessionWithTracks (int numTracks)
+{
     auto root = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Hawthorne");
     root.createDirectory();
 
     chooser = std::make_unique<juce::FileChooser> ("Name the new session", root.getChildFile ("New Session"), "*.hawthorne");
     chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles,
-                          [this] (const juce::FileChooser& fc)
+                          [this, numTracks] (const juce::FileChooser& fc)
     {
         const auto f = fc.getResult();
         if (f == juce::File())
@@ -343,7 +329,7 @@ void MainComponent::newSession()
                   ? deviceManager.getCurrentAudioDevice()->getCurrentSampleRate() : sessionRate();
 
         juce::String err;
-        if (auto s = Session::create (f.getParentDirectory(), f.getFileNameWithoutExtension(), rate, err))
+        if (auto s = Session::create (f.getParentDirectory(), f.getFileNameWithoutExtension(), rate, numTracks, err))
             setSession (std::move (s));
         else
             showAlert ("Could not create session", err);
@@ -371,6 +357,197 @@ void MainComponent::openSession()
             showAlert ("Could not open session", err);
     });
 }
+
+void MainComponent::saveSession()
+{
+    juce::String err;
+    if (session != nullptr && ! session->save (err))
+        showAlert ("Could not save session", err);
+}
+
+juce::String MainComponent::setTrackCount (int n)
+{
+    const auto err = engine.setNumTracks (n);
+    if (err.isNotEmpty())
+        return err;
+
+    rebuildModules();
+    if (routingWindow != nullptr) routingWindow->getMatrix().tracksChanged();
+    if (sheetWindow != nullptr)   sheetWindow->getSheet().refresh();
+    return {};
+}
+
+//==============================================================================
+// Bridge
+
+void MainComponent::rebuildModules()
+{
+    bridge.modules.clear();
+    const int n = session != nullptr ? session->numTracks : 0;
+
+    for (int t = 0; t < n; ++t)
+    {
+        auto* m = bridge.modules.add (new ChannelModule (t));
+        m->onArm = [this] (int track, bool arm)
+        {
+            if (! engine.isRecording())     // arming is locked during a take
+                engine.setArmed (track, arm);
+        };
+        m->onInputChanged = [this] (int track, int ch)
+        {
+            engine.setInput (track, ch);
+            refreshInputChoices();
+        };
+        m->onRenameRequest = [this] (int track) { renameTrack (track); };
+        bridge.addAndMakeVisible (m);
+    }
+
+    refreshTrackNames();
+    refreshInputChoices();
+    layoutBridge();
+}
+
+void MainComponent::layoutBridge()
+{
+    const int w = bridgeView.getWidth() - bridgeView.getScrollBarThickness();
+    if (w > 100)
+        bridge.layoutForWidth (w, bridgeView.getHeight());
+}
+
+void MainComponent::refreshInputChoices()
+{
+    juce::StringArray names;
+    juce::BigInteger active;
+
+    if (auto* dev = deviceManager.getCurrentAudioDevice())
+    {
+        names  = dev->getInputChannelNames();
+        active = dev->getActiveInputChannels();
+    }
+
+    for (int t = 0; t < bridge.modules.size(); ++t)
+        bridge.modules[t]->setInputChoices (names, active, session != nullptr ? session->tracks[(size_t) t].input : -1);
+
+    if (routingWindow != nullptr)
+        routingWindow->getMatrix().repaint();
+}
+
+void MainComponent::refreshTrackNames()
+{
+    if (session == nullptr)
+        return;
+
+    for (int t = 0; t < bridge.modules.size(); ++t)
+        bridge.modules[t]->setTrackName (session->tracks[(size_t) t].name);
+
+    if (routingWindow != nullptr)
+        routingWindow->getMatrix().repaint();
+}
+
+void MainComponent::renameTrack (int track)
+{
+    if (session == nullptr || ! juce::isPositiveAndBelow (track, session->numTracks))
+        return;
+
+    auto* w = new juce::AlertWindow ("Track " + juce::String (track + 1), "Name:", juce::MessageBoxIconType::NoIcon, this);
+    w->addTextEditor ("name", session->tracks[(size_t) track].name);
+    w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, track] (int r)
+    {
+        if (r != 1 || session == nullptr) return;
+        auto name = w->getTextEditorContents ("name").trim();
+        session->tracks[(size_t) track].name = name.isEmpty() ? "Track " + juce::String (track + 1) : name;
+        saveSession();
+        refreshTrackNames();
+        if (sheetWindow != nullptr) sheetWindow->getSheet().refresh();
+    }), true);
+}
+
+//==============================================================================
+// Markers
+
+void MainComponent::addMarker()
+{
+    if (session == nullptr)
+        return;
+
+    session->addMarker (engine.getPosition(), "Marker " + juce::String ((int) session->markers.size() + 1));
+    saveSession();
+    markers.refresh();
+}
+
+void MainComponent::jumpToMarker (int direction)
+{
+    if (session == nullptr || session->markers.empty() || engine.isRecording())
+        return;
+
+    const auto pos = engine.getPosition();
+    const auto slack = (juce::int64) (session->sampleRate * 0.25);   // so "previous" while rolling isn't the one just passed
+
+    if (direction > 0)
+    {
+        for (auto& m : session->markers)
+            if (m.position > pos) { locate (m.position); return; }
+    }
+    else
+    {
+        for (auto it = session->markers.rbegin(); it != session->markers.rend(); ++it)
+            if (it->position < pos - slack) { locate (it->position); return; }
+        locate (session->markers.front().position);
+    }
+}
+
+//==============================================================================
+// Windows
+
+void MainComponent::showRouting()
+{
+    if (routingWindow == nullptr)
+    {
+        routingWindow = std::make_unique<RoutingWindow> (engine, [this] { return session.get(); });
+        routingWindow->getMatrix().onChanged = [this] { refreshInputChoices(); };
+        updateRoutingDevice();
+        routingWindow->fitToMatrix();
+    }
+
+    routingWindow->setVisible (true);
+    routingWindow->toFront (true);
+}
+
+void MainComponent::updateRoutingDevice()
+{
+    if (routingWindow == nullptr)
+        return;
+
+    if (auto* dev = deviceManager.getCurrentAudioDevice())
+        routingWindow->getMatrix().setDevice (dev->getInputChannelNames(), dev->getActiveInputChannels(),
+                                              dev->getOutputChannelNames(), dev->getActiveOutputChannels());
+    else
+        routingWindow->getMatrix().setDevice ({}, {}, {}, {});
+}
+
+void MainComponent::showSheet (bool takeLog)
+{
+    if (sheetWindow == nullptr)
+    {
+        sheetWindow = std::make_unique<SessionSheetWindow> ([this] { return session.get(); });
+        auto& sheet = sheetWindow->getSheet();
+        sheet.onSave = [this] { saveSession(); };
+        sheet.onTrackNamesChanged = [this] { refreshTrackNames(); };
+        sheet.onTrackCountChange = [this] (int n) { return setTrackCount (n); };
+    }
+
+    sheetWindow->getSheet().refresh();
+    if (takeLog)
+        sheetWindow->getSheet().showTakeLog();
+    sheetWindow->setVisible (true);
+    sheetWindow->toFront (true);
+}
+
+//==============================================================================
+// Updates
 
 void MainComponent::refreshUpdateButton()
 {
@@ -407,6 +584,7 @@ void MainComponent::confirmUpdate()
                 return;
 
             engine.stop();          // tape is safe on disk before Hawthorne closes
+            saveSession();
             updater.install();
         }));
 }
@@ -450,32 +628,34 @@ void MainComponent::doRecord()
         showAlert ("Cannot record", err);
 }
 
+void MainComponent::locate (juce::int64 pos)
+{
+    if (! engine.isRecording())
+        engine.locate (pos);
+}
+
 void MainComponent::nudge (double seconds)
 {
-    if (engine.isRecording())
-        return;
-    engine.locate (engine.getPosition() + (juce::int64) (seconds * sessionRate()));
+    locate (engine.getPosition() + (juce::int64) (seconds * sessionRate()));
 }
 
 bool MainComponent::keyPressed (const juce::KeyPress& k)
 {
-    if (k == juce::KeyPress::spaceKey)
-    {
-        if (engine.isPlaying()) doStop(); else doPlay();
-        return true;
-    }
-    if (k.getTextCharacter() == 'r' || k.getTextCharacter() == 'R' || k.getKeyCode() == juce::KeyPress::numberPadMultiply)
-    {
-        doRecord();
-        return true;
-    }
-    if (k == juce::KeyPress::returnKey || k == juce::KeyPress::homeKey)
-    {
-        if (! engine.isRecording()) engine.locate (0);
-        return true;
-    }
-    if (k == juce::KeyPress::leftKey)  { nudge (-5.0); return true; }
-    if (k == juce::KeyPress::rightKey) { nudge (5.0);  return true; }
+    // A text field being typed in keeps its keys.
+    if (auto* f = juce::Component::getCurrentlyFocusedComponent())
+        if (f != this && (dynamic_cast<juce::TextEditor*> (f) != nullptr))
+            return false;
+
+    const auto c = k.getTextCharacter();
+
+    if (k == juce::KeyPress::spaceKey)                       { if (engine.isPlaying()) doStop(); else doPlay(); return true; }
+    if (c == 'r' || c == 'R' || k.getKeyCode() == juce::KeyPress::numberPadMultiply) { doRecord(); return true; }
+    if (c == 'm' || c == 'M')                                { addMarker(); return true; }
+    if (c == ',' || c == '<')                                { jumpToMarker (-1); return true; }
+    if (c == '.' || c == '>')                                { jumpToMarker (1); return true; }
+    if (k == juce::KeyPress::returnKey || k == juce::KeyPress::homeKey) { locate (0); return true; }
+    if (k == juce::KeyPress::leftKey)                        { nudge (-5.0); return true; }
+    if (k == juce::KeyPress::rightKey)                       { nudge (5.0);  return true; }
     return false;
 }
 
@@ -501,44 +681,29 @@ void MainComponent::timerCallback()
         lastRolling = rolling;
     }
 
-    playButton.setLit (rolling);
-    recButton.setLit (rec);
-    stopButton.setLit (! rolling);
+    playKey.setLit (rolling);
+    recKey.setLit (rec);
+    stopKey.setLit (! rolling);
 
-    for (int t = 0; t < kNumTracks; ++t)
+    for (int t = 0; t < bridge.modules.size(); ++t)
     {
-        strips[t]->setArmed (engine.isArmed (t), rec, flash);
-        if (frame % 15 == 0)
-            strips[t]->setTapeSeconds ((int) ((double) engine.getTapeLength (t) / sessionRate()));
-
-        auto* vu = vus[t];
-        vu->update (engine.popTrackRms (t), engine.popTrackPeak (t), dt);
-        vu->setRecLamp (! engine.isArmed (t) ? VUMeter::RecLamp::off
-                                             : (rec ? VUMeter::RecLamp::recording : VUMeter::RecLamp::armed), flash);
-        if (session != nullptr && frame % 15 == 0)
-            vu->setTooltip (session->tracks[(size_t) t].name);
+        auto* m = bridge.modules[t];
+        m->setArmed (engine.isArmed (t), rec, flash);
+        m->getMeter().update (engine.popTrackRms (t), engine.popTrackPeak (t), dt);
     }
 
-    for (int ch = 0; ch < 2; ++ch)
-        vus[kNumTracks + ch]->update (engine.popMasterRms (ch), engine.popMasterPeak (ch), dt);
+    masterL.update (engine.popMasterRms (0), engine.popMasterPeak (0), dt);
+    masterR.update (engine.popMasterRms (1), engine.popMasterPeak (1), dt);
+    markers.setPlayhead (engine.getPosition());
 
     if (frame % 10 == 0)
+    {
         statusText = buildStatus();
+        repaint (statusArea);
+        repaint (reelInfoArea);
+    }
 
     repaint (counterArea);
-    repaint (statusArea);
-    repaint (headerArea);
-}
-
-juce::String MainComponent::formatTime (juce::int64 samples) const
-{
-    const auto totalMs = (juce::int64) ((double) samples / sessionRate() * 1000.0);
-    const int ms = (int) (totalMs % 1000);
-    const int s  = (int) ((totalMs / 1000) % 60);
-    const int m  = (int) ((totalMs / 60000) % 60);
-    const int h  = (int) (totalMs / 3600000);
-    return juce::String (h).paddedLeft ('0', 2) + ":" + juce::String (m).paddedLeft ('0', 2) + ":"
-         + juce::String (s).paddedLeft ('0', 2) + "." + juce::String (ms).paddedLeft ('0', 3);
 }
 
 juce::String MainComponent::buildStatus() const
@@ -585,37 +750,48 @@ void MainComponent::paint (juce::Graphics& g)
     g.setColour (Colours::panel);
     g.fillRect (headerArea);
     g.setColour (Colours::mustard);
-    g.setFont (monoFont (24.0f, true));
-    g.drawText ("H A W T H O R N E", headerArea.withTrimmedLeft (18).withWidth (300), juce::Justification::centredLeft);
+    g.setFont (monoFont (22.0f, true));
+    g.drawText ("H A W T H O R N E", headerArea.withTrimmedLeft (18).withWidth (280), juce::Justification::centredLeft);
 
+    const int firstButtonX = updateButton.isVisible() ? updateButton.getX() : newButton.getX();
+    auto sessionArea = headerArea.withTrimmedLeft (310).withRight (firstButtonX - 16);
     g.setFont (monoFont (14.0f, true));
     g.setColour (Colours::text);
-    const int firstButtonX = updateButton.isVisible() ? updateButton.getX() : newButton.getX();
-    auto sessionArea = headerArea.withTrimmedLeft (330).withRight (firstButtonX - 16);
     g.drawText (session != nullptr ? session->getName() : "No session", sessionArea, juce::Justification::centredLeft);
     g.setColour (Colours::textDim);
     g.setFont (monoFont (11.0f));
-    g.drawText ("24-TRACK  v" HAWTHORNE_VERSION, sessionArea, juce::Justification::centredRight);
+    g.drawText (juce::String (session != nullptr ? session->numTracks : 0) + "-TRACK  v" HAWTHORNE_VERSION,
+                sessionArea, juce::Justification::centredRight);
 
-    // Transport
+    // Transport deck
     g.setColour (Colours::panel);
-    g.fillRect (transportArea);
-
-    // Counter
-    g.setColour (Colours::black);
-    g.fillRoundedRectangle (counterArea.toFloat(), 5.0f);
+    g.fillRect (deckArea);
     g.setColour (Colours::edge);
-    g.drawRoundedRectangle (counterArea.toFloat(), 5.0f, 1.0f);
+    g.drawHorizontalLine (deckArea.getY(), 0.0f, (float) getWidth());
+
+    g.setColour (Colours::black);
+    g.fillRoundedRectangle (counterArea.toFloat(), 4.0f);
+    g.setColour (Colours::edge);
+    g.drawRoundedRectangle (counterArea.toFloat(), 4.0f, 1.0f);
 
     const bool rec = engine.isRecording();
     g.setColour (rec ? Colours::red : Colours::mustard);
-    g.setFont (monoFont ((float) counterArea.getHeight() * 0.6f, true));
-    g.drawText (formatTime (engine.getPosition()), counterArea.reduced (14, 0), juce::Justification::centred);
+    g.setFont (monoFont ((float) counterArea.getHeight() * 0.58f, true));
+    g.drawText (formatTime (engine.getPosition(), sessionRate()), counterArea.withTrimmedLeft (12), juce::Justification::centred);
 
-    g.setFont (monoFont (11.0f, true));
+    g.setFont (monoFont (10.0f, true));
     g.setColour (rec ? Colours::red : (engine.isPlaying() ? Colours::mustard : Colours::textDim));
-    g.drawText (rec ? "RECORDING" : (engine.isPlaying() ? "PLAY" : "STOP"),
-                counterArea.reduced (10, 4), juce::Justification::topLeft);
+    g.drawText (rec ? "REC" : (engine.isPlaying() ? "PLAY" : "STOP"), counterArea.reduced (7, 4), juce::Justification::topLeft);
+
+    if (session != nullptr)
+    {
+        g.setColour (Colours::textDim);
+        g.setFont (monoFont (12.0f, true));
+        g.drawFittedText ("REEL  " + formatTime (engine.getReelLength(), sessionRate()).dropLastCharacters (4)
+                              + "\n" + juce::String (session->numTracks) + " TRACKS  -  "
+                              + juce::String (session->sampleRate / 1000.0, 1) + " kHz / 24-bit",
+                          reelInfoArea, juce::Justification::centredLeft, 2);
+    }
 
     // Status bar
     g.setColour (Colours::black);
@@ -630,16 +806,18 @@ void MainComponent::resized()
 {
     auto r = getLocalBounds();
 
-    headerArea = r.removeFromTop (52);
+    headerArea = r.removeFromTop (48);
     {
-        auto h = headerArea.reduced (12, 11);
-        audioButton.setBounds (h.removeFromRight (150));
+        auto h = headerArea.reduced (12, 9);
+        audioButton.setBounds (h.removeFromRight (140));
         h.removeFromRight (8);
-        routingButton.setBounds (h.removeFromRight (100));
+        routingButton.setBounds (h.removeFromRight (96));
         h.removeFromRight (8);
-        openButton.setBounds (h.removeFromRight (90));
+        sheetButton.setBounds (h.removeFromRight (130));
         h.removeFromRight (8);
-        newButton.setBounds (h.removeFromRight (90));
+        openButton.setBounds (h.removeFromRight (80));
+        h.removeFromRight (8);
+        newButton.setBounds (h.removeFromRight (80));
 
         if (updateButton.isVisible())
         {
@@ -648,65 +826,43 @@ void MainComponent::resized()
         }
     }
 
-    statusArea = r.removeFromBottom (26);
+    statusArea = r.removeFromBottom (24);
 
-    transportArea = r.removeFromTop (96);
+    // Compact transport deck
+    deckArea = r.removeFromBottom (84);
     {
-        auto t = transportArea.reduced (14, 12);
-        counterArea = t.removeFromLeft (340);
-        t.removeFromLeft (24);
+        auto d = deckArea.reduced (14, 9);
 
-        const int bw = 64;
-        for (auto* b : { &rtzButton, &rewButton, &ffwButton })
+        // master VUs on the right
+        const int vuH = d.getHeight();
+        const int vuW = (int) ((float) vuH * ChannelModule::meterAspect);
+        masterR.setBounds (d.removeFromRight (vuW));
+        d.removeFromRight (6);
+        masterL.setBounds (d.removeFromRight (vuW));
+        d.removeFromRight (20);
+
+        counterArea = d.removeFromLeft (250).reduced (0, 4);
+        d.removeFromLeft (18);
+
+        auto key = [&] (TransportKey& k, int w = 64)
         {
-            b->setBounds (t.removeFromLeft (bw).reduced (0, 4));
-            t.removeFromLeft (6);
-        }
-        t.removeFromLeft (18);
-        for (auto* b : { &stopButton, &playButton, &recButton })
-        {
-            b->setBounds (t.removeFromLeft (bw + 12));
-            t.removeFromLeft (8);
-        }
+            k.setBounds (d.removeFromLeft (w).reduced (0, 6));
+            d.removeFromLeft (6);
+        };
+        key (rtzKey); key (rewKey); key (ffwKey);
+        d.removeFromLeft (14);
+        key (stopKey, 72); key (playKey, 72); key (recKey, 72);
+        d.removeFromLeft (14);
+        key (markKey);
+        d.removeFromLeft (14);
+        reelInfoArea = d;
     }
 
-    // Track strips along the bottom
-    auto tracks = r.removeFromBottom (128).reduced (8, 6);
-    const float w = (float) tracks.getWidth() / (float) kNumTracks;
+    // Markers sidebar on the right
+    markers.setBounds (r.removeFromRight (300));
 
-    for (int t = 0; t < kNumTracks; ++t)
-    {
-        const int x0 = tracks.getX() + juce::roundToInt (w * (float) t);
-        const int x1 = tracks.getX() + juce::roundToInt (w * (float) (t + 1));
-        strips[t]->setBounds (x0, tracks.getY(), x1 - x0, tracks.getHeight());
-    }
-
-    // Meter bridge: 3 rows of 8 analogue VUs (tracks 1-8, 9-16, 17-24),
-    // master L/R in their own column on the right.
-    bridgeArea = r;
-    auto bridge = r.reduced (10, 8);
-    constexpr int perRow = 8, rows = 3;
-    constexpr float aspect = 1.3f, gap = 6.0f, masterGap = 0.35f;   // gap before master column, in slots
-    constexpr float slots = (float) perRow + masterGap + 1.0f;
-
-    const float pitchFromWidth = (float) bridge.getWidth() / slots;
-    const float meterH = juce::jmin ((pitchFromWidth - gap) / aspect,
-                                     ((float) bridge.getHeight() - gap * (rows - 1)) / (float) rows);
-    const float meterW = meterH * aspect;
-    const float pitchX = meterW + gap, pitchY = meterH + gap;
-    const float x0 = (float) bridge.getX() + ((float) bridge.getWidth() - pitchX * slots) * 0.5f;
-    const float y0 = (float) bridge.getY() + ((float) bridge.getHeight() - (pitchY * rows - gap)) * 0.5f;
-
-    auto place = [&] (VUMeter* m, float col, float row)
-    {
-        m->setBounds (juce::Rectangle<float> (x0 + col * pitchX, y0 + row * pitchY, meterW, meterH).toNearestInt());
-    };
-
-    for (int t = 0; t < kNumTracks; ++t)
-        place (vus[t], (float) (t % perRow), (float) (t / perRow));
-
-    place (vus[kNumTracks],     perRow + masterGap, 0.5f);
-    place (vus[kNumTracks + 1], perRow + masterGap, 1.5f);
+    bridgeView.setBounds (r);
+    layoutBridge();
 }
 
 } // namespace hawthorne

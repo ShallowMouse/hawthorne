@@ -16,10 +16,25 @@ public:
         content = new hawthorne::MainComponent (props);
         setContentOwned (content, true);
         setResizable (true, true);
-        setResizeLimits (1000, 470, 10000, 10000);
+        setResizeLimits (1100, 600, 10000, 10000);
         centreWithSize (getWidth(), getHeight());
         setVisible (true);
+        setFullScreen (true);          // with the native title bar this is "maximised"
         content->grabKeyboardFocus();
+
+        // Windows can hand a program started by an installer or the updater a
+        // "start minimised" request; Hawthorne always opens in front.
+        juce::Component::SafePointer<MainWindow> safe (this);
+        for (int ms : { 300, 1200 })
+            juce::Timer::callAfterDelay (ms, [safe]
+            {
+                if (safe != nullptr && safe->isMinimised())
+                {
+                    safe->setMinimised (false);
+                    safe->setFullScreen (true);
+                    safe->toFront (true);
+                }
+            });
     }
 
     void shutdown() { if (content != nullptr) content->shutdown(); }
