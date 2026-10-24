@@ -344,7 +344,8 @@ public:
         field ("DATE", reel->info["Date"]);
         if (! reel->masters.isEmpty())
             field ("MASTERS", reel->masters.joinIntoString (",  "));
-        field ("TAPE", juce::StringArray { reel->info["Tape Stock"], reel->info["Speed"], reel->info["EQ"], reel->info["Noise Reduction"] }
+        field ("SPEED", Reel::formatIps (reel->ips) + " ips");
+        field ("TAPE", juce::StringArray { reel->info["Tape Stock"], reel->info["EQ"], reel->info["Noise Reduction"] }
                             .joinIntoString ("  ").trim());
 
         // tracks on the tape
@@ -526,6 +527,8 @@ void LibraryView::updateSelection()
 }
 
 //==============================================================================
+static double ipsFromIndex (int i) { return i == 0 ? 7.5 : i == 2 ? 30.0 : 15.0; }
+
 void LibraryView::newSession()
 {
     auto* w = new juce::AlertWindow ("New Session", "A session holds the reels for one job - an album, a single, a client.",
@@ -534,6 +537,8 @@ void LibraryView::newSession()
     w->addTextEditor ("artist", "", "Artist:");
     w->addComboBox ("tracks", { "8", "16", "24", "32", "48", "64", "72", "96" }, "Tracks on the first reel:");
     w->getComboBoxComponent ("tracks")->setSelectedItemIndex (2);
+    w->addComboBox ("ips", { juce::String (juce::CharPointer_UTF8 ("7\xc2\xbd ips")), "15 ips", "30 ips" }, "Tape speed:");
+    w->getComboBoxComponent ("ips")->setSelectedItemIndex (1);
     w->addButton ("Create", 1, juce::KeyPress (juce::KeyPress::returnKey));
     w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
@@ -555,7 +560,8 @@ void LibraryView::newSession()
             s->save (err);
         }
 
-        auto reel = s->createReel (tracks, getSampleRate ? getSampleRate() : 48000.0, err);
+        const double ips = ipsFromIndex (w->getComboBoxComponent ("ips")->getSelectedItemIndex());
+        auto reel = s->createReel (tracks, getSampleRate ? getSampleRate() : 48000.0, err, ips);
         if (reel == nullptr) { showError ("New Session", err); return; }
 
         const auto file = reel->getFile();
@@ -571,6 +577,7 @@ void LibraryView::newReel()
     if (s == nullptr) return;
 
     const int lastTracks = s->reels.empty() ? kDefaultTracks : s->reels.back().numTracks;
+    const double lastIps = s->reels.empty() ? 15.0 : s->reels.back().ips;
     const auto sessionFile = s->file;
 
     auto* w = new juce::AlertWindow ("New Reel", "Add a reel to \"" + s->name + "\".\nThe track count can't be changed later.",
@@ -578,6 +585,8 @@ void LibraryView::newReel()
     juce::StringArray counts { "8", "16", "24", "32", "48", "64", "72", "96" };
     w->addComboBox ("tracks", counts, "Tracks:");
     w->getComboBoxComponent ("tracks")->setSelectedItemIndex (juce::jmax (0, counts.indexOf (juce::String (lastTracks))));
+    w->addComboBox ("ips", { juce::String (juce::CharPointer_UTF8 ("7\xc2\xbd ips")), "15 ips", "30 ips" }, "Tape speed:");
+    w->getComboBoxComponent ("ips")->setSelectedItemIndex (lastIps == 7.5 ? 0 : lastIps == 30.0 ? 2 : 1);
     w->addButton ("Create", 1, juce::KeyPress (juce::KeyPress::returnKey));
     w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
@@ -588,7 +597,8 @@ void LibraryView::newReel()
 
         juce::String err;
         auto session = Session::load (sessionFile, err);
-        auto reel = session != nullptr ? session->createReel (tracks, getSampleRate ? getSampleRate() : 48000.0, err) : nullptr;
+        const double ips = ipsFromIndex (w->getComboBoxComponent ("ips")->getSelectedItemIndex());
+        auto reel = session != nullptr ? session->createReel (tracks, getSampleRate ? getSampleRate() : 48000.0, err, ips) : nullptr;
         if (reel == nullptr) { showError ("New Reel", err); return; }
 
         const auto file = reel->getFile();

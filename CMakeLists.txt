@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(Hawthorne VERSION 1.7.0)
+project(Hawthorne VERSION 1.8.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -19,6 +19,7 @@ set(ENGINE_SOURCES
     Source/Engine/Library.cpp
     Source/Engine/RecordingStream.h
     Source/Engine/RecordingStream.cpp
+    Source/Engine/Varispeed.cpp
     Source/Engine/TapeEngine.h
     Source/Engine/TapeEngine.cpp
 )

@@ -133,6 +133,42 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     };
     monitorKey.onClick = [this] { engine.setMonitorMaster (! engine.isMonitoringMaster()); };
 
+    // Speed: IPS switch + varispeed
+    for (auto* k : { &ips7Key, &ips15Key, &ips30Key, &variKey })
+        addAndMakeVisible (k);
+    ips7Key.onClick  = [this] { if (reel != nullptr) changeSpeed (7.5,  reel->variOn, reel->variPercent); };
+    ips15Key.onClick = [this] { if (reel != nullptr) changeSpeed (15.0, reel->variOn, reel->variPercent); };
+    ips30Key.onClick = [this] { if (reel != nullptr) changeSpeed (30.0, reel->variOn, reel->variPercent); };
+    variKey.onClick  = [this] { if (reel != nullptr) changeSpeed (reel->deckIps, ! reel->variOn, reel->variPercent); };
+
+    variKnob.setRange (-TapeEngine::maxVarispeedPercent, TapeEngine::maxVarispeedPercent, 0.0);
+    variKnob.setDoubleClickReturnValue (true, 0.0);
+    variKnob.setMouseDragSensitivity (800);              // 0.125 % per pixel; type a value for exact
+    variKnob.setVelocityModeParameters (0.4, 1, 0.0, true, juce::ModifierKeys::shiftModifier);   // shift = fine
+    variKnob.setWantsKeyboardFocus (false);
+    variKnob.setTooltip ("Varispeed -50 % .. +50 %. Drag (shift = fine), double-click for 0, or type a value below.");
+    variKnob.onValueChange = [this] { if (reel != nullptr) changeSpeed (reel->deckIps, true, variKnob.getValue(), false); };
+    variKnob.onDragEnd = [this] { saveReel(); };
+    addAndMakeVisible (variKnob);
+
+    variLabel.setEditable (false, true, false);
+    variLabel.setJustificationType (juce::Justification::centred);
+    variLabel.setFont (monoFont (12.0f, true));
+    variLabel.setColour (juce::Label::backgroundColourId, Colours::black);
+    variLabel.setColour (juce::Label::outlineColourId, Colours::edge);
+    variLabel.setTooltip ("Double-click to type: a percentage (-5.5) or semitones (-1 st)");
+    variLabel.setWantsKeyboardFocus (false);
+    variLabel.onTextChange = [this]
+    {
+        if (reel == nullptr) return;
+        auto t = variLabel.getText().trim().toLowerCase();
+        const bool semis = t.contains ("st") || t.contains ("semi");
+        const double v = t.retainCharacters ("+-0123456789.").getDoubleValue();
+        const double pct = semis ? (std::pow (2.0, v / 12.0) - 1.0) * 100.0 : v;
+        changeSpeed (reel->deckIps, true, juce::jlimit (-TapeEngine::maxVarispeedPercent, TapeEngine::maxVarispeedPercent, pct));
+    };
+    addAndMakeVisible (variLabel);
+
     markers.onLocate    = [this] (juce::int64 pos) { locate (pos); };
     markers.onAddMarker = [this] { addMarker(); };
     markers.onChanged   = [this] { saveReel(); };
@@ -352,6 +388,7 @@ void MainComponent::setReel (std::unique_ptr<Reel> r, std::unique_ptr<Session> s
 
     rebuildModules();
     refreshMasterSection();
+    refreshSpeedSection();
 
     if (routingWindow != nullptr) { routingWindow->getMatrix().tracksChanged(); routingWindow->getLatencyPanel().refresh(); }
     if (sheetWindow != nullptr)   sheetWindow->getSheet().refresh();
@@ -492,6 +529,48 @@ void MainComponent::jumpToMarker (int direction)
             if (it->position < pos - slack) { locate (it->position); return; }
         locate (reel->markers.front().position);
     }
+}
+
+//==============================================================================
+// Speed
+
+void MainComponent::changeSpeed (double deckIps, bool variOn, double variPercent, bool save)
+{
+    if (reel == nullptr)
+        return;
+
+    if (auto err = engine.setSpeed (deckIps, variOn, variPercent, save); err.isNotEmpty())
+        showAlert ("Speed", err);
+    refreshSpeedSection();
+}
+
+void MainComponent::refreshSpeedSection()
+{
+    const bool has = reel != nullptr;
+    const double deck = has ? reel->deckIps : 15.0;
+    ips7Key.setLit (has && deck == 7.5);
+    ips15Key.setLit (has && deck == 15.0);
+    ips30Key.setLit (has && deck == 30.0);
+    variKey.setLit (has && reel->variOn);
+
+    const double pct = has ? reel->variPercent : 0.0;
+    variKnob.setValue (pct, juce::dontSendNotification);
+
+    const double st = 12.0 * std::log2 (1.0 + pct / 100.0);
+    auto signedFixed = [] (double v) { return (v >= 0.0 ? "+" : "") + juce::String (v, 2); };
+    if (! variLabel.isBeingEdited())
+        variLabel.setText (signedFixed (pct) + " %   " + signedFixed (st) + " st", juce::dontSendNotification);
+    variLabel.setColour (juce::Label::textColourId, has && reel->variOn ? Colours::mustard : Colours::textDim);
+    repaint (reelInfoArea);
+}
+
+juce::String MainComponent::speedText() const
+{
+    if (reel == nullptr)
+        return {};
+    const double now = engine.isPlaying() && engine.isDeviceRunning() ? engine.getSpeed() : engine.getTargetSpeed();
+    const double ips = reel->ips * now;
+    return Reel::formatIps (reel->ips) + " IPS REEL  -  TAPE " + juce::String (ips, ips < 10.0 ? 2 : 1) + " ips  x" + juce::String (now, 4);
 }
 
 //==============================================================================
@@ -908,6 +987,9 @@ void MainComponent::timerCallback()
     }
 
     masterArmKey.setLit (engine.isMasterArmed() && (! rec || flash));
+    for (juce::Component* c : { (juce::Component*) &ips7Key, (juce::Component*) &ips15Key, (juce::Component*) &ips30Key,
+                                (juce::Component*) &variKey, (juce::Component*) &variKnob, (juce::Component*) &variLabel })
+        c->setEnabled (reel != nullptr && ! rec);       // speed is held while recording
     monitorKey.setLit (engine.isMonitoringMaster());
     masterL.update (engine.popMasterRms (0), engine.popMasterPeak (0), dt);
     masterR.update (engine.popMasterRms (1), engine.popMasterPeak (1), dt);
@@ -995,7 +1077,7 @@ void MainComponent::paint (juce::Graphics& g)
 
     const bool rec = engine.isRecording();
     g.setColour (rec ? Colours::red : Colours::mustard);
-    g.setFont (monoFont ((float) counterArea.getHeight() * 0.58f, true));
+    g.setFont (monoFont (juce::jmin ((float) counterArea.getHeight() * 0.58f, (float) counterArea.getWidth() / 7.6f), true));
     g.drawText (formatTime (engine.getPosition(), sessionRate()), counterArea.withTrimmedLeft (12), juce::Justification::centred);
 
     g.setFont (monoFont (10.0f, true));
@@ -1008,8 +1090,12 @@ void MainComponent::paint (juce::Graphics& g)
         g.setFont (monoFont (12.0f, true));
         g.drawFittedText ("REEL  " + formatTime (engine.getReelLength(), sessionRate()).dropLastCharacters (4)
                               + "\n" + juce::String (reel->numTracks) + " TRACKS  -  "
-                              + juce::String (reel->sampleRate / 1000.0, 1) + " kHz / 24-bit",
-                          reelInfoArea, juce::Justification::centredLeft, 2);
+                              + juce::String (reel->sampleRate / 1000.0, 1) + " kHz / 24-bit"
+                              + "\n" + speedText(),
+                          reelInfoArea, juce::Justification::centredLeft, 3);
+        g.setColour (Colours::textDim);
+        g.setFont (monoFont (10.0f, true));
+        g.drawText ("SPEED", speedLabelArea, juce::Justification::centredLeft);
     }
 
     g.setColour (Colours::textDim);
@@ -1071,20 +1157,38 @@ void MainComponent::resized()
         monitorKey.setBounds (ms);
         d.removeFromRight (16);
 
-        counterArea = d.removeFromLeft (250).reduced (0, 4);
-        d.removeFromLeft (18);
+        const bool compact = getWidth() < 1700;
+        counterArea = d.removeFromLeft (compact ? 180 : 250).reduced (0, 4);
+        d.removeFromLeft (compact ? 12 : 18);
 
-        auto key = [&] (TransportKey& k, int w = 64)
+        const int kw = compact ? 56 : 64, kwBig = compact ? 62 : 72, gap = compact ? 10 : 14;
+        auto key = [&] (TransportKey& k, int w)
         {
             k.setBounds (d.removeFromLeft (w).reduced (0, 6));
             d.removeFromLeft (6);
         };
-        key (rtzKey); key (rewKey); key (ffwKey);
-        d.removeFromLeft (14);
-        key (stopKey, 72); key (playKey, 72); key (recKey, 72);
-        d.removeFromLeft (14);
-        key (markKey);
-        d.removeFromLeft (14);
+        key (rtzKey, kw); key (rewKey, kw); key (ffwKey, kw);
+        d.removeFromLeft (gap);
+        key (stopKey, kwBig); key (playKey, kwBig); key (recKey, kwBig);
+        d.removeFromLeft (gap);
+        key (markKey, kw);
+        d.removeFromLeft (gap);
+
+        // Speed: IPS switch, VARI, varispeed knob and readout
+        auto sp = d.removeFromLeft (compact ? 250 : 290);
+        speedLabelArea = sp.removeFromTop (14);
+        variKnob.setBounds (sp.removeFromRight (52).withSizeKeepingCentre (52, 52));
+        sp.removeFromRight (6);
+        auto row1 = sp.removeFromTop (24);
+        sp.removeFromTop (4);
+        const int iw = (row1.getWidth() - 3 * 4) / 4;
+        for (auto* k : { &ips7Key, &ips15Key, &ips30Key, &variKey })
+        {
+            k->setBounds (row1.removeFromLeft (iw));
+            row1.removeFromLeft (4);
+        }
+        variLabel.setBounds (sp.removeFromTop (24));
+        d.removeFromLeft (gap);
         reelInfoArea = d;
     }
 

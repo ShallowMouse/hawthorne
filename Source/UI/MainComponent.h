@@ -89,6 +89,11 @@ private:
     void addMarker();
     void jumpToMarker (int direction);
 
+    // Speed
+    void changeSpeed (double deckIps, bool variOn, double variPercent, bool save = true);
+    void refreshSpeedSection();
+    juce::String speedText() const;
+
     // Masters
     void showMasterMenu();
     void newMaster();
@@ -151,6 +156,14 @@ private:
     TransportKey masterArmKey { "ARM",  "Arm the master: record the mix onto this reel, in step with the tracks", Colours::red },
                  monitorKey   { "TAPE", "Master monitoring: hear the master tape instead of the live mix",       Colours::mustard };
     juce::Rectangle<int> masterLabelArea;
+
+    TransportKey ips7Key  { juce::String (juce::CharPointer_UTF8 ("7\xc2\xbd")), juce::String (juce::CharPointer_UTF8 ("Deck speed 7\xc2\xbd ips")), Colours::mustard },
+                 ips15Key { "15",   "Deck speed 15 ips",  Colours::mustard },
+                 ips30Key { "30",   "Deck speed 30 ips",  Colours::mustard },
+                 variKey  { "VARI", "Varispeed on / off (keeps the setting)", Colours::mustard };
+    juce::Slider variKnob { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
+    juce::Label variLabel;
+    juce::Rectangle<int> speedLabelArea;
     MarkerPanel markers;
     LibraryView library { props };
 

@@ -103,7 +103,6 @@ public:
         {
             juce::StringPairArray h;
             h.set ("Tape Stock", "e.g. Ampex 456 / 3M 996");
-            h.set ("Speed", "15 / 30 ips");
             h.set ("EQ", "NAB / CCIR / AES");
             h.set ("Alignment", "e.g. 0 VU = 185 nWb/m, -18 dBFS");
             h.set ("Noise Reduction", "None / Dolby A / dbx");
@@ -483,6 +482,7 @@ SessionSheet::SessionSheet (std::function<Reel*()> gr, std::function<Session*()>
                                  auto* r = getReel();
                                  return r == nullptr ? juce::String()
                                                      : r->getName().toUpperCase() + "   " + juce::String (r->numTracks) + " TRACKS   "
+                                                       + Reel::formatIps (r->ips) + " IPS   "
                                                        + juce::String (r->sampleRate / 1000.0, 1) + " kHz";
                              });
     trackPage = new TrackSheetPage (*this);

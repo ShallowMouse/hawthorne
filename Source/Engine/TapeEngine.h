@@ -4,6 +4,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include "Reel.h"
 #include "RecordingStream.h"
+#include "Varispeed.h"
 #include <map>
 
 namespace hawthorne
@@ -38,6 +39,17 @@ public:
     void punchOut();                // stop recording, keep rolling
     void stop();
     void locate (juce::int64 samplePos);
+
+    //==========================================================================
+    // Speed: the deck's IPS switch and varispeed. Tape speed relative to the
+    // reel = deckIps / reel ips * (1 + varispeed %). Recording at a different
+    // speed lands on tape like a real machine (plays back shifted at normal speed).
+    // Not while recording. save = false while a knob is being dragged.
+    juce::String setSpeed (double deckIps, bool variOn, double variPercent, bool save = true);
+    double getTargetSpeed() const noexcept { return targetRate.load(); }
+    double getSpeed() const noexcept       { return currentRate.load(); }   // what the tape is doing now
+    static constexpr double maxVarispeedPercent = 50.0;
+    static constexpr double maxSpeedRatio = 4.0 * 1.5;                     // 7.5 ips reel on a 30 ips deck, +50 %
 
     bool isPlaying() const noexcept    { return playing.load(); }
     bool isRecording() const noexcept  { return recording.load(); }
@@ -205,8 +217,12 @@ private:
         std::array<std::shared_ptr<RecordingStream>, 2> masterStreams;
         juce::String masterName;
         int masterLatency = 0;
-        std::atomic<juce::int64> startPos { -1 };
         int latency = 0;
+        double rate = 1.0;                                   // constant for the whole pass
+        std::atomic<int> mode { 0 };                         // 0 not started, 1 straight to tape, 2 resampled (varispeed)
+        std::atomic<juce::int64> trackStart { RecordingStream::notStarted }, masterStart { RecordingStream::notStarted };   // first tape sample written
+        RecordResampler trackRs, masterRs;
+        std::array<int, kMaxTracks> rsChannel;               // track -> trackRs channel
     };
 
     //==========================================================================
@@ -244,6 +260,13 @@ private:
 
     std::atomic<bool> playing { false }, recording { false };
     std::atomic<juce::int64> position { 0 };
+    double posFrac = 0.0;                                  // audio thread: sub-sample tape position
+    std::atomic<double> targetRate { 1.0 }, currentRate { 1.0 };
+    static constexpr int vsChunk = 256;                    // varispeed processes at most this many samples at once
+    int vsMaxHalfSpan = 0;
+    juce::HeapBlock<float> vsWeights, vsSpan;
+    juce::HeapBlock<int> vsOffset;
+    bool readTapeSpan (const std::vector<Segment>&, juce::int64 start, int len, float* dest) noexcept;
     std::atomic<int> numTracks { kDefaultTracks };
     std::array<std::atomic<bool>, kMaxTracks> armed;
     std::array<std::atomic<float>, kMaxTracks> trackPeak;

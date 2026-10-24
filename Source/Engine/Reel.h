@@ -77,7 +77,8 @@ public:
 
     /** Creates <parentFolder>/<name>/<name>.reel plus its Audio folder. The track count is fixed for life. */
     static std::unique_ptr<Reel> create (const juce::File& parentFolder, const juce::String& name,
-                                            double sampleRate, int numTracks, juce::String& error);
+                                            double sampleRate, int numTracks, juce::String& error,
+                                            double ips = 15.0);
 
     /** Loads a reel, repairs any tape left mid-write by a crash and evens up tape lengths. */
     static std::unique_ptr<Reel> load (const juce::File& reelFile, juce::String& error);
@@ -135,6 +136,19 @@ public:
     int  activeMaster = -1;        // the master on the machine
     bool masterArmed = false;
     bool monitorMaster = false;    // hear the master tape instead of the live mix
+
+    // Speed. The reel's speed is the one it was recorded at (fixed for life);
+    // the deck can run it at another speed and/or varispeed, like a real machine.
+    double ips = 15.0;             // 7.5, 15 or 30
+    double deckIps = 15.0;
+    bool   variOn = false;
+    double variPercent = 0.0;      // -50 .. +50
+    /** Tape speed relative to the reel's own: 1.0 = as recorded. */
+    double getSpeedRatio() const noexcept
+    {
+        return (deckIps / ips) * (variOn ? 1.0 + variPercent / 100.0 : 1.0);
+    }
+    static juce::String formatIps (double v) { return v == 7.5 ? juce::String (juce::CharPointer_UTF8 ("7\xc2\xbd")) : juce::String ((int) v); }
     std::vector<Marker> markers;
     juce::StringPairArray info;
     std::vector<TakeEntry> takeLog;

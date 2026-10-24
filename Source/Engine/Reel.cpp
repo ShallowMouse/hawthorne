@@ -28,7 +28,8 @@ namespace
 
 //==============================================================================
 std::unique_ptr<Reel> Reel::create (const juce::File& parentFolder, const juce::String& name,
-                                          double sampleRate, int numTracks, juce::String& error)
+                                          double sampleRate, int numTracks, juce::String& error,
+                                          double ips)
 {
     const auto cleanName = juce::File::createLegalFileName (name.trim());
 
@@ -50,6 +51,7 @@ std::unique_ptr<Reel> Reel::create (const juce::File& parentFolder, const juce::
     s->reelFile = folder.getChildFile (cleanName + fileExtension);
     s->sampleRate  = sampleRate > 0 ? sampleRate : 48000.0;
     s->numTracks   = juce::jlimit (1, kMaxTracks, numTracks);
+    s->ips = s->deckIps = (ips == 7.5 || ips == 30.0) ? ips : 15.0;
     initDefaultTracks (s->tracks);
     s->info.set ("Reel No.", cleanName.retainCharacters ("0123456789").trimCharactersAtStart ("0"));
     s->info.set ("Date", juce::Time::getCurrentTime().formatted ("%d %b %Y"));
@@ -122,7 +124,7 @@ std::unique_ptr<Reel> Reel::load (const juce::File& file, juce::String& error)
 //==============================================================================
 const juce::StringArray& Reel::infoFields()
 {
-    static const juce::StringArray fields { "Reel No.", "Date", "Tape Stock", "Speed", "EQ",
+    static const juce::StringArray fields { "Reel No.", "Date", "Tape Stock", "EQ",
                                             "Alignment", "Noise Reduction", "Tones", "Reel Notes" };
     return fields;
 }
@@ -296,6 +298,11 @@ std::unique_ptr<juce::XmlElement> Reel::toXml() const
     root->setAttribute ("bitDepth", bitDepth);
     root->setAttribute ("numTracks", numTracks);
     root->setAttribute ("nextTake", nextTake);
+    root->setAttribute ("ips", ips);
+    auto* deck = root->createNewChildElement ("Deck");
+    deck->setAttribute ("ips", deckIps);
+    deck->setAttribute ("vari", variOn);
+    deck->setAttribute ("varispeed", variPercent);
 
     for (int t = 0; t < kMaxTracks; ++t)
     {
@@ -370,6 +377,32 @@ bool Reel::fromXml (const juce::XmlElement& root, juce::String& error)
     numTracks  = juce::jlimit (1, kMaxTracks, root.getIntAttribute ("numTracks", kDefaultTracks));
     archived   = root.getBoolAttribute ("archived", false);
     nextTake   = juce::jmax (1, root.getIntAttribute ("nextTake", 1));
+
+    auto validIps = [] (double v) { return v == 7.5 || v == 15.0 || v == 30.0; };
+    ips = root.getDoubleAttribute ("ips", 0.0);
+    if (! validIps (ips))
+    {
+        // Older reels: take it from the paperwork if it names one speed, else 15.
+        ips = 15.0;
+        if (auto* ie = root.getChildByName ("Info"))
+            for (auto* f : ie->getChildWithTagNameIterator ("Field"))
+                if (f->getStringAttribute ("name") == "Speed")
+                {
+                    const auto v = f->getStringAttribute ("value");
+                    const bool has30 = v.contains ("30"), has15 = v.contains ("15"), has7 = v.contains ("7");
+                    if (has30 + has15 + has7 == 1)
+                        ips = has30 ? 30.0 : has15 ? 15.0 : 7.5;
+                }
+    }
+    deckIps = ips;
+    variOn = false;
+    variPercent = 0.0;
+    if (auto* deck = root.getChildByName ("Deck"))
+    {
+        deckIps = validIps (deck->getDoubleAttribute ("ips")) ? deck->getDoubleAttribute ("ips") : ips;
+        variOn = deck->getBoolAttribute ("vari", false);
+        variPercent = juce::jlimit (-50.0, 50.0, deck->getDoubleAttribute ("varispeed", 0.0));
+    }
 
     if (sampleRate < 8000.0 || sampleRate > 768000.0)
     {

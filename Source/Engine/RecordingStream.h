@@ -4,6 +4,7 @@
 #include "Reel.h"
 #include <array>
 #include <atomic>
+#include <limits>
 #include <memory>
 
 namespace hawthorne
@@ -31,8 +32,12 @@ namespace hawthorne
 class RecordingStream
 {
 public:
-    /** startPos is written by the audio thread when the first block is recorded;
-        nothing is written to the tape until it is known. */
+    /** Value of *startPos until the audio thread records the first block. */
+    static constexpr juce::int64 notStarted = std::numeric_limits<juce::int64>::min();
+
+    /** *startPos is set by the audio thread when the first block is recorded (it may be
+        negative: samples before tape start are skipped); nothing is written until then. */
+
     RecordingStream (std::unique_ptr<TapeFile> tape,
                      const juce::File& file,
                      int fifoSizeSamples,

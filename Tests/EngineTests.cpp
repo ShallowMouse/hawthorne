@@ -822,10 +822,188 @@ static void testMasters()
     e.setReel (nullptr);
 }
 
+
+//==============================================================================
+static void writeSineTape (const juce::File& f, double freq, double seconds, float amp = 0.5f)
+{
+    f.getParentDirectory().createDirectory();
+    f.deleteFile();
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::OutputStream> os (f.createOutputStream().release());
+    std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (os.get(), kSR, 1, 24, {}, 0));
+    os.release();
+    const int n = (int) (seconds * kSR);
+    juce::AudioBuffer<float> b (1, n);
+    for (int i = 0; i < n; ++i)
+        b.setSample (0, i, amp * (float) std::sin (2.0 * juce::MathConstants<double>::pi * freq * i / kSR));
+    w->writeFromAudioSampleBuffer (b, 0, n);
+}
+
+/** Plays track 1 at `rate` and returns the worst error against the ideal
+    (mathematically resampled) sine, in dB relative to the sine's level. */
+static double varispeedPlaybackError (double freq, double deckIps, double pct, double& outLevelDb)
+{
+    juce::String err;
+    auto reel = Reel::create (makeTempDir ("vsplay"), "VS", kSR, kDefaultTracks, err);
+    writeSineTape (reel->getTapeFile (0), freq, 8.0);
+
+    TapeEngine e;
+    e.setReel (reel.get());
+    prepareEngine (e, 256);
+    for (int t = 0; t < kDefaultTracks; ++t) e.setTrackToMix (t, t == 0);
+    e.setSpeed (deckIps, pct != 0.0, pct);
+    const double rate = e.getTargetSpeed();
+
+    const int n = 256;
+    juce::AudioBuffer<float> in (kDefaultTracks, n), out (4, n);
+    in.clear();
+    const int64 startPos = 24000;
+    e.locate (startPos);
+    e.process (in.getArrayOfReadPointers(), kDefaultTracks, out.getArrayOfWritePointers(), 4, n);  // parked
+    e.play();
+
+    double errSq = 0.0, sigSq = 0.0, outSq = 0.0;
+    int64 k = 0;
+    const int64 total = (int64) (kSR * 1.5);
+    const double maxPos = 7.5 * kSR;
+    while (k < total)
+    {
+        e.process (in.getArrayOfReadPointers(), kDefaultTracks, out.getArrayOfWritePointers(), 4, n);
+        for (int i = 0; i < n; ++i, ++k)
+        {
+            const double tpos = (double) startPos + (double) k * rate;
+            if (tpos > maxPos) continue;
+            const double ideal = (freq * rate < kSR * 0.45) ? 0.5 * std::sin (2.0 * juce::MathConstants<double>::pi * freq * tpos / kSR) : 0.0;
+            const double d = out.getSample (0, i) - ideal;
+            errSq += d * d;
+            sigSq += 0.125;                     // (0.5 amplitude sine)^2 mean
+            outSq += (double) out.getSample (0, i) * out.getSample (0, i);
+        }
+        juce::Thread::sleep (1);
+    }
+    CHECK (e.getPlaybackUnderruns() == 0, "playback underruns %lld", (long long) e.getPlaybackUnderruns());
+    e.stop();
+    e.setReel (nullptr);
+    outLevelDb = 10.0 * std::log10 (juce::jmax (1.0e-30, outSq / sigSq));
+    return 10.0 * std::log10 (juce::jmax (1.0e-30, errSq / sigSq));
+}
+
+static void testVarispeed()
+{
+    std::printf ("[14] varispeed and tape speed: accuracy, anti-aliasing, overdubs at varispeed\n");
+
+    struct Case { const char* name; double freq, deckIps, pct; };
+    const Case cases[] = { { "+1 semitone (+5.946 %)", 1000.0, 15.0, (std::pow (2.0, 1.0 / 12.0) - 1.0) * 100.0 },
+                           { "-50 %",                   1000.0, 15.0, -50.0 },
+                           { "15 ips reel at 30 ips",   1000.0, 30.0, 0.0 },
+                           { "30 ips +50 % (x3)",       1000.0, 30.0, 50.0 },
+                           { "7.5 ips -13.7 % (x0.43)", 9000.0, 7.5, -13.7 },
+                           { "-0.01 %",                 15000.0, 15.0, -0.01 } };
+    for (auto& c : cases)
+    {
+        double level = 0.0;
+        const double e = varispeedPlaybackError (c.freq, c.deckIps, c.pct, level);
+        CHECK (e < -90.0, "%s: error %.1f dB", c.name, e);
+        std::printf ("    %-26s %5.0f Hz on tape: error %6.1f dB\n", c.name, c.freq, e);
+    }
+
+    // Anti-aliasing: 20 kHz played faster lands above Nyquist and must vanish
+    for (double pct : { 30.0, 50.0 })
+    {
+        double level = 0.0;
+        varispeedPlaybackError (20000.0, 15.0, pct, level);
+        CHECK (level < -90.0, "20 kHz at +%.0f %%: alias %.1f dB", pct, level);
+        std::printf ("    20 kHz at +%.0f %% (above Nyquist): alias %6.1f dB\n", pct, level);
+    }
+
+    // Overdub at varispeed through a real round trip: track 1 out of output 3,
+    // back on input 23 into track 2. On tape, track 2 must equal track 1.
+    juce::String err;
+    auto reel = Reel::create (makeTempDir ("vsrec"), "VSRec", kSR, kDefaultTracks, err);
+    writeSineTape (reel->getTapeFile (0), 997.0, 10.0);
+    constexpr int D = 531;
+    TapeEngine e;
+    e.setReel (reel.get());
+    prepareEngine (e, 256);
+    for (int t = 0; t < kDefaultTracks; ++t) { e.setTrackToMix (t, t == 0); e.setTrackOutputs (t, {}); }
+    e.setTrackOutputs (0, ChannelList { 2 });
+    e.setInput (1, 22);
+    e.setArmed (1, true);
+    e.setMeasuredRoundTrip (D);
+    const int m = reel->addMaster ("Vari Mix");
+    e.mastersChanged();
+    e.setActiveMaster (m);
+    e.setMasterArmed (true);
+    e.setSpeed (15.0, true, -7.0);
+
+    LoopbackDevice dev (e, D);
+    dev.startThread();
+    juce::Thread::sleep (50);
+    e.locate (4800);
+    CHECK (e.record().isEmpty(), "record at varispeed");
+    CHECK (e.setSpeed (15.0, true, 3.0).isNotEmpty(), "speed change allowed while recording");
+    pump (e, (int) (3000 / testSpeed()));
+    e.stop();
+    dev.stopThread (5000);
+
+    const auto t1 = readTape (*reel, 0), t2 = readTape (*reel, 1);
+    const auto ml = readFile (reel->getMasterFile (m, 0));
+    auto compare = [&] (const Tape& got, const char* what)
+    {
+        int64 first = -1, last = -1;
+        for (size_t k = 0; k < got.size(); ++k) if (got[k] != 0.0f) { if (first < 0) first = (int64) k; last = (int64) k; }
+        double errSq = 0.0; int64 count = 0;
+        for (int64 k = first + 300; k < last - 300 && k < (int64) t1.size(); ++k, ++count)
+        {
+            const double d = got[(size_t) k] - t1[(size_t) k];
+            errSq += d * d;
+        }
+        const double db = count > 0 ? 10.0 * std::log10 (juce::jmax (1.0e-30, errSq / (count * 0.125))) : 0.0;
+        CHECK (count > (int64) kSR && db < -80.0, "%s: %lld samples, error %.1f dB", what, (long long) count, db);
+        std::printf ("    %s at -7 %%: %.2f s on tape, error vs track 1 %6.1f dB\n", what, (double) count / kSR, db);
+    };
+    compare (t2, "overdub via round trip");
+    compare (ml, "master");
+    e.setReel (nullptr);
+}
+
+static void benchVarispeed()
+{
+    // HAWTHORNE_BENCH=1: CPU cost of varispeed playback with every track full.
+    juce::String err;
+    auto reel = Reel::create (makeTempDir ("bench"), "Bench", kSR, kMaxTracks, err);
+    for (int t = 0; t < kMaxTracks; ++t) writeSineTape (reel->getTapeFile (t), 440.0 + t, 6.0, 0.01f);
+    TapeEngine e;
+    e.setReel (reel.get());
+    prepareEngine (e, 256);
+    const int n = 256;
+    juce::AudioBuffer<float> in (kDefaultTracks, n), out (4, n);
+    in.clear();
+    for (double ratio : { 1.0, 1.06, 1.5, 2.0, 4.0 })
+    {
+        e.setSpeed (ratio >= 2.0 ? 30.0 : 15.0, ratio != 1.0 && ratio != 2.0, ratio >= 2.0 ? (ratio / 2.0 - 1.0) * 100.0 : (ratio - 1.0) * 100.0);
+        e.locate (0);
+        e.process (in.getArrayOfReadPointers(), kDefaultTracks, out.getArrayOfWritePointers(), 4, n);
+        e.play();
+        double busy = 0.0; int blocks = 0;
+        for (int i = 0; i < 200; ++i)
+        {
+            const auto t0 = juce::Time::getMillisecondCounterHiRes();
+            e.process (in.getArrayOfReadPointers(), kDefaultTracks, out.getArrayOfWritePointers(), 4, n);
+            busy += juce::Time::getMillisecondCounterHiRes() - t0; ++blocks;
+            juce::Thread::sleep (3);
+        }
+        e.stop();
+        std::printf ("    96 tracks at x%.2f: %.0f %% of one core\n", ratio, 100.0 * busy / (blocks * n / kSR * 1000.0));
+    }
+    e.setReel (nullptr);
+}
+
 //==============================================================================
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
+    if (juce::SystemStats::getEnvironmentVariable ("HAWTHORNE_BENCH", {}).isNotEmpty()) { benchVarispeed(); return 0; }
 
     testTapeMachine();
     testDiskOverflowKeepsAlignment();
@@ -835,6 +1013,7 @@ int main()
     test96Tracks();
     testLibrary();
     testMasters();
+    testVarispeed();
    #if JUCE_LINUX || JUCE_MAC
     testCrashRecovery();
    #endif

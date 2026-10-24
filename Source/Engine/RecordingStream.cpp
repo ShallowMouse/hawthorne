@@ -86,7 +86,7 @@ bool RecordingStream::positionLocked()
         return true;
 
     const auto sp = startPos != nullptr ? startPos->load() : (juce::int64) 0;
-    if (sp < 0)
+    if (sp == notStarted)
         return false; // audio thread hasn't recorded the first block yet
 
     // Latency compensation: the first captured sample belongs `latency` samples

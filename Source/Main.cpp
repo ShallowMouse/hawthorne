@@ -16,7 +16,7 @@ public:
         content = new hawthorne::MainComponent (props);
         setContentOwned (content, true);
         setResizable (true, true);
-        setResizeLimits (1100, 600, 10000, 10000);
+        setResizeLimits (1340, 600, 10000, 10000);
         centreWithSize (getWidth(), getHeight());
         setVisible (true);
         setFullScreen (true);          // with the native title bar this is "maximised"

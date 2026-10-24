@@ -67,6 +67,7 @@ void TapeEngine::setReel (Reel* s)
     if (s != nullptr && ! juce::isPositiveAndBelow (s->activeMaster, (int) s->masters.size()))
         s->activeMaster = s->masters.empty() ? -1 : 0;
     masterArmedFlag   = s != nullptr && s->masterArmed && s->activeMaster >= 0;
+    targetRate = currentRate = s != nullptr ? s->getSpeedRatio() : 1.0;
     monitorMasterFlag = s != nullptr && s->monitorMaster;
 
     rebuildRouting();
@@ -92,6 +93,11 @@ void TapeEngine::prepare (double sampleRate, int maxBlockSize,
         d.prepare ((int) juce::jmax (48000.0, sampleRate)); // up to 1 s of outboard / converter delay
     zeros.setSize (1, maxBlock);
     zeros.clear();
+
+    vsMaxHalfSpan = SincKernel::halfSpan (1.0 / maxSpeedRatio);
+    vsWeights.calloc ((size_t) vsChunk * (size_t) (2 * vsMaxHalfSpan));
+    vsSpan.calloc ((size_t) std::ceil (vsChunk * maxSpeedRatio) + (size_t) (2 * vsMaxHalfSpan) + 16);
+    vsOffset.calloc ((size_t) vsChunk);
 
     auto buildMap = [] (std::array<int, 256>& map, const juce::BigInteger& active)
     {
@@ -176,7 +182,7 @@ void TapeEngine::process (const float* const* inputs, int numInputs,
 
         for (int done = 0; done < numSamples;)
         {
-            const int n = juce::jmin (maxBlock, numSamples - done);
+            const int n = juce::jmin (maxBlock, vsChunk, numSamples - done);
 
             for (int i = 0; i < numInputs; ++i)  in[(size_t) i]  = inputs[i]  != nullptr ? inputs[i]  + done : nullptr;
             for (int o = 0; o < numOutputs; ++o) out[(size_t) o] = outputs[o] != nullptr ? outputs[o] + done : nullptr;
@@ -189,6 +195,32 @@ void TapeEngine::process (const float* const* inputs, int numInputs,
     callbackCount.fetch_add (1);
 }
 
+bool TapeEngine::readTapeSpan (const std::vector<Segment>& segs, juce::int64 start, int len, float* dest) noexcept
+{
+    bool any = false;
+    const auto end = start + len;
+
+    for (const auto& seg : segs)
+    {
+        if (seg.end <= start)    continue;
+        if (seg.start >= end)    break;
+
+        if (! any)
+        {
+            juce::FloatVectorOperations::clear (dest, len);
+            any = true;
+        }
+
+        const auto s0 = juce::jmax (seg.start, start);
+        const auto s1 = juce::jmin (seg.end, end);
+        float* d = dest + (s0 - start);
+        if (! seg.reader->read (&d, 1, seg.fileStart + (s0 - seg.start), (int) (s1 - s0)))
+            playbackUnderruns.fetch_add (1, std::memory_order_relaxed);
+    }
+
+    return any;
+}
+
 void TapeEngine::processBlock (const float* const* inputs, int numInputs,
                                float* const* outputs, int numOutputs, int n) noexcept
 {
@@ -198,9 +230,94 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     auto* rp = isRec ? pass.load() : nullptr;
     auto pos = position.load();
 
-    if (rp != nullptr && rp->startPos.load() < 0)
-        rp->startPos.store (pos);
+    //--------------------------------------------------------------------------
+    // Tape speed. The motor glides to a new speed (~80 ms) while playing;
+    // while recording it is held exactly where the pass began.
+    const double target = targetRate.load (std::memory_order_relaxed);
+    double r0 = currentRate.load (std::memory_order_relaxed), r1 = target;
 
+    if (! isRolling)
+    {
+        posFrac = 0.0;      // parked on a whole sample
+        r0 = r1 = target;
+    }
+    else if (rp != nullptr)
+    {
+        r0 = r1 = rp->rate;
+    }
+    else if (r0 != target)
+    {
+        const double sr = juce::jmax (1000.0, deviceSampleRate.load (std::memory_order_relaxed));
+        r1 = target + (r0 - target) * std::exp (-(double) n / (0.08 * sr));
+        if (std::abs (r1 - target) < 1.0e-9 * target)
+            r1 = target;
+    }
+    currentRate.store (r1, std::memory_order_relaxed);
+
+    // First block of a record pass: decide how it goes to tape.
+    if (rp != nullptr && rp->mode.load (std::memory_order_relaxed) == 0)
+    {
+        if (rp->rate == 1.0 && posFrac == 0.0)
+        {
+            rp->trackStart.store (pos - rp->latency);
+            rp->masterStart.store (pos - rp->masterLatency);
+            rp->mode.store (1);
+        }
+        else
+        {
+            const double p0 = (double) pos + posFrac;
+            rp->trackRs.start (p0, rp->latency);
+            rp->masterRs.start (p0, rp->masterLatency);
+            rp->trackStart.store (rp->trackRs.firstTapeSample());
+            rp->masterStart.store (rp->masterRs.firstTapeSample());
+            rp->mode.store (2);
+        }
+    }
+    const bool resampledRec = rp != nullptr && rp->mode.load (std::memory_order_relaxed) == 2;
+
+    // Varispeed playback: read positions and interpolation weights for this block,
+    // shared by every track.
+    const bool vs = isRolling && ! (r0 == 1.0 && r1 == 1.0 && posFrac == 0.0);
+    int vsTaps = 0, vsSpanLen = 0;
+    juce::int64 vsLo = 0;
+    double endFrac = posFrac + (double) n;
+
+    if (vs)
+    {
+        const auto& kernel = SincKernel::get();
+        const double rmax = juce::jmax (r0, r1);
+        const double scale = juce::jmin (1.0, 1.0 / rmax);
+        const int hs = juce::jmin (vsMaxHalfSpan, SincKernel::halfSpan (scale));
+        vsTaps = 2 * hs;
+
+        double f = posFrac;          // tape position relative to `pos`
+        for (int k = 0; k < n; ++k)
+        {
+            const double fl = std::floor (f);
+            const auto first = (juce::int64) fl - hs + 1;
+            if (k == 0) vsLo = first;
+            vsOffset[k] = (int) (first - vsLo);
+            kernel.weights (f - fl, scale, hs, vsWeights + (size_t) k * (size_t) vsTaps);
+            f += r0 + (r1 - r0) * ((double) k + 0.5) / (double) n;
+        }
+        endFrac = f;
+        vsSpanLen = vsOffset[n - 1] + vsTaps;
+        vsLo += pos;
+    }
+
+    auto readTape = [&] (const std::vector<Segment>& segs, float* dest) -> bool
+    {
+        if (! vs)
+            return readTapeSpan (segs, pos, n, dest);
+
+        if (! readTapeSpan (segs, vsLo, vsSpanLen, vsSpan))
+            return false;
+        for (int k = 0; k < n; ++k)
+            dest[k] = dotProduct (vsWeights + (size_t) k * (size_t) vsTaps, vsSpan + vsOffset[k], vsTaps);
+        return true;
+    };
+
+    //--------------------------------------------------------------------------
     float* mixL = mixBus.getWritePointer (0);
     float* mixR = mixBus.getWritePointer (1);
     juce::FloatVectorOperations::clear (mixL, n);
@@ -235,35 +352,16 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         //     so every take stays exactly the length of the pass.
         if (rp != nullptr)
             if (auto* stream = rp->streams[(size_t) t].get())
-                stream->push (src != nullptr ? src : zeros.getReadPointer (0), n);
+            {
+                if (resampledRec) rp->trackRs.push (rp->rsChannel[(size_t) t], src, n);
+                else              stream->push (src != nullptr ? src : zeros.getReadPointer (0), n);
+            }
 
         // --- Playback from tape
-        bool hasTape = false;
-        float* tb = trackBuffers.getWritePointer (t);
-
         // (Tape is read even under a recording track so its reader stays warm
         //  for a seamless punch-out.)
-        if (isRolling && g != nullptr)
-        {
-            for (const auto& seg : g->tracks[(size_t) t])
-            {
-                if (seg.end <= pos)      continue;
-                if (seg.start >= pos + n) break;
-
-                if (! hasTape)
-                {
-                    juce::FloatVectorOperations::clear (tb, n);
-                    hasTape = true;
-                }
-
-                const auto s0 = juce::jmax (seg.start, pos);
-                const auto s1 = juce::jmin (seg.end, pos + n);
-                float* dest = tb + (s0 - pos);
-
-                if (! seg.reader->read (&dest, 1, seg.fileStart + (s0 - seg.start), (int) (s1 - s0)))
-                    playbackUnderruns.fetch_add (1, std::memory_order_relaxed);
-            }
-        }
+        float* tb = trackBuffers.getWritePointer (t);
+        const bool hasTape = isRolling && g != nullptr && readTape (g->tracks[(size_t) t], tb);
 
         // --- Tape-style auto input: armed tracks hear the input when stopped or
         //     recording, and hear tape when just playing back.
@@ -284,6 +382,15 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
             if (rt != nullptr)
                 sendToOutputs (mon, rt->outputs[(size_t) t]);
         }
+    }
+
+    if (resampledRec)
+    {
+        const int count = rp->trackRs.produce (n);
+        if (count > 0)
+            for (int t = 0; t < nt; ++t)
+                if (auto* stream = rp->streams[(size_t) t].get())
+                    stream->push (rp->trackRs.output (rp->rsChannel[(size_t) t]), count);
     }
 
     // --- Master bus
@@ -323,25 +430,18 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         }
 
         if (recMaster)
-            rp->masterStreams[(size_t) side]->push (bus, n);
+        {
+            if (resampledRec) rp->masterRs.push (side, bus, n);
+            else              rp->masterStreams[(size_t) side]->push (bus, n);
+        }
 
         // Master tape playback
         const float* outSig = bus;
         if (monitorTape && isRolling && g != nullptr && ! g->master[(size_t) side].empty())
         {
             float* tb = masterTapeBus.getWritePointer (side);
-            juce::FloatVectorOperations::clear (tb, n);
-
-            for (const auto& seg : g->master[(size_t) side])
-            {
-                if (seg.end <= pos)       continue;
-                if (seg.start >= pos + n) break;
-                const auto s0 = juce::jmax (seg.start, pos);
-                const auto s1 = juce::jmin (seg.end, pos + n);
-                float* dest = tb + (s0 - pos);
-                if (! seg.reader->read (&dest, 1, seg.fileStart + (s0 - seg.start), (int) (s1 - s0)))
-                    playbackUnderruns.fetch_add (1, std::memory_order_relaxed);
-            }
+            if (! readTape (g->master[(size_t) side], tb))
+                juce::FloatVectorOperations::clear (tb, n);
             outSig = tb;
         }
 
@@ -349,6 +449,14 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         masterEnergy[(size_t) side].add (outSig, n);
         if (rt != nullptr)
             sendToOutputs (outSig, rt->masterOut[(size_t) side]);
+    }
+
+    if (recMaster && resampledRec)
+    {
+        const int count = rp->masterRs.produce (n);
+        if (count > 0)
+            for (int side = 0; side < 2; ++side)
+                rp->masterStreams[(size_t) side]->push (rp->masterRs.output (side), count);
     }
 
     // --- Latency ping: one click out, time it coming back
@@ -385,9 +493,15 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
 
     deviceClock += n;
 
-    // Only advance if nobody located us mid-block.
+    // Advance the tape - only if nobody located us mid-block.
     if (isRolling)
-        position.compare_exchange_strong (pos, pos + n);
+    {
+        const double whole = std::floor (endFrac);
+        if (position.compare_exchange_strong (pos, pos + (juce::int64) whole))
+            posFrac = endFrac - whole;
+        else
+            posFrac = 0.0;
+    }
 }
 
 //==============================================================================
@@ -462,6 +576,24 @@ void TapeEngine::locate (juce::int64 samplePos)
 
     if (! playing)
         primeReaders (position.load());
+}
+
+juce::String TapeEngine::setSpeed (double deckIps, bool variOn, double variPercent, bool save)
+{
+    if (recording)
+        return "The speed can't change while recording.";
+
+    if (reel == nullptr)
+        return {};
+
+    reel->deckIps = (deckIps == 7.5 || deckIps == 30.0) ? deckIps : 15.0;
+    reel->variOn = variOn;
+    reel->variPercent = juce::jlimit (-maxVarispeedPercent, maxVarispeedPercent, variPercent);
+    targetRate = reel->getSpeedRatio();
+
+    if (save)
+        saveReel();
+    return {};
 }
 
 //==============================================================================
@@ -668,7 +800,7 @@ double TapeEngine::getRecordTimeRemainingSeconds() const
 
     const auto freeBytes = (double) reel->getFolder().getBytesFreeOnVolume();
     const int files = getNumArmedTracks() + (masterArmedFlag ? 2 : 0);
-    const auto bytesPerSec = (double) juce::jmax (1, files) * reel->sampleRate * (reel->bitDepth / 8);
+    const auto bytesPerSec = (double) juce::jmax (1, files) * reel->sampleRate * (reel->bitDepth / 8) * targetRate.load();
     return juce::jmax (0.0, freeBytes - (double) stopRecordingBelowBytes) / bytesPerSec;
 }
 
@@ -711,6 +843,17 @@ juce::String TapeEngine::beginRecordPass()
     auto p = std::make_unique<RecordPass>();
     p->latency = getRoundTrip();
     p->masterLatency = getMasterBusLatency();
+    p->rate = targetRate.load();
+    p->rsChannel.fill (-1);
+    {
+        int ch = 0;
+        for (int t = 0; t < numTracks.load(); ++t)
+            if (armed[(size_t) t]) p->rsChannel[(size_t) t] = ch++;
+        // Both resamplers are ready even if the pass turns out to go straight to tape
+        // (decided on the first audio block, where the exact tape position is known).
+        p->trackRs.prepare (juce::jmax (1, ch), p->rate, vsChunk);
+        p->masterRs.prepare (2, p->rate, vsChunk);
+    }
 
     auto abandon = [&p]
     {
@@ -718,7 +861,7 @@ juce::String TapeEngine::beginRecordPass()
         for (auto& s : p->masterStreams) if (s != nullptr) s->finish();
     };
 
-    auto openStream = [&] (const juce::File& file, int latency, juce::String& err) -> std::shared_ptr<RecordingStream>
+    auto openStream = [&] (const juce::File& file, const std::atomic<juce::int64>* startAt, juce::String& err) -> std::shared_ptr<RecordingStream>
     {
         if (! file.existsAsFile() && ! TapeFile::createEmpty (file, sr, err))
             return nullptr;
@@ -727,7 +870,7 @@ juce::String TapeEngine::beginRecordPass()
         if (! tape->open (file, sr, err))
             return nullptr;
 
-        return std::make_shared<RecordingStream> (std::move (tape), file, fifoSize, flushInterval, &p->startPos, latency);
+        return std::make_shared<RecordingStream> (std::move (tape), file, fifoSize, flushInterval, startAt, 0);
     };
 
     for (int t = 0; t < numTracks.load(); ++t)
@@ -736,7 +879,7 @@ juce::String TapeEngine::beginRecordPass()
             continue;
 
         juce::String err;
-        p->streams[(size_t) t] = openStream (reel->getTapeFile (t), p->latency, err);
+        p->streams[(size_t) t] = openStream (reel->getTapeFile (t), &p->trackStart, err);
         if (p->streams[(size_t) t] == nullptr) { abandon(); return err; }
     }
 
@@ -746,7 +889,7 @@ juce::String TapeEngine::beginRecordPass()
         for (int side = 0; side < 2; ++side)
         {
             juce::String err;
-            p->masterStreams[(size_t) side] = openStream (reel->getMasterFile (reel->activeMaster, side), p->masterLatency, err);
+            p->masterStreams[(size_t) side] = openStream (reel->getMasterFile (reel->activeMaster, side), &p->masterStart, err);
             if (p->masterStreams[(size_t) side] == nullptr) { abandon(); return err; }
         }
     }
@@ -825,17 +968,17 @@ void TapeEngine::endRecordPass()
 
     // Recording sheet: one line per take
     const bool tracksRecorded = ! recorded.isEmpty();
-    const int lat = tracksRecorded ? p->latency : p->masterLatency;
     if (! tracksRecorded) passLength = masterLength;
 
-    if (const auto startPos = p->startPos.load(); startPos >= 0 && passLength > 0)
+    if (const auto first = (tracksRecorded ? p->trackStart : p->masterStart).load();
+        p->mode.load() != 0 && passLength > 0)
     {
         TakeEntry e;
         e.take   = reel->nextTake++;
         e.when   = (juce::Time::getCurrentTime() - juce::RelativeTime::seconds ((double) passLength / reel->sampleRate))
                        .formatted ("%d %b %Y  %H:%M");
-        e.start  = juce::jmax ((juce::int64) 0, startPos - lat);
-        e.end    = startPos - lat + passLength;
+        e.start  = juce::jmax ((juce::int64) 0, first);
+        e.end    = first + passLength;
 
         // "1-4, 7" style track list
         juce::StringArray parts;
