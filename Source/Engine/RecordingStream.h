@@ -1,7 +1,7 @@
 #pragma once
 
 #include <juce_audio_formats/juce_audio_formats.h>
-#include "Session.h"
+#include "Reel.h"
 #include <array>
 #include <atomic>
 #include <memory>

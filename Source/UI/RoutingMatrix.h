@@ -19,7 +19,7 @@ class RoutingMatrix : public juce::Component,
                       public juce::TooltipClient
 {
 public:
-    RoutingMatrix (TapeEngine&, std::function<Session*()> getSession);
+    RoutingMatrix (TapeEngine&, std::function<Reel*()> getReel);
 
     void setDevice (const juce::StringArray& inputNames, const juce::BigInteger& activeInputs,
                     const juce::StringArray& outputNames, const juce::BigInteger& activeOutputs);
@@ -37,7 +37,7 @@ private:
     struct Col { ColKind kind = ColKind::none; int channel = -1; };
 
     static constexpr int cell = 22, labelW = 150, titleH = 22, numbersH = 30, rowGap = 10, colGap = 12;
-    int tracks() const { auto* s = getSession(); return s != nullptr ? s->numTracks : kDefaultTracks; }
+    int tracks() const { auto* s = getReel(); return s != nullptr ? s->numTracks : kDefaultTracks; }
     int numRows() const { return tracks() + 2; }
 
 public:
@@ -57,7 +57,7 @@ private:
     juce::String colName (const Col&) const;
 
     TapeEngine& engine;
-    std::function<Session*()> getSession;
+    std::function<Reel*()> getReel;
     juce::StringArray inNames, outNames;
     juce::BigInteger inActive, outActive;
     int numIn = 0, numOut = 0;
@@ -71,7 +71,7 @@ private:
 class RoutingWindow : public juce::DocumentWindow
 {
 public:
-    RoutingWindow (TapeEngine&, std::function<Session*()> getSession);
+    RoutingWindow (TapeEngine&, std::function<Reel*()> getReel);
     ~RoutingWindow() override { clearContentComponent(); }
 
     RoutingMatrix& getMatrix() { return *matrix; }

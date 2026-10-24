@@ -44,8 +44,8 @@ public:
     {
         if (e.mods.isPopupMenu())
             owner.showMenu (index);
-        else if (owner.session != nullptr && juce::isPositiveAndBelow (index, (int) owner.session->markers.size()) && owner.onLocate)
-            owner.onLocate (owner.session->markers[(size_t) index].position);
+        else if (owner.reel != nullptr && juce::isPositiveAndBelow (index, (int) owner.reel->markers.size()) && owner.onLocate)
+            owner.onLocate (owner.reel->markers[(size_t) index].position);
     }
 
     void mouseDoubleClick (const juce::MouseEvent&) override { startRename(); }
@@ -75,9 +75,9 @@ MarkerPanel::MarkerPanel()
     addAndMakeVisible (addButton);
 }
 
-void MarkerPanel::setSession (Session* s)
+void MarkerPanel::setReel (Reel* s)
 {
-    session = s;
+    reel = s;
     currentIndex = -1;
     refresh();
 }
@@ -88,16 +88,16 @@ void MarkerPanel::refresh()
     list.repaint();
     for (int i = 0; i < getNumRows(); ++i)
         if (auto* row = dynamic_cast<Row*> (list.getComponentForRowNumber (i)))
-            row->update (i, session->markers[(size_t) i], session->sampleRate, i == currentIndex);
+            row->update (i, reel->markers[(size_t) i], reel->sampleRate, i == currentIndex);
     repaint();
 }
 
 void MarkerPanel::setPlayhead (juce::int64 pos)
 {
     int idx = -1;
-    if (session != nullptr)
-        for (int i = 0; i < (int) session->markers.size(); ++i)
-            if (session->markers[(size_t) i].position <= pos)
+    if (reel != nullptr)
+        for (int i = 0; i < (int) reel->markers.size(); ++i)
+            if (reel->markers[(size_t) i].position <= pos)
                 idx = i;
 
     if (idx != currentIndex)
@@ -109,12 +109,12 @@ void MarkerPanel::setPlayhead (juce::int64 pos)
 
 int MarkerPanel::getNumRows()
 {
-    return session != nullptr ? (int) session->markers.size() : 0;
+    return reel != nullptr ? (int) reel->markers.size() : 0;
 }
 
 juce::Component* MarkerPanel::refreshComponentForRow (int row, bool, juce::Component* existing)
 {
-    if (session == nullptr || ! juce::isPositiveAndBelow (row, (int) session->markers.size()))
+    if (reel == nullptr || ! juce::isPositiveAndBelow (row, (int) reel->markers.size()))
     {
         delete existing;
         return nullptr;
@@ -127,26 +127,26 @@ juce::Component* MarkerPanel::refreshComponentForRow (int row, bool, juce::Compo
         r = new Row (*this);
     }
 
-    r->update (row, session->markers[(size_t) row], session->sampleRate, row == currentIndex);
+    r->update (row, reel->markers[(size_t) row], reel->sampleRate, row == currentIndex);
     return r;
 }
 
 void MarkerPanel::rename (int index, const juce::String& name)
 {
-    if (session == nullptr || ! juce::isPositiveAndBelow (index, (int) session->markers.size()))
+    if (reel == nullptr || ! juce::isPositiveAndBelow (index, (int) reel->markers.size()))
         return;
 
-    session->markers[(size_t) index].name = name.trim().isEmpty() ? "Marker" : name.trim();
+    reel->markers[(size_t) index].name = name.trim().isEmpty() ? "Marker" : name.trim();
     if (onChanged) onChanged();
     refresh();
 }
 
 void MarkerPanel::remove (int index)
 {
-    if (session == nullptr || ! juce::isPositiveAndBelow (index, (int) session->markers.size()))
+    if (reel == nullptr || ! juce::isPositiveAndBelow (index, (int) reel->markers.size()))
         return;
 
-    session->markers.erase (session->markers.begin() + index);
+    reel->markers.erase (reel->markers.begin() + index);
     currentIndex = -1;
     if (onChanged) onChanged();
     refresh();
@@ -154,11 +154,11 @@ void MarkerPanel::remove (int index)
 
 void MarkerPanel::moveToPlayhead (int index)
 {
-    if (session == nullptr || getPlayhead == nullptr || ! juce::isPositiveAndBelow (index, (int) session->markers.size()))
+    if (reel == nullptr || getPlayhead == nullptr || ! juce::isPositiveAndBelow (index, (int) reel->markers.size()))
         return;
 
-    session->markers[(size_t) index].position = getPlayhead();
-    session->sortMarkers();   // always in time order
+    reel->markers[(size_t) index].position = getPlayhead();
+    reel->sortMarkers();   // always in time order
     currentIndex = -1;
     if (onChanged) onChanged();
     refresh();

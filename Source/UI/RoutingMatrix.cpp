@@ -3,8 +3,8 @@
 namespace hawthorne
 {
 
-RoutingMatrix::RoutingMatrix (TapeEngine& e, std::function<Session*()> gs)
-    : engine (e), getSession (std::move (gs))
+RoutingMatrix::RoutingMatrix (TapeEngine& e, std::function<Reel*()> gs)
+    : engine (e), getReel (std::move (gs))
 {
     layout();
 }
@@ -87,7 +87,7 @@ bool RoutingMatrix::isEnabled (const Col& c) const
 
 bool RoutingMatrix::isOn (int row, const Col& c) const
 {
-    auto* s = getSession();
+    auto* s = getReel();
     if (s == nullptr || row < 0)
         return false;
 
@@ -122,7 +122,7 @@ juce::String RoutingMatrix::rowName (int row) const
     if (row >= tracks())
         return row == tracks() ? "MASTER L" : "MASTER R";
 
-    auto* s = getSession();
+    auto* s = getReel();
     return juce::String (row + 1).paddedLeft ('0', 2) + "  "
          + (s != nullptr ? s->tracks[(size_t) row].name : juce::String ("Track " + juce::String (row + 1)));
 }
@@ -263,7 +263,7 @@ juce::String RoutingMatrix::getTooltip()
 
 void RoutingMatrix::mouseDown (const juce::MouseEvent& e)
 {
-    auto* s = getSession();
+    auto* s = getReel();
     const int r = rowAt (e.y);
     const auto c = colAt (e.x);
 
@@ -305,7 +305,7 @@ void RoutingMatrix::mouseDown (const juce::MouseEvent& e)
 }
 
 //==============================================================================
-RoutingWindow::RoutingWindow (TapeEngine& e, std::function<Session*()> gs)
+RoutingWindow::RoutingWindow (TapeEngine& e, std::function<Reel*()> gs)
     : juce::DocumentWindow ("Hawthorne - Routing", Colours::panel, juce::DocumentWindow::closeButton)
 {
     setUsingNativeTitleBar (true);

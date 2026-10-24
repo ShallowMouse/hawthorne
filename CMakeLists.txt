@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(Hawthorne VERSION 1.5.0)
+project(Hawthorne VERSION 1.6.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,8 +11,12 @@ set(HAWTHORNE_ASIO_SDK "" CACHE PATH "Path to the Steinberg ASIO SDK (enables AS
 add_subdirectory(JUCE)
 
 set(ENGINE_SOURCES
+    Source/Engine/Reel.h
+    Source/Engine/Reel.cpp
     Source/Engine/Session.h
     Source/Engine/Session.cpp
+    Source/Engine/Library.h
+    Source/Engine/Library.cpp
     Source/Engine/RecordingStream.h
     Source/Engine/RecordingStream.cpp
     Source/Engine/TapeEngine.h
@@ -49,6 +53,8 @@ if(HAWTHORNE_BUILD_APP)
         Source/UI/MarkerPanel.cpp
         Source/UI/SessionSheet.h
         Source/UI/SessionSheet.cpp
+        Source/UI/LibraryView.h
+        Source/UI/LibraryView.cpp
         Source/UI/VUMeter.h
         Source/UI/VUMeter.cpp
         Source/UI/RoutingMatrix.h

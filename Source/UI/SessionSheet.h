@@ -7,7 +7,7 @@
 namespace hawthorne
 {
 
-/** The studio paperwork: session sheet, track sheet and take log - typed on paper. */
+/** The studio paperwork: reel sheet, track sheet and take log - typed on paper. */
 namespace Paper
 {
     const juce::Colour paper  { 0xfff1e8cf };
@@ -28,16 +28,15 @@ class SessionSheet : public juce::Component,
                      private juce::Timer
 {
 public:
-    explicit SessionSheet (std::function<Session*()> getSession);
+    SessionSheet (std::function<Reel*()> getReel, std::function<Session*()> getSession);
     ~SessionSheet() override;
 
-    /** Reload everything from the session (new session, new take, renamed track...). */
+    /** Reload everything from the reel (new reel, new take, renamed track...). */
     void refresh();
     void showTakeLog();
 
     std::function<void()> onSave;                          // something was edited
     std::function<void()> onTrackNamesChanged;
-    std::function<juce::String (int newCount)> onTrackCountChange;   // returns error or ""
 
     void resized() override;
     void paint (juce::Graphics&) override;
@@ -50,9 +49,11 @@ private:
     void markDirty();
     void timerCallback() override;
 
+    std::function<Reel*()> getReel;
     std::function<Session*()> getSession;
     juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
     InfoPage* infoPage = nullptr;
+    InfoPage* reelPage = nullptr;
     TrackSheetPage* trackPage = nullptr;
     TakeLogPage* takePage = nullptr;
 
@@ -63,7 +64,7 @@ private:
 class SessionSheetWindow : public juce::DocumentWindow
 {
 public:
-    explicit SessionSheetWindow (std::function<Session*()> getSession);
+    SessionSheetWindow (std::function<Reel*()> getReel, std::function<Session*()> getSession);
     ~SessionSheetWindow() override { clearContentComponent(); }
     SessionSheet& getSheet() { return sheet; }
     void closeButtonPressed() override { setVisible (false); }

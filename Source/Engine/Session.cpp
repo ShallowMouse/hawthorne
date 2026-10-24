@@ -1,65 +1,68 @@
 #include "Session.h"
-#include <juce_audio_formats/juce_audio_formats.h>
 
 namespace hawthorne
 {
 
 namespace
 {
-    void initDefaultTracks (std::array<TrackInfo, kMaxTracks>& tracks)
+    bool writeXmlAtomically (const juce::XmlElement& xml, const juce::File& target, juce::String& error)
     {
-        for (int i = 0; i < kMaxTracks; ++i)
+        target.getParentDirectory().createDirectory();
+        juce::TemporaryFile temp (target);
+
+        if (! xml.writeTo (temp.getFile()))
         {
-            TrackInfo t;
-            t.name  = "Track " + juce::String (i + 1);
-            t.input = i;
-            tracks[(size_t) i] = t;
+            error = "Could not write " + target.getFileName() + " (disk full or read-only?).";
+            return false;
         }
+
+        if (target.existsAsFile())
+            target.copyFileTo (target.withFileExtension (".bak"));
+
+        if (! temp.overwriteTargetFileWithTemporary())
+        {
+            error = "Could not replace " + target.getFullPathName();
+            return false;
+        }
+        return true;
     }
 
-    juce::uint32 readLE32 (const juce::uint8* p)
-    {
-        return (juce::uint32) p[0] | ((juce::uint32) p[1] << 8)
-             | ((juce::uint32) p[2] << 16) | ((juce::uint32) p[3] << 24);
-    }
-
-    constexpr juce::int64 maxRiffBytes = 0xffffffffLL;
+    juce::String reelFolderName (int n) { return "Reel " + juce::String (n).paddedLeft ('0', 2); }
 }
 
 //==============================================================================
-std::unique_ptr<Session> Session::create (const juce::File& parentFolder, const juce::String& name,
-                                          double sampleRate, int numTracks, juce::String& error)
+const juce::StringArray& Session::infoFields()
+{
+    static const juce::StringArray fields { "Artist", "Title", "Client / Label", "Producer", "Engineer",
+                                            "Tape Op", "Studio", "Job No.", "Notes" };
+    return fields;
+}
+
+std::unique_ptr<Session> Session::create (const juce::File& library, const juce::String& name, juce::String& error)
 {
     const auto cleanName = juce::File::createLegalFileName (name.trim());
-
     if (cleanName.isEmpty())
     {
-        error = "Invalid session name.";
+        error = "Please give the session a name.";
         return nullptr;
     }
 
-    auto folder = parentFolder.getChildFile (cleanName);
-
-    if (folder.getChildFile (cleanName + fileExtension).existsAsFile())
+    const auto folder = library.getChildFile (cleanName);
+    if (folder.exists())
     {
-        error = "A session called \"" + cleanName + "\" already exists there.";
+        error = "There's already a session called \"" + cleanName + "\" in the library.";
+        return nullptr;
+    }
+
+    if (! folder.createDirectory())
+    {
+        error = "Could not create the session folder:\n" + folder.getFullPathName();
         return nullptr;
     }
 
     std::unique_ptr<Session> s (new Session());
     s->sessionFile = folder.getChildFile (cleanName + fileExtension);
-    s->sampleRate  = sampleRate > 0 ? sampleRate : 48000.0;
-    s->numTracks   = juce::jlimit (1, kMaxTracks, numTracks);
-    initDefaultTracks (s->tracks);
     s->info.set ("Title", cleanName);
-    s->info.set ("Date", juce::Time::getCurrentTime().formatted ("%d %b %Y"));
-    s->info.set ("Reel No.", "1");
-
-    if (! s->getAudioFolder().createDirectory())
-    {
-        error = "Could not create folder:\n" + s->getAudioFolder().getFullPathName();
-        return nullptr;
-    }
 
     if (! s->save (error))
         return nullptr;
@@ -71,150 +74,80 @@ std::unique_ptr<Session> Session::load (const juce::File& file, juce::String& er
 {
     auto xml = juce::XmlDocument::parse (file);
 
-    if (xml == nullptr || ! xml->hasTagName ("HawthorneSession"))
+    if (xml != nullptr && xml->hasTagName ("HawthorneSession") && xml->getChildByName ("Track") != nullptr)
+    {
+        // A v1.5-or-earlier single-reel session: convert it to a session holding Reel 01.
+        juce::StringPairArray carried;
+        if (! migrateLegacy (file, carried, error))
+            return nullptr;
+
+        std::unique_ptr<Session> s (new Session());
+        s->sessionFile = file;
+        s->info = carried;
+        if (s->info["Title"].isEmpty())
+            s->info.set ("Title", file.getFileNameWithoutExtension());
+        s->log.add ("Converted \"" + s->getName() + "\" to the reel library format (it's now Reel 01).");
+
+        if (! s->save (error))
+            return nullptr;
+        return s;
+    }
+
+    if (xml == nullptr || ! xml->hasTagName ("HawthorneProject"))
     {
         auto bak = file.withFileExtension (".bak");
         if (bak.existsAsFile())
             xml = juce::XmlDocument::parse (bak);
 
-        if (xml == nullptr || ! xml->hasTagName ("HawthorneSession"))
+        if (xml == nullptr || ! xml->hasTagName ("HawthorneProject"))
         {
-            error = "Not a valid Hawthorne session:\n" + file.getFullPathName();
+            error = "Not a Hawthorne session:\n" + file.getFullPathName();
             return nullptr;
         }
     }
 
     std::unique_ptr<Session> s (new Session());
     s->sessionFile = file;
-    initDefaultTracks (s->tracks);
 
-    if (! s->fromXml (*xml, error))
-        return nullptr;
-
-    s->getAudioFolder().createDirectory();
-
-    // A crash mid-record leaves audio on disk beyond what the header says.
-    for (int t = 0; t < kMaxTracks; ++t)
-    {
-        const auto tape = s->getTapeFile (t);
-        if (! tape.existsAsFile())
-            continue;
-
-        bool repaired = false;
-        const auto frames = repairWavHeader (tape, repaired);
-
-        if (frames < 0)
-            s->recoveryLog.add ("Track " + juce::String (t + 1) + ": tape file is unreadable (" + tape.getFileName() + ")");
-        else if (repaired)
-            s->recoveryLog.add ("Track " + juce::String (t + 1) + ": tape restored after an unexpected shutdown ("
-                                + juce::String ((double) frames / s->sampleRate, 1) + " s)");
-    }
-
-    juce::String padError;
-    s->equaliseTapeLengths (padError);
-    if (padError.isNotEmpty())
-        s->recoveryLog.add (padError);
+    if (auto* ie = xml->getChildByName ("Info"))
+        for (auto* f : ie->getChildWithTagNameIterator ("Field"))
+            s->info.set (f->getStringAttribute ("name"), f->getStringAttribute ("value"));
 
     return s;
 }
 
-//==============================================================================
-const juce::StringArray& Session::infoFields()
+std::unique_ptr<Session> Session::openFolder (const juce::File& folder, juce::String& error)
 {
-    static const juce::StringArray fields { "Artist", "Title", "Client / Label", "Producer", "Engineer", "Tape Op",
-                                            "Studio", "Date", "Job No.", "Reel No.", "Tape Stock", "Speed", "EQ",
-                                            "Alignment", "Noise Reduction", "Tones", "Notes" };
-    return fields;
+    const auto named = folder.getChildFile (folder.getFileName() + fileExtension);
+    if (named.existsAsFile())
+        return load (named, error);
+
+    for (auto& f : folder.findChildFiles (juce::File::findFiles, false, juce::String ("*") + fileExtension))
+        return load (f, error);
+
+    // No session file, but reels inside (e.g. interrupted conversion): recreate it.
+    for (auto& d : folder.findChildFiles (juce::File::findDirectories, false))
+        if (! d.findChildFiles (juce::File::findFiles, false, juce::String ("*") + Reel::fileExtension).isEmpty())
+        {
+            std::unique_ptr<Session> s (new Session());
+            s->sessionFile = named;
+            s->info.set ("Title", folder.getFileName());
+            s->log.add ("Recreated the missing session file for \"" + folder.getFileName() + "\".");
+            if (! s->save (error))
+                return nullptr;
+            return s;
+        }
+
+    error = "No session in " + folder.getFullPathName();
+    return nullptr;
 }
 
-int Session::addMarker (juce::int64 position, const juce::String& name)
+bool Session::save (juce::String& error)
 {
-    markers.push_back ({ juce::jmax ((juce::int64) 0, position), name });
-    sortMarkers();
+    juce::XmlElement root ("HawthorneProject");
+    root.setAttribute ("formatVersion", 1);
 
-    for (int i = (int) markers.size(); --i >= 0;)
-        if (markers[(size_t) i].position == position && markers[(size_t) i].name == name)
-            return i;
-    return -1;
-}
-
-void Session::sortMarkers()
-{
-    std::stable_sort (markers.begin(), markers.end(),
-                      [] (const Marker& a, const Marker& b) { return a.position < b.position; });
-}
-
-juce::int64 Session::getReelLength() const
-{
-    juce::int64 reel = 0;
-
-    for (int t = 0; t < kMaxTracks; ++t)
-    {
-        WavLayout l;
-        const auto f = getTapeFile (t);
-        if (f.existsAsFile() && readWavLayout (f, l))
-            reel = juce::jmax (reel, l.headerFrames);
-    }
-
-    return reel;
-}
-
-juce::Array<int> Session::equaliseTapeLengths (juce::String& error)
-{
-    juce::Array<int> changed;
-    const auto reel = getReelLength();
-
-    for (int t = 0; t < kMaxTracks; ++t)
-    {
-        WavLayout l;
-        const auto f = getTapeFile (t);
-
-        if (! f.existsAsFile() || ! readWavLayout (f, l) || l.headerFrames >= reel)
-            continue;
-
-        TapeFile tape;
-        juce::String err;
-        if (tape.open (f, sampleRate, err) && tape.extendTo (reel) && tape.close())
-            changed.add (t);
-        else
-            error = "Track " + juce::String (t + 1) + ": could not pad the tape to the reel length. " + err;
-    }
-
-    return changed;
-}
-
-//==============================================================================
-std::unique_ptr<juce::XmlElement> Session::toXml() const
-{
-    auto root = std::make_unique<juce::XmlElement> ("HawthorneSession");
-    root->setAttribute ("formatVersion", 3);
-    root->setAttribute ("sampleRate", sampleRate);
-    root->setAttribute ("bitDepth", bitDepth);
-    root->setAttribute ("numTracks", numTracks);
-    root->setAttribute ("nextTake", nextTake);
-
-    for (int t = 0; t < kMaxTracks; ++t)
-    {
-        const auto& tr = tracks[(size_t) t];
-        auto* te = root->createNewChildElement ("Track");
-        te->setAttribute ("index", t);
-        te->setAttribute ("name", tr.name);
-        te->setAttribute ("input", tr.input);
-        te->setAttribute ("armed", tr.armed);
-        te->setAttribute ("toMix", tr.toMix);
-        te->setAttribute ("outputs", channelsToString (tr.outputs));
-        if (tr.instrument.isNotEmpty()) te->setAttribute ("instrument", tr.instrument);
-        if (tr.mic.isNotEmpty())        te->setAttribute ("mic", tr.mic);
-        if (tr.notes.isNotEmpty())      te->setAttribute ("notes", tr.notes);
-    }
-
-    auto* me = root->createNewChildElement ("Master");
-    me->setAttribute ("inL",  channelsToString (master.inputs[0]));
-    me->setAttribute ("inR",  channelsToString (master.inputs[1]));
-    me->setAttribute ("outL", channelsToString (master.outputs[0]));
-    me->setAttribute ("outR", channelsToString (master.outputs[1]));
-
-    auto* ie = root->createNewChildElement ("Info");
+    auto* ie = root.createNewChildElement ("Info");
     for (auto& key : info.getAllKeys())
     {
         auto* f = ie->createNewChildElement ("Field");
@@ -222,423 +155,80 @@ std::unique_ptr<juce::XmlElement> Session::toXml() const
         f->setAttribute ("value", info[key]);
     }
 
-    auto* mk = root->createNewChildElement ("Markers");
-    for (auto& m : markers)
-    {
-        auto* e = mk->createNewChildElement ("Marker");
-        e->setAttribute ("pos", juce::String (m.position));
-        e->setAttribute ("name", m.name);
-    }
-
-    auto* tl = root->createNewChildElement ("TakeLog");
-    for (auto& tk : takeLog)
-    {
-        auto* e = tl->createNewChildElement ("Take");
-        e->setAttribute ("take", tk.take);
-        e->setAttribute ("when", tk.when);
-        e->setAttribute ("start", juce::String (tk.start));
-        e->setAttribute ("end", juce::String (tk.end));
-        e->setAttribute ("tracks", tk.tracks);
-        e->setAttribute ("song", tk.song);
-        e->setAttribute ("status", tk.status);
-        e->setAttribute ("comments", tk.comments);
-    }
-
-    return root;
+    return writeXmlAtomically (root, sessionFile, error);
 }
 
-bool Session::fromXml (const juce::XmlElement& root, juce::String& error)
+juce::Array<juce::File> Session::getReelFiles() const
 {
-    sampleRate = root.getDoubleAttribute ("sampleRate", 48000.0);
-    bitDepth   = 24;
-    numTracks  = juce::jlimit (1, kMaxTracks, root.getIntAttribute ("numTracks", kDefaultTracks));
-    nextTake   = juce::jmax (1, root.getIntAttribute ("nextTake", 1));
+    juce::Array<juce::File> reels;
 
-    if (sampleRate < 8000.0 || sampleRate > 768000.0)
+    for (auto& d : getFolder().findChildFiles (juce::File::findDirectories, false))
     {
-        error = "Session has an invalid sample rate.";
-        return false;
+        const auto f = d.getChildFile (d.getFileName() + Reel::fileExtension);
+        if (f.existsAsFile())
+            reels.add (f);
     }
 
-    for (auto* te : root.getChildWithTagNameIterator ("Track"))
-    {
-        const int t = te->getIntAttribute ("index", -1);
-        if (! juce::isPositiveAndBelow (t, kMaxTracks))
-            continue;
-
-        auto& tr = tracks[(size_t) t];
-        tr.name       = te->getStringAttribute ("name", tr.name);
-        tr.input      = te->getIntAttribute ("input", tr.input);
-        tr.armed      = te->getBoolAttribute ("armed", false);
-        tr.toMix      = te->getBoolAttribute ("toMix", true);
-        tr.outputs    = channelsFromString (te->getStringAttribute ("outputs"));
-        tr.instrument = te->getStringAttribute ("instrument");
-        tr.mic        = te->getStringAttribute ("mic");
-        tr.notes      = te->getStringAttribute ("notes");
-    }
-
-    if (auto* me = root.getChildByName ("Master"))
-    {
-        master.inputs[0]  = channelsFromString (me->getStringAttribute ("inL"));
-        master.inputs[1]  = channelsFromString (me->getStringAttribute ("inR"));
-        master.outputs[0] = channelsFromString (me->getStringAttribute ("outL", "1"));
-        master.outputs[1] = channelsFromString (me->getStringAttribute ("outR", "2"));
-    }
-
-    if (auto* ie = root.getChildByName ("Info"))
-        for (auto* f : ie->getChildWithTagNameIterator ("Field"))
-            info.set (f->getStringAttribute ("name"), f->getStringAttribute ("value"));
-
-    if (auto* mk = root.getChildByName ("Markers"))
-        for (auto* e : mk->getChildWithTagNameIterator ("Marker"))
-            markers.push_back ({ e->getStringAttribute ("pos").getLargeIntValue(), e->getStringAttribute ("name") });
-    sortMarkers();
-
-    if (auto* tl = root.getChildByName ("TakeLog"))
-        for (auto* e : tl->getChildWithTagNameIterator ("Take"))
-        {
-            TakeEntry tk;
-            tk.take     = e->getIntAttribute ("take");
-            tk.when     = e->getStringAttribute ("when");
-            tk.start    = e->getStringAttribute ("start").getLargeIntValue();
-            tk.end      = e->getStringAttribute ("end").getLargeIntValue();
-            tk.tracks   = e->getStringAttribute ("tracks");
-            tk.song     = e->getStringAttribute ("song");
-            tk.status   = e->getStringAttribute ("status");
-            tk.comments = e->getStringAttribute ("comments");
-            takeLog.push_back (tk);
-        }
-
-    return true;
+    struct ByName { int compareElements (const juce::File& a, const juce::File& b) const
+                    { return a.getFileName().compareNatural (b.getFileName()); } } cmp;
+    reels.sort (cmp);
+    return reels;
 }
 
-bool Session::save (juce::String& error)
+std::unique_ptr<Reel> Session::createReel (int numTracks, double sampleRate, juce::String& error)
 {
-    auto xml = toXml();
+    int n = 1;
+    while (getFolder().getChildFile (reelFolderName (n)).exists())
+        ++n;
 
-    if (! getFolder().createDirectory())
-    {
-        error = "Session folder is not writable:\n" + getFolder().getFullPathName();
-        return false;
-    }
-
-    juce::TemporaryFile temp (sessionFile);
-
-    if (! xml->writeTo (temp.getFile()))
-    {
-        error = "Could not write session file (disk full or read-only?).";
-        return false;
-    }
-
-    if (sessionFile.existsAsFile())
-        sessionFile.copyFileTo (sessionFile.withFileExtension (".bak"));
-
-    if (! temp.overwriteTargetFileWithTemporary())
-    {
-        error = "Could not replace session file:\n" + sessionFile.getFullPathName();
-        return false;
-    }
-
-    return true;
+    return Reel::create (getFolder(), reelFolderName (n), sampleRate, numTracks, error);
 }
 
 //==============================================================================
-juce::String channelsToString (const ChannelList& list)
+bool Session::migrateLegacy (const juce::File& legacyFile, juce::StringPairArray& sessionInfo, juce::String& error)
 {
-    juce::StringArray parts;
-    for (auto ch : list)
-        parts.add (juce::String (ch + 1));
-    return parts.joinIntoString (",");
-}
+    const auto folder   = legacyFile.getParentDirectory();
+    const auto reelDir  = folder.getChildFile (reelFolderName (1));
+    const auto reelFile = reelDir.getChildFile (reelFolderName (1) + Reel::fileExtension);
 
-ChannelList channelsFromString (const juce::String& s)
-{
-    ChannelList list;
-    for (auto& p : juce::StringArray::fromTokens (s, ",", {}))
+    if (reelDir.exists())
     {
-        const int ch = p.trim().getIntValue() - 1;
-        if (ch >= 0)
-            list.addIfNotAlreadyThere (ch);
-    }
-    list.sort();
-    return list;
-}
-
-//==============================================================================
-bool readWavLayout (const juce::File& wav, WavLayout& l)
-{
-    l = {};
-    const auto fileSize = wav.getSize();
-    juce::FileInputStream in (wav);
-
-    if (! in.openedOk() || fileSize < 44)
-        return false;
-
-    juce::uint8 hdr[12];
-    if (in.read (hdr, 12) != 12)
-        return false;
-
-    const bool isRiff = memcmp (hdr, "RIFF", 4) == 0;
-    l.rf64 = memcmp (hdr, "RF64", 4) == 0;
-
-    if ((! isRiff && ! l.rf64) || memcmp (hdr + 8, "WAVE", 4) != 0)
-        return false;
-
-    while (in.getPosition() + 8 <= fileSize)
-    {
-        juce::uint8 ch[8];
-        if (in.read (ch, 8) != 8)
-            break;
-
-        const auto size = (juce::int64) readLE32 (ch + 4);
-        const auto bodyPos = in.getPosition();
-
-        if (memcmp (ch, "fmt ", 4) == 0)
-        {
-            juce::uint8 fmt[16];
-            if (in.read (fmt, 16) != 16)
-                return false;
-            l.formatTag     = (int) fmt[0] | ((int) fmt[1] << 8);
-            l.numChannels   = (int) fmt[2] | ((int) fmt[3] << 8);
-            l.sampleRate    = (double) readLE32 (fmt + 4);
-            l.blockAlign    = (int) fmt[12] | ((int) fmt[13] << 8);
-            l.bitsPerSample = (int) fmt[14] | ((int) fmt[15] << 8);
-        }
-        else if (memcmp (ch, "data", 4) == 0)
-        {
-            l.dataStart   = bodyPos;
-            l.dataSizePos = bodyPos - 4;
-            l.headerFrames = l.blockAlign > 0 ? size / l.blockAlign : 0;
-            break;
-        }
-
-        if (! in.setPosition (bodyPos + size + (size & 1)))
-            break;
-    }
-
-    return l.dataStart > 0 && l.blockAlign > 0;
-}
-
-juce::int64 repairWavHeader (const juce::File& wav, bool& wasRepaired)
-{
-    wasRepaired = false;
-    WavLayout l;
-
-    if (! readWavLayout (wav, l))
-        return -1;
-
-    if (l.rf64)
-    {
-        juce::WavAudioFormat fmt;
-        if (auto* r = fmt.createReaderFor (new juce::FileInputStream (wav), true))
-        {
-            std::unique_ptr<juce::AudioFormatReader> reader (r);
-            return reader->lengthInSamples;
-        }
-        return -1;
-    }
-
-    const auto actualData   = ((wav.getSize() - l.dataStart) / l.blockAlign) * l.blockAlign;
-    const auto actualFrames = actualData / l.blockAlign;
-
-    if (l.dataStart + actualData > maxRiffBytes)
-        return l.headerFrames;
-
-    if (l.headerFrames != actualFrames)
-    {
-        juce::FileOutputStream out (wav);
-
-        if (out.openedOk())
-        {
-            out.setPosition (4);
-            out.writeInt ((int) (juce::uint32) (l.dataStart + actualData - 8));
-            out.setPosition (l.dataSizePos);
-            out.writeInt ((int) (juce::uint32) actualData);
-            out.flush();
-            wasRepaired = ! out.getStatus().failed();
-        }
-    }
-
-    return actualFrames;
-}
-
-//==============================================================================
-bool TapeFile::createEmpty (const juce::File& f, double sampleRate, juce::String& error)
-{
-    f.getParentDirectory().createDirectory();
-    juce::FileOutputStream out (f);
-
-    if (! out.openedOk())
-    {
-        error = "Could not create tape file:\n" + f.getFullPathName();
+        error = "Can't convert \"" + folder.getFileName() + "\": it already contains a \"Reel 01\" folder.";
         return false;
     }
 
-    out.setPosition (0);
-    out.truncate();
+    // Pull the shared fields out before moving anything.
+    if (auto xml = juce::XmlDocument::parse (legacyFile))
+        if (auto* ie = xml->getChildByName ("Info"))
+            for (auto* f : ie->getChildWithTagNameIterator ("Field"))
+                if (Reel::legacySessionFields().contains (f->getStringAttribute ("name")))
+                    sessionInfo.set (f->getStringAttribute ("name"), f->getStringAttribute ("value"));
 
-    const auto sr = (juce::uint32) juce::roundToInt (sampleRate);
-    const int channels = 1, bits = 24, blockAlign = channels * bits / 8;
-
-    out.write ("RIFF", 4);
-    out.writeInt (36);
-    out.write ("WAVEfmt ", 8);
-    out.writeInt (16);
-    out.writeShort (1);                                  // PCM
-    out.writeShort ((short) channels);
-    out.writeInt ((int) sr);
-    out.writeInt ((int) (sr * (juce::uint32) blockAlign));
-    out.writeShort ((short) blockAlign);
-    out.writeShort ((short) bits);
-    out.write ("data", 4);
-    out.writeInt (0);
-    out.flush();
-
-    if (out.getStatus().failed())
+    // Renames within one folder: instant, and nothing is copied.
+    if (! reelDir.createDirectory())
     {
-        error = "Could not write tape file:\n" + f.getFullPathName();
+        error = "Could not create " + reelDir.getFullPathName();
         return false;
     }
+
+    const auto audio = folder.getChildFile ("Audio");
+    if (audio.isDirectory() && ! audio.moveFileTo (reelDir.getChildFile ("Audio")))
+    {
+        error = "Could not move the Audio folder into Reel 01.";
+        return false;
+    }
+
+    if (! legacyFile.moveFileTo (reelFile))
+    {
+        error = "Could not move the tape file into Reel 01.";
+        return false;
+    }
+
+    const auto bak = legacyFile.withFileExtension (".bak");
+    if (bak.existsAsFile())
+        bak.moveFileTo (reelFile.withFileExtension (".bak"));
 
     return true;
-}
-
-bool TapeFile::open (const juce::File& f, double expectedSampleRate, juce::String& error)
-{
-    bool repaired = false;
-    const auto frames = repairWavHeader (f, repaired);
-
-    if (frames < 0 || ! readWavLayout (f, layout))
-    {
-        error = f.getFileName() + " is not a readable WAV file.";
-        return false;
-    }
-
-    if (layout.rf64 || layout.formatTag != 1 || layout.numChannels != 1 || layout.bitsPerSample != 24
-        || std::abs (layout.sampleRate - expectedSampleRate) > 0.5)
-    {
-        error = f.getFileName() + " is not a 24-bit mono tape at the session sample rate.";
-        return false;
-    }
-
-    out = std::make_unique<juce::FileOutputStream> (f);
-
-    if (! out->openedOk())
-    {
-        out.reset();
-        error = "Could not open tape for writing:\n" + f.getFullPathName();
-        return false;
-    }
-
-    length   = frames;
-    position = 0;
-    scratch.allocate ((size_t) scratchFrames * 3, true);
-    return out->setPosition (layout.dataStart);
-}
-
-bool TapeFile::seek (juce::int64 frame)
-{
-    if (out == nullptr || frame < 0)
-        return false;
-
-    if (frame > length && ! extendTo (frame))   // past the end: lay down silence first
-        return false;
-
-    position = frame;
-    return out->setPosition (layout.dataStart + frame * 3);
-}
-
-bool TapeFile::extendTo (juce::int64 frames)
-{
-    if (out == nullptr)
-        return false;
-
-    if (frames <= length)
-        return true;
-
-    if (layout.dataStart + frames * 3 > maxRiffBytes)
-        return false;
-
-    // Growing the file reads back as zeros (sparse on Linux, lazily zeroed on NTFS),
-    // so even hours of padding are instant.
-    if (! out->setPosition (layout.dataStart + frames * 3) || out->truncate().failed())
-        return false;
-
-    length = frames;
-    position = frames;
-    return flushHeader();
-}
-
-bool TapeFile::write (const float* samples, int numSamples)
-{
-    return writeFrames (samples, numSamples);
-}
-
-bool TapeFile::writeSilence (juce::int64 numSamples)
-{
-    return writeFrames (nullptr, numSamples);
-}
-
-bool TapeFile::writeFrames (const float* src, juce::int64 numSamples)
-{
-    if (out == nullptr)
-        return false;
-
-    if (layout.dataStart + (position + numSamples) * 3 > maxRiffBytes)
-        return false; // tape full (4 GB WAV limit)
-
-    while (numSamples > 0)
-    {
-        const int n = (int) juce::jmin ((juce::int64) scratchFrames, numSamples);
-        auto* d = reinterpret_cast<juce::uint8*> (scratch.get());
-
-        for (int i = 0; i < n; ++i)
-        {
-            const float v = src != nullptr ? juce::jlimit (-1.0f, 1.0f, src[i]) : 0.0f;
-            const int s = juce::roundToInt (v * 8388607.0f);
-            d[i * 3]     = (juce::uint8) (s & 0xff);
-            d[i * 3 + 1] = (juce::uint8) ((s >> 8) & 0xff);
-            d[i * 3 + 2] = (juce::uint8) ((s >> 16) & 0xff);
-        }
-
-        if (! out->write (d, (size_t) n * 3))
-            return false;
-
-        if (src != nullptr)
-            src += n;
-
-        numSamples -= n;
-        position   += n;
-        length = juce::jmax (length, position);
-    }
-
-    return true;
-}
-
-bool TapeFile::flushHeader()
-{
-    if (out == nullptr)
-        return false;
-
-    const auto dataBytes = length * 3;
-    const auto resume = out->getPosition();
-    bool ok = out->setPosition (4);
-    ok = ok && out->writeInt ((int) (juce::uint32) (layout.dataStart + dataBytes - 8));
-    ok = ok && out->setPosition (layout.dataSizePos);
-    ok = ok && out->writeInt ((int) (juce::uint32) dataBytes);
-    ok = ok && out->setPosition (resume);
-    out->flush();
-    return ok && ! out->getStatus().failed();
-}
-
-bool TapeFile::close()
-{
-    if (out == nullptr)
-        return true;
-
-    const bool ok = flushHeader();
-    out.reset();
-    return ok;
 }
 
 } // namespace hawthorne

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
-#include "../Engine/Session.h"
+#include "../Engine/Reel.h"
 #include "HawthorneLookAndFeel.h"
 
 namespace hawthorne
@@ -18,7 +18,7 @@ class MarkerPanel : public juce::Component,
 public:
     MarkerPanel();
 
-    void setSession (Session*);
+    void setReel (Reel*);
     void refresh();                                   // markers changed
     void setPlayhead (juce::int64 samplePos);         // highlight the current marker
 
@@ -42,7 +42,7 @@ private:
     void moveToPlayhead (int index);
     void showMenu (int index);
 
-    Session* session = nullptr;
+    Reel* reel = nullptr;
     juce::ListBox list { "Markers", this };
     juce::TextButton addButton { "ADD  (M)" };
     int currentIndex = -1;

@@ -88,13 +88,12 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     juce::LookAndFeel::setDefaultLookAndFeel (&lnf);
     setWantsKeyboardFocus (true);
 
-    for (auto* b : { &newButton, &openButton, &sheetButton, &routingButton, &audioButton })
+    for (auto* b : { &libraryButton, &sheetButton, &routingButton, &audioButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (b);
     }
-    newButton.onClick     = [this] { newSession(); };
-    openButton.onClick    = [this] { openSession(); };
+    libraryButton.onClick = [this] { showLibrary (true); };
     sheetButton.onClick   = [this] { showSheet(); };
     routingButton.onClick = [this] { showRouting(); };
     audioButton.onClick   = [this] { showAudioSettings(); };
@@ -122,7 +121,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
 
     markers.onLocate    = [this] (juce::int64 pos) { locate (pos); };
     markers.onAddMarker = [this] { addMarker(); };
-    markers.onChanged   = [this] { saveSession(); };
+    markers.onChanged   = [this] { saveReel(); };
     markers.getPlayhead = [this] { return engine.getPosition(); };
     addAndMakeVisible (markers);
 
@@ -145,8 +144,18 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     updater.checkSoon();
    #endif
 
+    library.onLoadReel    = [this] (const juce::File& f) { loadReel (f); };
+    library.onBackToDeck  = [this] { showLibrary (false); };
+    library.getLoadedReel = [this] { return reel != nullptr ? reel->getFile() : juce::File(); };
+    library.getSampleRate = [this]
+    {
+        auto* dev = deviceManager.getCurrentAudioDevice();
+        return dev != nullptr ? dev->getCurrentSampleRate() : 48000.0;
+    };
+    addChildComponent (library);
+
     initialiseAudio();
-    openInitialSession();
+    showLibrary (true);   // the tape library is the first thing you see
 
     setSize (1600, 900);
     startTimerHz (30);
@@ -213,14 +222,14 @@ void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
 
 void MainComponent::matchDeviceToSession()
 {
-    if (session == nullptr || deviceManager.getCurrentAudioDevice() == nullptr)
+    if (reel == nullptr || deviceManager.getCurrentAudioDevice() == nullptr)
         return;
 
     auto setup = deviceManager.getAudioDeviceSetup();
 
-    if (std::abs (setup.sampleRate - session->sampleRate) > 0.5)
+    if (std::abs (setup.sampleRate - reel->sampleRate) > 0.5)
     {
-        setup.sampleRate = session->sampleRate;
+        setup.sampleRate = reel->sampleRate;
         deviceManager.setAudioDeviceSetup (setup, true);
     }
 }
@@ -243,47 +252,72 @@ void MainComponent::showAudioSettings()
 //==============================================================================
 // Sessions
 
-void MainComponent::openInitialSession()
+void MainComponent::showLibrary (bool show)
 {
-    const auto last = props.getUserSettings()->getValue ("lastSession");
-    juce::String err;
-
-    if (last.isNotEmpty() && juce::File (last).existsAsFile())
-        if (auto s = Session::load (juce::File (last), err))
-        {
-            setSession (std::move (s));
-            return;
-        }
-
-    auto root = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Hawthorne");
-    root.createDirectory();
-
-    auto rate = deviceManager.getCurrentAudioDevice() != nullptr
-              ? deviceManager.getCurrentAudioDevice()->getCurrentSampleRate() : 48000.0;
-
-    auto name = "Untitled " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H%M");
-    if (auto s = Session::create (root, name, rate, kDefaultTracks, err))
-        setSession (std::move (s));
-    else
-        showAlert ("Could not create a session", err);
+    if (show)
+    {
+        library.refresh();
+        if (reel != nullptr)
+            library.select (reel->getFile());
+        else
+            library.select (juce::File (props.getUserSettings()->getValue ("lastReel")));
+        library.setBounds (getLocalBounds());
+        library.setVisible (true);
+        library.toFront (true);
+        library.grabKeyboardFocus();
+    }
+    else if (reel != nullptr)
+    {
+        library.setVisible (false);
+        grabKeyboardFocus();
+    }
 }
 
-void MainComponent::setSession (std::unique_ptr<Session> s)
+void MainComponent::loadReel (const juce::File& reelFile)
 {
-    engine.setSession (nullptr);
-    markers.setSession (nullptr);
-    session = std::move (s);
-    engine.setSession (session.get());
-    markers.setSession (session.get());
-
-    if (session != nullptr)
+    if (engine.isRecording())
     {
-        props.getUserSettings()->setValue ("lastSession", session->getFile().getFullPathName());
+        showAlert ("Library", "Stop recording before changing reels.");
+        return;
+    }
+
+    juce::String err;
+    auto newReel = Reel::load (reelFile, err);
+    if (newReel == nullptr)
+    {
+        showAlert ("Could not load the reel", err);
+        return;
+    }
+
+    auto newSession = Session::openFolder (reelFile.getParentDirectory().getParentDirectory(), err);
+    if (newSession == nullptr)
+    {
+        showAlert ("Could not load the session", err);
+        return;
+    }
+
+    setReel (std::move (newReel), std::move (newSession));
+    showLibrary (false);
+}
+
+void MainComponent::setReel (std::unique_ptr<Reel> r, std::unique_ptr<Session> s)
+{
+    engine.stop();
+    engine.setReel (nullptr);
+    markers.setReel (nullptr);
+    reel = std::move (r);
+    session = std::move (s);
+    engine.setReel (reel.get());
+    markers.setReel (reel.get());
+
+    if (reel != nullptr)
+    {
+        props.getUserSettings()->setValue ("lastReel", reel->getFile().getFullPathName());
         props.saveIfNeeded();
         matchDeviceToSession();
 
-        if (! session->recoveryLog.isEmpty())
-            showAlert ("Recovered after an unexpected shutdown", session->recoveryLog.joinIntoString ("\n"));
+        if (! reel->recoveryLog.isEmpty())
+            showAlert ("Recovered after an unexpected shutdown", reel->recoveryLog.joinIntoString ("\n"));
     }
 
     rebuildModules();
@@ -293,88 +327,18 @@ void MainComponent::setSession (std::unique_ptr<Session> s)
     repaint();
 }
 
-void MainComponent::newSession()
+void MainComponent::saveReel()
 {
-    doStop();
-
-    auto* w = new juce::AlertWindow ("New Session", "How many tracks?", juce::MessageBoxIconType::NoIcon, this);
-    w->addComboBox ("tracks", { "8", "16", "24", "32", "48", "64", "72", "96" });
-    if (auto* box = w->getComboBoxComponent ("tracks"))
-        box->setSelectedItemIndex (2);
-    w->addButton ("Next", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-
-    w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int r)
-    {
-        const int n = w->getComboBoxComponent ("tracks")->getText().getIntValue();
-        if (r == 1)
-            juce::MessageManager::callAsync ([this, n] { createSessionWithTracks (n); });
-    }), true);
+    juce::String err;
+    if (reel != nullptr && ! reel->save (err))
+        showAlert ("Could not save the reel", err);
 }
 
-void MainComponent::createSessionWithTracks (int numTracks)
-{
-    auto root = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Hawthorne");
-    root.createDirectory();
-
-    chooser = std::make_unique<juce::FileChooser> ("Name the new session", root.getChildFile ("New Session"), "*.hawthorne");
-    chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles,
-                          [this, numTracks] (const juce::FileChooser& fc)
-    {
-        const auto f = fc.getResult();
-        if (f == juce::File())
-            return;
-
-        auto rate = deviceManager.getCurrentAudioDevice() != nullptr
-                  ? deviceManager.getCurrentAudioDevice()->getCurrentSampleRate() : sessionRate();
-
-        juce::String err;
-        if (auto s = Session::create (f.getParentDirectory(), f.getFileNameWithoutExtension(), rate, numTracks, err))
-            setSession (std::move (s));
-        else
-            showAlert ("Could not create session", err);
-    });
-}
-
-void MainComponent::openSession()
-{
-    doStop();
-    auto root = session != nullptr ? session->getFolder().getParentDirectory()
-                                   : juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
-
-    chooser = std::make_unique<juce::FileChooser> ("Open session", root, "*.hawthorne");
-    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-                          [this] (const juce::FileChooser& fc)
-    {
-        const auto f = fc.getResult();
-        if (! f.existsAsFile())
-            return;
-
-        juce::String err;
-        if (auto s = Session::load (f, err))
-            setSession (std::move (s));
-        else
-            showAlert ("Could not open session", err);
-    });
-}
-
-void MainComponent::saveSession()
+void MainComponent::saveSessionInfo()
 {
     juce::String err;
     if (session != nullptr && ! session->save (err))
-        showAlert ("Could not save session", err);
-}
-
-juce::String MainComponent::setTrackCount (int n)
-{
-    const auto err = engine.setNumTracks (n);
-    if (err.isNotEmpty())
-        return err;
-
-    rebuildModules();
-    if (routingWindow != nullptr) routingWindow->getMatrix().tracksChanged();
-    if (sheetWindow != nullptr)   sheetWindow->getSheet().refresh();
-    return {};
+        showAlert ("Could not save the session", err);
 }
 
 //==============================================================================
@@ -383,7 +347,7 @@ juce::String MainComponent::setTrackCount (int n)
 void MainComponent::rebuildModules()
 {
     bridge.modules.clear();
-    const int n = session != nullptr ? session->numTracks : 0;
+    const int n = reel != nullptr ? reel->numTracks : 0;
 
     for (int t = 0; t < n; ++t)
     {
@@ -426,7 +390,7 @@ void MainComponent::refreshInputChoices()
     }
 
     for (int t = 0; t < bridge.modules.size(); ++t)
-        bridge.modules[t]->setInputChoices (names, active, session != nullptr ? session->tracks[(size_t) t].input : -1);
+        bridge.modules[t]->setInputChoices (names, active, reel != nullptr ? reel->tracks[(size_t) t].input : -1);
 
     if (routingWindow != nullptr)
         routingWindow->getMatrix().repaint();
@@ -434,11 +398,11 @@ void MainComponent::refreshInputChoices()
 
 void MainComponent::refreshTrackNames()
 {
-    if (session == nullptr)
+    if (reel == nullptr)
         return;
 
     for (int t = 0; t < bridge.modules.size(); ++t)
-        bridge.modules[t]->setTrackName (session->tracks[(size_t) t].name);
+        bridge.modules[t]->setTrackName (reel->tracks[(size_t) t].name);
 
     if (routingWindow != nullptr)
         routingWindow->getMatrix().repaint();
@@ -446,20 +410,20 @@ void MainComponent::refreshTrackNames()
 
 void MainComponent::renameTrack (int track)
 {
-    if (session == nullptr || ! juce::isPositiveAndBelow (track, session->numTracks))
+    if (reel == nullptr || ! juce::isPositiveAndBelow (track, reel->numTracks))
         return;
 
     auto* w = new juce::AlertWindow ("Track " + juce::String (track + 1), "Name:", juce::MessageBoxIconType::NoIcon, this);
-    w->addTextEditor ("name", session->tracks[(size_t) track].name);
+    w->addTextEditor ("name", reel->tracks[(size_t) track].name);
     w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
     w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
     w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, track] (int r)
     {
-        if (r != 1 || session == nullptr) return;
+        if (r != 1 || reel == nullptr) return;
         auto name = w->getTextEditorContents ("name").trim();
-        session->tracks[(size_t) track].name = name.isEmpty() ? "Track " + juce::String (track + 1) : name;
-        saveSession();
+        reel->tracks[(size_t) track].name = name.isEmpty() ? "Track " + juce::String (track + 1) : name;
+        saveReel();
         refreshTrackNames();
         if (sheetWindow != nullptr) sheetWindow->getSheet().refresh();
     }), true);
@@ -470,32 +434,32 @@ void MainComponent::renameTrack (int track)
 
 void MainComponent::addMarker()
 {
-    if (session == nullptr)
+    if (reel == nullptr)
         return;
 
-    session->addMarker (engine.getPosition(), "Marker " + juce::String ((int) session->markers.size() + 1));
-    saveSession();
+    reel->addMarker (engine.getPosition(), "Marker " + juce::String ((int) reel->markers.size() + 1));
+    saveReel();
     markers.refresh();
 }
 
 void MainComponent::jumpToMarker (int direction)
 {
-    if (session == nullptr || session->markers.empty() || engine.isRecording())
+    if (reel == nullptr || reel->markers.empty() || engine.isRecording())
         return;
 
     const auto pos = engine.getPosition();
-    const auto slack = (juce::int64) (session->sampleRate * 0.25);   // so "previous" while rolling isn't the one just passed
+    const auto slack = (juce::int64) (reel->sampleRate * 0.25);   // so "previous" while rolling isn't the one just passed
 
     if (direction > 0)
     {
-        for (auto& m : session->markers)
+        for (auto& m : reel->markers)
             if (m.position > pos) { locate (m.position); return; }
     }
     else
     {
-        for (auto it = session->markers.rbegin(); it != session->markers.rend(); ++it)
+        for (auto it = reel->markers.rbegin(); it != reel->markers.rend(); ++it)
             if (it->position < pos - slack) { locate (it->position); return; }
-        locate (session->markers.front().position);
+        locate (reel->markers.front().position);
     }
 }
 
@@ -506,7 +470,7 @@ void MainComponent::showRouting()
 {
     if (routingWindow == nullptr)
     {
-        routingWindow = std::make_unique<RoutingWindow> (engine, [this] { return session.get(); });
+        routingWindow = std::make_unique<RoutingWindow> (engine, [this] { return reel.get(); });
         routingWindow->getMatrix().onChanged = [this] { refreshInputChoices(); };
         updateRoutingDevice();
         routingWindow->fitToMatrix();
@@ -532,11 +496,10 @@ void MainComponent::showSheet (bool takeLog)
 {
     if (sheetWindow == nullptr)
     {
-        sheetWindow = std::make_unique<SessionSheetWindow> ([this] { return session.get(); });
+        sheetWindow = std::make_unique<SessionSheetWindow> ([this] { return reel.get(); }, [this] { return session.get(); });
         auto& sheet = sheetWindow->getSheet();
-        sheet.onSave = [this] { saveSession(); };
+        sheet.onSave = [this] { saveReel(); saveSessionInfo(); };
         sheet.onTrackNamesChanged = [this] { refreshTrackNames(); };
-        sheet.onTrackCountChange = [this] (int n) { return setTrackCount (n); };
     }
 
     sheetWindow->getSheet().refresh();
@@ -584,7 +547,7 @@ void MainComponent::confirmUpdate()
                 return;
 
             engine.stop();          // tape is safe on disk before Hawthorne closes
-            saveSession();
+            saveReel();
             updater.install();
         }));
 }
@@ -641,6 +604,9 @@ void MainComponent::nudge (double seconds)
 
 bool MainComponent::keyPressed (const juce::KeyPress& k)
 {
+    if (library.isVisible())
+        return false;
+
     // A text field being typed in keeps its keys.
     if (auto* f = juce::Component::getCurrentlyFocusedComponent())
         if (f != this && (dynamic_cast<juce::TextEditor*> (f) != nullptr))
@@ -720,10 +686,10 @@ juce::String MainComponent::buildStatus() const
     parts.add (juce::String (dev->getCurrentBufferSizeSamples()) + " smp");
     parts.add ("latency " + juce::String ((double) engine.getLatencySamples() / sr * 1000.0, 1) + " ms");
 
-    if (session != nullptr)
+    if (reel != nullptr)
     {
-        if (std::abs (sr - session->sampleRate) > 0.5)
-            parts.add ("!! SESSION IS " + juce::String (session->sampleRate / 1000.0, 1) + " kHz");
+        if (std::abs (sr - reel->sampleRate) > 0.5)
+            parts.add ("!! SESSION IS " + juce::String (reel->sampleRate / 1000.0, 1) + " kHz");
 
         const auto secs = engine.getRecordTimeRemainingSeconds();
         const auto hrs = secs / 3600.0;
@@ -753,14 +719,16 @@ void MainComponent::paint (juce::Graphics& g)
     g.setFont (monoFont (22.0f, true));
     g.drawText ("H A W T H O R N E", headerArea.withTrimmedLeft (18).withWidth (280), juce::Justification::centredLeft);
 
-    const int firstButtonX = updateButton.isVisible() ? updateButton.getX() : newButton.getX();
+    const int firstButtonX = updateButton.isVisible() ? updateButton.getX() : libraryButton.getX();
     auto sessionArea = headerArea.withTrimmedLeft (310).withRight (firstButtonX - 16);
     g.setFont (monoFont (14.0f, true));
     g.setColour (Colours::text);
-    g.drawText (session != nullptr ? session->getName() : "No session", sessionArea, juce::Justification::centredLeft);
+    g.drawText (reel != nullptr ? (session != nullptr ? session->getName() + "  -  " : juce::String()) + reel->getName()
+                                : juce::String ("No reel on the deck"),
+                sessionArea, juce::Justification::centredLeft, true);
     g.setColour (Colours::textDim);
     g.setFont (monoFont (11.0f));
-    g.drawText (juce::String (session != nullptr ? session->numTracks : 0) + "-TRACK  v" HAWTHORNE_VERSION,
+    g.drawText (juce::String (reel != nullptr ? reel->numTracks : 0) + "-TRACK  v" HAWTHORNE_VERSION,
                 sessionArea, juce::Justification::centredRight);
 
     // Transport deck
@@ -783,13 +751,13 @@ void MainComponent::paint (juce::Graphics& g)
     g.setColour (rec ? Colours::red : (engine.isPlaying() ? Colours::mustard : Colours::textDim));
     g.drawText (rec ? "REC" : (engine.isPlaying() ? "PLAY" : "STOP"), counterArea.reduced (7, 4), juce::Justification::topLeft);
 
-    if (session != nullptr)
+    if (reel != nullptr)
     {
         g.setColour (Colours::textDim);
         g.setFont (monoFont (12.0f, true));
         g.drawFittedText ("REEL  " + formatTime (engine.getReelLength(), sessionRate()).dropLastCharacters (4)
-                              + "\n" + juce::String (session->numTracks) + " TRACKS  -  "
-                              + juce::String (session->sampleRate / 1000.0, 1) + " kHz / 24-bit",
+                              + "\n" + juce::String (reel->numTracks) + " TRACKS  -  "
+                              + juce::String (reel->sampleRate / 1000.0, 1) + " kHz / 24-bit",
                           reelInfoArea, juce::Justification::centredLeft, 2);
     }
 
@@ -815,9 +783,7 @@ void MainComponent::resized()
         h.removeFromRight (8);
         sheetButton.setBounds (h.removeFromRight (130));
         h.removeFromRight (8);
-        openButton.setBounds (h.removeFromRight (80));
-        h.removeFromRight (8);
-        newButton.setBounds (h.removeFromRight (80));
+        libraryButton.setBounds (h.removeFromRight (100));
 
         if (updateButton.isVisible())
         {
@@ -863,6 +829,9 @@ void MainComponent::resized()
 
     bridgeView.setBounds (r);
     layoutBridge();
+
+    if (library.isVisible())
+        library.setBounds (getLocalBounds());
 }
 
 } // namespace hawthorne

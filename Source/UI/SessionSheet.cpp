@@ -92,7 +92,10 @@ namespace
 class SessionSheet::InfoPage : public juce::Component
 {
 public:
-    explicit InfoPage (SessionSheet& o) : owner (o)
+    InfoPage (SessionSheet& o, const juce::String& pageTitle, const juce::StringArray& fieldNames, const juce::String& notesField,
+              std::function<juce::StringPairArray*()> infoGetter, std::function<juce::String()> subtitleGetter)
+        : owner (o), title (pageTitle), fields (fieldNames), notesKey (notesField),
+          getInfo (std::move (infoGetter)), getSubtitle (std::move (subtitleGetter))
     {
         setLookAndFeel (&paperLnf());
 
@@ -109,72 +112,52 @@ public:
             return h;
         }();
 
-        for (auto& key : Session::infoFields())
+        for (auto& key : fields)
         {
             auto* ed = editors.add (new juce::TextEditor (key));
             ed->setFont (Paper::type (15.0f));
             ed->setTextToShowWhenEmpty (hints[key], Paper::faint.withAlpha (0.6f));
             ed->setIndents (2, 3);
 
-            if (key == "Notes")
+            if (key == notesKey)
             {
                 ed->setMultiLine (true, true);
                 ed->setReturnKeyStartsNewLine (true);
-                ed->setTextToShowWhenEmpty ("Session notes...", Paper::faint.withAlpha (0.6f));
+                ed->setTextToShowWhenEmpty ("Notes...", Paper::faint.withAlpha (0.6f));
                 ed->setFont (Paper::type (15.0f));
                 ed->setLineSpacing (1.25f);
             }
 
             ed->onTextChange = [this, key, ed]
             {
-                if (auto* s = owner.getSession())
+                if (auto* info = getInfo())
                 {
-                    s->info.set (key, ed->getText());
+                    info->set (key, ed->getText());
                     owner.markDirty();
                 }
             };
             addAndMakeVisible (ed);
         }
-
-        for (int n : { 8, 16, 24, 32, 48, 64, 72, 96 })
-            trackCount.addItem (juce::String (n), n);
-        trackCount.onChange = [this]
-        {
-            auto* s = owner.getSession();
-            const int n = trackCount.getSelectedId();
-            if (s == nullptr || n <= 0 || n == s->numTracks || ! owner.onTrackCountChange)
-                return;
-
-            const auto err = owner.onTrackCountChange (n);
-            if (err.isNotEmpty())
-            {
-                trackCount.setSelectedId (s->numTracks, juce::dontSendNotification);
-                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Tracks", err);
-            }
-        };
-        addAndMakeVisible (trackCount);
     }
 
     ~InfoPage() override { setLookAndFeel (nullptr); }
 
     void refresh()
     {
-        auto* s = owner.getSession();
+        auto* info = getInfo();
         for (auto* ed : editors)
             if (! ed->hasKeyboardFocus (true))
-                ed->setText (s != nullptr ? s->info[ed->getName()] : juce::String(), juce::dontSendNotification);
-
-        if (s != nullptr)
-        {
-            if (trackCount.indexOfItemId (s->numTracks) < 0)
-                trackCount.addItem (juce::String (s->numTracks), s->numTracks);
-            trackCount.setSelectedId (s->numTracks, juce::dontSendNotification);
-        }
+                ed->setText (info != nullptr ? (*info)[ed->getName()] : juce::String(), juce::dontSendNotification);
+        repaint();
     }
 
     void paint (juce::Graphics& g) override
     {
-        paintPaper (g, getLocalBounds(), "SESSION SHEET", 10000, 30);
+        paintPaper (g, getLocalBounds(), title, 10000, 30);
+
+        g.setColour (Paper::faint);
+        g.setFont (Paper::type (13.0f, true));
+        g.drawText (getSubtitle(), getWidth() - 520, 14, 490, 26, juce::Justification::centredRight);
 
         g.setFont (Paper::type (12.0f, true));
         for (auto* ed : editors)
@@ -196,41 +179,43 @@ public:
                 g.drawHorizontalLine (b.getBottom() - 1, (float) b.getX(), (float) b.getRight());
             }
         }
-
-        g.setColour (Paper::faint);
-        g.drawText ("TRACKS", trackCount.getX() - 70, trackCount.getY(), 64, trackCount.getHeight(), juce::Justification::centredRight);
     }
 
     void resized() override
     {
         auto r = getLocalBounds().reduced (52, 0).withTrimmedTop (56).withTrimmedRight (-30);
-        trackCount.setBounds (getWidth() - 110, 14, 80, 26);
-
         const int colGap = 30, rowH = 44;
         const int colW = (r.getWidth() - colGap) / 2;
-        const auto& fields = Session::infoFields();
-        const int half = 8;
+        const int singles = fields.size() - (fields.contains (notesKey) ? 1 : 0);
+        const int half = (singles + 1) / 2;
 
-        for (int i = 0; i < fields.size(); ++i)
+        int i = 0;
+        for (auto* ed : editors)
         {
-            auto* ed = editors[i];
-            if (fields[i] == "Notes")
-            {
-                const int top = r.getY() + half * rowH + 18;
-                ed->setBounds (r.getX(), top, r.getWidth() - 30, juce::jmax (120, getHeight() - top - 20));
+            if (ed->getName() == notesKey)
                 continue;
-            }
-
             const int col = i < half ? 0 : 1;
             const int row = i < half ? i : i - half;
             ed->setBounds (r.getX() + col * (colW + colGap), r.getY() + row * rowH + 15, colW - 30, 24);
+            ++i;
         }
+
+        for (auto* ed : editors)
+            if (ed->getName() == notesKey)
+            {
+                const int top = r.getY() + half * rowH + 18;
+                ed->setBounds (r.getX(), top, r.getWidth() - 30, juce::jmax (120, getHeight() - top - 20));
+            }
     }
 
 private:
     SessionSheet& owner;
+    juce::String title;
+    juce::StringArray fields;
+    juce::String notesKey;
+    std::function<juce::StringPairArray*()> getInfo;
+    std::function<juce::String()> getSubtitle;
     juce::OwnedArray<juce::TextEditor> editors;
-    juce::ComboBox trackCount;
 };
 
 //==============================================================================
@@ -263,7 +248,7 @@ public:
     void resized() override { table.setBounds (getLocalBounds().withTrimmedTop (50).withTrimmedLeft (44).reduced (0, 0)); }
 
 private:
-    int getNumRows() override { auto* s = owner.getSession(); return s != nullptr ? s->numTracks : 0; }
+    int getNumRows() override { auto* s = owner.getReel(); return s != nullptr ? s->numTracks : 0; }
 
     void paintRowBackground (juce::Graphics& g, int, int w, int h, bool) override
     {
@@ -299,7 +284,7 @@ private:
             label = new PaperLabel();
         }
 
-        auto* s = owner.getSession();
+        auto* s = owner.getReel();
         if (s == nullptr || row >= s->numTracks)
             return label;
 
@@ -311,7 +296,7 @@ private:
 
         label->onTextChange = [this, row, col, label]
         {
-            auto* s2 = owner.getSession();
+            auto* s2 = owner.getReel();
             if (s2 == nullptr || row >= s2->numTracks) return;
             auto& t = s2->tracks[(size_t) row];
             auto text = label->getText();
@@ -381,11 +366,11 @@ public:
     void resized() override { table.setBounds (getLocalBounds().withTrimmedTop (50).withTrimmedLeft (44)); }
 
 private:
-    int getNumRows() override { auto* s = owner.getSession(); return s != nullptr ? (int) s->takeLog.size() : 0; }
+    int getNumRows() override { auto* s = owner.getReel(); return s != nullptr ? (int) s->takeLog.size() : 0; }
 
     void paintRowBackground (juce::Graphics& g, int row, int w, int h, bool) override
     {
-        auto* s = owner.getSession();
+        auto* s = owner.getReel();
         const bool keeper = s != nullptr && row < (int) s->takeLog.size() && s->takeLog[(size_t) row].status == "Keeper";
         g.fillAll (keeper ? juce::Colour (0xfff7e9a8) : Paper::paper);
         g.setColour (Paper::rule.withAlpha (0.7f));
@@ -394,7 +379,7 @@ private:
 
     void paintCell (juce::Graphics& g, int row, int col, int w, int h, bool) override
     {
-        auto* s = owner.getSession();
+        auto* s = owner.getReel();
         if (s == nullptr || row >= (int) s->takeLog.size())
             return;
 
@@ -419,7 +404,7 @@ private:
 
     juce::Component* refreshComponentForCell (int row, int col, bool, juce::Component* existing) override
     {
-        auto* s = owner.getSession();
+        auto* s = owner.getReel();
 
         if (col == 7)
         {
@@ -444,7 +429,7 @@ private:
 
             box->onChange = [this, row, box]
             {
-                auto* s2 = owner.getSession();
+                auto* s2 = owner.getReel();
                 if (s2 == nullptr || row >= (int) s2->takeLog.size()) return;
                 s2->takeLog[(size_t) row].status = box->getSelectedId() <= 1 ? juce::String() : box->getText();
                 owner.markDirty();
@@ -472,7 +457,7 @@ private:
 
         label->onTextChange = [this, row, col, label]
         {
-            auto* s2 = owner.getSession();
+            auto* s2 = owner.getReel();
             if (s2 == nullptr || row >= (int) s2->takeLog.size()) return;
             (col == 6 ? s2->takeLog[(size_t) row].song : s2->takeLog[(size_t) row].comments) = label->getText();
             owner.markDirty();
@@ -485,15 +470,28 @@ private:
 };
 
 //==============================================================================
-SessionSheet::SessionSheet (std::function<Session*()> gs) : getSession (std::move (gs))
+SessionSheet::SessionSheet (std::function<Reel*()> gr, std::function<Session*()> gs)
+    : getReel (std::move (gr)), getSession (std::move (gs))
 {
-    infoPage  = new InfoPage (*this);
+    infoPage = new InfoPage (*this, "SESSION SHEET", Session::infoFields(), "Notes",
+                             [this] { auto* s = getSession(); return s != nullptr ? &s->info : nullptr; },
+                             [this] { auto* s = getSession(); return s != nullptr ? "SESSION:  " + s->getName().toUpperCase() : juce::String(); });
+    reelPage = new InfoPage (*this, "TAPE BOX LABEL", Reel::infoFields(), "Reel Notes",
+                             [this] { auto* r = getReel(); return r != nullptr ? &r->info : nullptr; },
+                             [this]
+                             {
+                                 auto* r = getReel();
+                                 return r == nullptr ? juce::String()
+                                                     : r->getName().toUpperCase() + "   " + juce::String (r->numTracks) + " TRACKS   "
+                                                       + juce::String (r->sampleRate / 1000.0, 1) + " kHz";
+                             });
     trackPage = new TrackSheetPage (*this);
     takePage  = new TakeLogPage (*this);
 
     tabs.setTabBarDepth (34);
     tabs.setOutline (0);
     tabs.addTab ("SESSION", Paper::paperDark, infoPage, true);
+    tabs.addTab ("REEL", Paper::paperDark, reelPage, true);
     tabs.addTab ("TRACK SHEET", Paper::paperDark, trackPage, true);
     tabs.addTab ("TAKE LOG", Paper::paperDark, takePage, true);
     tabs.setColour (juce::TabbedComponent::backgroundColourId, Paper::paper);
@@ -513,13 +511,14 @@ SessionSheet::~SessionSheet()
 void SessionSheet::refresh()
 {
     infoPage->refresh();
+    reelPage->refresh();
     trackPage->refresh();
     takePage->refresh();
 }
 
 void SessionSheet::showTakeLog()
 {
-    tabs.setCurrentTabIndex (2);
+    tabs.setCurrentTabIndex (3);
     takePage->refresh();
     takePage->scrollToEnd();
 }
@@ -539,9 +538,9 @@ void SessionSheet::paint (juce::Graphics& g) { g.fillAll (Colours::panel); }
 void SessionSheet::resized() { tabs.setBounds (getLocalBounds()); }
 
 //==============================================================================
-SessionSheetWindow::SessionSheetWindow (std::function<Session*()> gs)
+SessionSheetWindow::SessionSheetWindow (std::function<Reel*()> gr, std::function<Session*()> gs)
     : juce::DocumentWindow ("Hawthorne - Session Sheet", Colours::panel, juce::DocumentWindow::closeButton),
-      sheet (std::move (gs))
+      sheet (std::move (gr), std::move (gs))
 {
     setUsingNativeTitleBar (true);
     setContentNonOwned (&sheet, false);

@@ -1,169 +1,56 @@
 #pragma once
 
-#include <juce_core/juce_core.h>
-#include <array>
-#include <vector>
+#include "Reel.h"
 
 namespace hawthorne
 {
 
-static constexpr int kMaxTracks     = 96;
-static constexpr int kDefaultTracks = 24;
-
-/** Absolute device channels (0-based), kept sorted. */
-using ChannelList = juce::Array<int>;
-juce::String channelsToString (const ChannelList&);      // "1,2,5" (1-based)
-ChannelList  channelsFromString (const juce::String&);
-
-struct TrackInfo
-{
-    juce::String name;
-    int  input = -1;          // absolute device input channel, -1 = none
-    bool armed = false;
-    bool toMix = true;        // feeds the master bus
-    ChannelList outputs;      // direct outs
-
-    // Track sheet
-    juce::String instrument, mic, notes;
-};
-
-/** The master is a stereo bus: the mix of the tracks plus any patched-in inputs. */
-struct MasterRouting
-{
-    std::array<ChannelList, 2> inputs, outputs;
-    MasterRouting() { outputs[0].add (0); outputs[1].add (1); }
-};
-
-struct Marker
-{
-    juce::int64 position = 0;
-    juce::String name;
-};
-
-/** One line of the recording sheet - added automatically for every take. */
-struct TakeEntry
-{
-    int take = 0;
-    juce::String when;              // local date / time the take started
-    juce::int64 start = 0, end = 0; // tape position
-    juce::String tracks;            // e.g. "1-4, 7"
-    juce::String song, status, comments;
-};
-
 //==============================================================================
 /**
-    A reel of multitrack tape (up to 96 tracks).
+    A session (an album, a client, a job) - a folder holding one or more reels.
 
-    Each track is ONE continuous mono WAV file (Audio/Track01.wav ...). Recording
-    overwrites that file in place at the tape position - like tape there is no
-    undo. Every recorded track file is kept the same length as the reel; unrecorded
-    stretches are silence. Message thread only.
+        <Library>/<Session>/<Session>.hawthorne      shared session sheet
+        <Library>/<Session>/Reel 01/Reel 01.reel     one multitrack tape each
+        <Library>/<Session>/Reel 01/Audio/Track01.wav ...
+
+    Sessions from v1.5 and earlier (one reel per session) are converted on load:
+    the files are moved inside the same folder, nothing is copied or lost.
 */
 class Session
 {
 public:
     static constexpr const char* fileExtension = ".hawthorne";
 
-    static std::unique_ptr<Session> create (const juce::File& parentFolder, const juce::String& name,
-                                            double sampleRate, int numTracks, juce::String& error);
-
-    /** Loads a session, repairs any tape left mid-write by a crash and evens up tape lengths. */
+    static std::unique_ptr<Session> create (const juce::File& libraryFolder, const juce::String& name, juce::String& error);
     static std::unique_ptr<Session> load (const juce::File& sessionFile, juce::String& error);
 
-    /** Atomic save (temp file + rename, previous version kept as .bak). */
+    /** Opens the session in a folder, converting an old single-reel session or
+        recreating a missing session file if needed. */
+    static std::unique_ptr<Session> openFolder (const juce::File& folder, juce::String& error);
+
     bool save (juce::String& error);
 
-    juce::File getFile() const          { return sessionFile; }
-    juce::File getFolder() const        { return sessionFile.getParentDirectory(); }
-    juce::File getAudioFolder() const   { return getFolder().getChildFile ("Audio"); }
-    juce::String getName() const        { return sessionFile.getFileNameWithoutExtension(); }
-    juce::File getTapeFile (int track) const
-    {
-        return getAudioFolder().getChildFile ("Track" + juce::String (track + 1).paddedLeft ('0', 2) + ".wav");
-    }
+    juce::File getFile() const    { return sessionFile; }
+    juce::File getFolder() const  { return sessionFile.getParentDirectory(); }
+    juce::String getName() const  { return sessionFile.getFileNameWithoutExtension(); }
 
-    /** Longest recorded track, in samples. */
-    juce::int64 getReelLength() const;
+    /** Reel files in this session, in reel order. */
+    juce::Array<juce::File> getReelFiles() const;
 
-    /** Pads every recorded track with silence up to the reel length.
-        Returns the tracks whose files changed. */
-    juce::Array<int> equaliseTapeLengths (juce::String& error);
+    /** Adds the next reel ("Reel 02" ...). */
+    std::unique_ptr<Reel> createReel (int numTracks, double sampleRate, juce::String& error);
 
-    // Markers - always kept in time order
-    int  addMarker (juce::int64 position, const juce::String& name);   // returns its index
-    void sortMarkers();
-
-    // Session sheet fields, in display order
     static const juce::StringArray& infoFields();
-
-    double sampleRate = 48000.0;
-    int    bitDepth   = 24;
-    int    numTracks  = kDefaultTracks;
-    std::array<TrackInfo, kMaxTracks> tracks;
-    MasterRouting master;
-    std::vector<Marker> markers;
     juce::StringPairArray info;
-    std::vector<TakeEntry> takeLog;
-    int nextTake = 1;
 
-    /** Filled by load(): notes on anything repaired after a crash. */
-    juce::StringArray recoveryLog;
+    /** Notes on anything converted or repaired when opening. */
+    juce::StringArray log;
 
 private:
     Session() = default;
-    std::unique_ptr<juce::XmlElement> toXml() const;
-    bool fromXml (const juce::XmlElement&, juce::String& error);
+    static bool migrateLegacy (const juce::File& legacyFile, juce::StringPairArray& sessionInfo, juce::String& error);
 
     juce::File sessionFile;
-};
-
-//==============================================================================
-struct WavLayout
-{
-    juce::int64 dataStart = -1, dataSizePos = -1, headerFrames = 0;
-    int blockAlign = 0, bitsPerSample = 0, numChannels = 0, formatTag = 0;
-    double sampleRate = 0.0;
-    bool rf64 = false;
-};
-
-/** Parses the RIFF chunk layout of a WAV file. */
-bool readWavLayout (const juce::File&, WavLayout&);
-
-/** If the header undercounts the audio on disk (crash before the header was
-    rewritten), fix the size fields from the real file length.
-    Returns the number of frames in the file, or -1 if unreadable. */
-juce::int64 repairWavHeader (const juce::File& wav, bool& wasRepaired);
-
-//==============================================================================
-/**
-    Random-access writer for a tape track: 24-bit mono PCM WAV that can be
-    overwritten anywhere and extended. Not thread-safe; owned by one
-    RecordingStream and used only on the disk thread / under its lock.
-*/
-class TapeFile
-{
-public:
-    static bool createEmpty (const juce::File&, double sampleRate, juce::String& error);
-
-    bool open (const juce::File&, double expectedSampleRate, juce::String& error);
-    bool seek (juce::int64 frame);              // extends with silence if past the end
-    bool extendTo (juce::int64 frames);         // pad with silence (fast: file is extended, not written)
-    bool write (const float* samples, int numSamples);
-    bool writeSilence (juce::int64 numSamples);
-    bool flushHeader();
-    bool close();
-
-    juce::int64 getLength() const noexcept   { return length; }
-    juce::int64 getPosition() const noexcept { return position; }
-
-private:
-    bool writeFrames (const float* samplesOrNull, juce::int64 numSamples);
-
-    std::unique_ptr<juce::FileOutputStream> out;
-    WavLayout layout;
-    juce::int64 length = 0, position = 0;
-    juce::HeapBlock<char> scratch;
-    static constexpr int scratchFrames = 4096;
 };
 
 } // namespace hawthorne

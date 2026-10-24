@@ -8,6 +8,7 @@
 #include "MarkerPanel.h"
 #include "RoutingMatrix.h"
 #include "SessionSheet.h"
+#include "LibraryView.h"
 #include "../Updater.h"
 
 namespace hawthorne
@@ -70,14 +71,12 @@ private:
     void matchDeviceToSession();
     void showAudioSettings();
 
-    // Session
-    void openInitialSession();
-    void setSession (std::unique_ptr<Session>);
-    void newSession();
-    void createSessionWithTracks (int numTracks);
-    void openSession();
-    void saveSession();
-    juce::String setTrackCount (int);
+    // Library / reels
+    void showLibrary (bool show);
+    void loadReel (const juce::File& reelFile);
+    void setReel (std::unique_ptr<Reel>, std::unique_ptr<Session>);
+    void saveReel();
+    void saveSessionInfo();
 
     // Tracks / bridge
     void rebuildModules();
@@ -109,7 +108,7 @@ private:
     void locate (juce::int64);
 
     juce::String buildStatus() const;
-    double sessionRate() const { return session != nullptr ? session->sampleRate : 48000.0; }
+    double sessionRate() const { return reel != nullptr ? reel->sampleRate : 48000.0; }
 
     //==========================================================================
     juce::ApplicationProperties& props;
@@ -118,9 +117,10 @@ private:
 
     TapeEngine engine;
     juce::AudioDeviceManager deviceManager;
-    std::unique_ptr<Session> session;
+    std::unique_ptr<Reel> reel;          // the tape on the deck
+    std::unique_ptr<Session> session;    // the session it belongs to
 
-    juce::TextButton newButton { "NEW" }, openButton { "OPEN" }, sheetButton { "SESSION SHEET" },
+    juce::TextButton libraryButton { "LIBRARY" }, sheetButton { "SESSION SHEET" },
                      routingButton { "ROUTING" }, audioButton { "AUDIO SETTINGS" }, updateButton;
     Updater updater;
 
@@ -136,6 +136,7 @@ private:
     MeterBridge bridge;
     VUMeter masterL { "L" }, masterR { "R" };
     MarkerPanel markers;
+    LibraryView library { props };
 
     std::unique_ptr<RoutingWindow> routingWindow;
     std::unique_ptr<SessionSheetWindow> sheetWindow;

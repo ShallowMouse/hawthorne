@@ -50,10 +50,10 @@ TapeEngine::~TapeEngine()
 }
 
 //==============================================================================
-void TapeEngine::setSession (Session* s)
+void TapeEngine::setReel (Reel* s)
 {
     stop();
-    session = s;
+    reel = s;
     position = 0;
     droppedTotal = 0;
     droppedBeforePass = 0;
@@ -302,15 +302,15 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
 
 juce::String TapeEngine::checkCanRoll() const
 {
-    if (session == nullptr)
-        return "No session is open.";
+    if (reel == nullptr)
+        return "No reel is on the deck - load one from the Library.";
 
     if (! deviceRunning)
         return "The audio device is not running.\nOpen Audio Settings and choose a device.";
 
-    if (std::abs (deviceSampleRate.load() - session->sampleRate) > 0.5)
+    if (std::abs (deviceSampleRate.load() - reel->sampleRate) > 0.5)
         return "The audio device is running at " + juce::String (deviceSampleRate.load() / 1000.0, 1)
-             + " kHz but this session is " + juce::String (session->sampleRate / 1000.0, 1)
+             + " kHz but this reel is " + juce::String (reel->sampleRate / 1000.0, 1)
              + " kHz.\nChange the sample rate in Audio Settings.";
 
     return {};
@@ -381,82 +381,53 @@ void TapeEngine::setArmed (int t, bool shouldArm)
 
     armed[(size_t) t] = shouldArm;
 
-    if (session != nullptr)
+    if (reel != nullptr)
     {
-        session->tracks[(size_t) t].armed = shouldArm;
-        saveSession();
+        reel->tracks[(size_t) t].armed = shouldArm;
+        saveReel();
     }
-}
-
-juce::String TapeEngine::setNumTracks (int n)
-{
-    n = juce::jlimit (1, kMaxTracks, n);
-    if (session == nullptr)
-        return "No session is open.";
-    if (recording)
-        return "Stop recording first.";
-
-    juce::StringArray withTape;
-    for (int t = n; t < session->numTracks; ++t)
-        if (session->getTapeFile (t).existsAsFile())
-            withTape.add (juce::String (t + 1));
-
-    if (! withTape.isEmpty())
-        return "Tracks " + withTape.joinIntoString (", ") + " have recordings on them, so they can't be removed.";
-
-    for (int t = n; t < kMaxTracks; ++t)
-    {
-        armed[(size_t) t] = false;
-        session->tracks[(size_t) t].armed = false;
-    }
-
-    session->numTracks = n;
-    numTracks = n;
-    rebuildPlaybackGraph();
-    saveSession();
-    return {};
 }
 
 void TapeEngine::setInput (int t, int ch)
 {
-    if (session == nullptr || ! juce::isPositiveAndBelow (t, numTracks.load()) || (recording && armed[(size_t) t]))
+    if (reel == nullptr || ! juce::isPositiveAndBelow (t, numTracks.load()) || (recording && armed[(size_t) t]))
         return;
 
-    session->tracks[(size_t) t].input = ch;
+    reel->tracks[(size_t) t].input = ch;
     rebuildRouting();
-    saveSession();
+    saveReel();
 }
 
 void TapeEngine::setTrackToMix (int t, bool on)
 {
-    if (session == nullptr || ! juce::isPositiveAndBelow (t, kMaxTracks)) return;
-    session->tracks[(size_t) t].toMix = on;
+    if (reel == nullptr || ! juce::isPositiveAndBelow (t, kMaxTracks)) return;
+    reel->tracks[(size_t) t].toMix = on;
     rebuildRouting();
-    saveSession();
+    saveReel();
 }
 
 void TapeEngine::setTrackOutputs (int t, const ChannelList& outs)
 {
-    if (session == nullptr || ! juce::isPositiveAndBelow (t, kMaxTracks)) return;
-    session->tracks[(size_t) t].outputs = outs;
+    if (reel == nullptr || ! juce::isPositiveAndBelow (t, kMaxTracks)) return;
+    reel->tracks[(size_t) t].outputs = outs;
     rebuildRouting();
-    saveSession();
+    saveReel();
 }
 
 void TapeEngine::setMasterInputs (int side, const ChannelList& ins)
 {
-    if (session == nullptr) return;
-    session->master.inputs[(size_t) (side & 1)] = ins;
+    if (reel == nullptr) return;
+    reel->master.inputs[(size_t) (side & 1)] = ins;
     rebuildRouting();
-    saveSession();
+    saveReel();
 }
 
 void TapeEngine::setMasterOutputs (int side, const ChannelList& outs)
 {
-    if (session == nullptr) return;
-    session->master.outputs[(size_t) (side & 1)] = outs;
+    if (reel == nullptr) return;
+    reel->master.outputs[(size_t) (side & 1)] = outs;
     rebuildRouting();
-    saveSession();
+    saveReel();
 }
 
 void TapeEngine::rebuildRouting()
@@ -465,9 +436,9 @@ void TapeEngine::rebuildRouting()
 
     for (int t = 0; t < kMaxTracks; ++t)
     {
-        if (session != nullptr)
+        if (reel != nullptr)
         {
-            const auto& tr = session->tracks[(size_t) t];
+            const auto& tr = reel->tracks[(size_t) t];
             r->input[(size_t) t] = tr.input;
             r->toMix[(size_t) t] = tr.toMix;
             r->outputs[(size_t) t].assign (tr.outputs.begin(), tr.outputs.end());
@@ -481,9 +452,9 @@ void TapeEngine::rebuildRouting()
 
     for (int side = 0; side < 2; ++side)
     {
-        if (session != nullptr)
+        if (reel != nullptr)
         {
-            const auto& m = session->master;
+            const auto& m = reel->master;
             r->masterIn[(size_t) side].assign (m.inputs[(size_t) side].begin(), m.inputs[(size_t) side].end());
             r->masterOut[(size_t) side].assign (m.outputs[(size_t) side].begin(), m.outputs[(size_t) side].end());
         }
@@ -509,11 +480,11 @@ int TapeEngine::getNumArmedTracks() const noexcept
 
 double TapeEngine::getRecordTimeRemainingSeconds() const
 {
-    if (session == nullptr)
+    if (reel == nullptr)
         return 0.0;
 
-    const auto freeBytes = (double) session->getFolder().getBytesFreeOnVolume();
-    const auto bytesPerSec = (double) juce::jmax (1, getNumArmedTracks()) * session->sampleRate * (session->bitDepth / 8);
+    const auto freeBytes = (double) reel->getFolder().getBytesFreeOnVolume();
+    const auto bytesPerSec = (double) juce::jmax (1, getNumArmedTracks()) * reel->sampleRate * (reel->bitDepth / 8);
     return juce::jmax (0.0, freeBytes - (double) stopRecordingBelowBytes) / bytesPerSec;
 }
 
@@ -532,20 +503,20 @@ juce::String TapeEngine::beginRecordPass()
             continue;
 
         ++numArmed;
-        const int ch = session->tracks[(size_t) t].input;
+        const int ch = reel->tracks[(size_t) t].input;
 
         if (! juce::isPositiveAndBelow (ch, (int) absToActive.size()) || absToActive[(size_t) ch] < 0)
-            return session->tracks[(size_t) t].name + " is armed but has no active input.\n"
+            return reel->tracks[(size_t) t].name + " is armed but has no active input.\n"
                    "Choose an input for it, or enable more inputs in Audio Settings.";
     }
 
     if (numArmed == 0)
         return "No tracks are armed.";
 
-    if (session->getFolder().getBytesFreeOnVolume() < minFreeBytesToRecord)
+    if (reel->getFolder().getBytesFreeOnVolume() < minFreeBytesToRecord)
         return "Not enough free disk space to record safely.\nAt least 500 MB is required.";
 
-    const auto sr = session->sampleRate;
+    const auto sr = reel->sampleRate;
     // 20 s of buffer per track, less when very many tracks are armed (keeps RAM sane at 96 tracks).
     const double secs = juce::jlimit (5.0, fifoSeconds, fifoBudgetBytes / ((double) numArmed * sr * sizeof (float)));
     const int fifoSize = fifoSizeOverride > 0 ? fifoSizeOverride : (int) (sr * secs);
@@ -559,7 +530,7 @@ juce::String TapeEngine::beginRecordPass()
         if (! armed[(size_t) t])
             continue;
 
-        const auto file = session->getTapeFile (t);
+        const auto file = reel->getTapeFile (t);
         juce::String err;
 
         if (! file.existsAsFile() && ! TapeFile::createEmpty (file, sr, err))
@@ -613,7 +584,7 @@ void TapeEngine::endRecordPass()
         diskThread.remove (s.get());
 
         if (! s->finish())
-            problems.add (session->tracks[(size_t) t].name + ": writing to tape failed");
+            problems.add (reel->tracks[(size_t) t].name + ": writing to tape failed");
 
         droppedThisPass += s->getDroppedSamples();
         passLength = juce::jmax (passLength, s->getTimelineLength());
@@ -625,7 +596,7 @@ void TapeEngine::endRecordPass()
 
     // Every recorded track is kept the length of the reel (silence where unrecorded).
     juce::String padError;
-    for (auto t : session->equaliseTapeLengths (padError))
+    for (auto t : reel->equaliseTapeLengths (padError))
         ++tapeGeneration[(size_t) t];
     if (padError.isNotEmpty())
         problems.add (padError);
@@ -634,8 +605,8 @@ void TapeEngine::endRecordPass()
     if (const auto startPos = p->startPos.load(); startPos >= 0 && passLength > 0)
     {
         TakeEntry e;
-        e.take   = session->nextTake++;
-        e.when   = (juce::Time::getCurrentTime() - juce::RelativeTime::seconds ((double) passLength / session->sampleRate))
+        e.take   = reel->nextTake++;
+        e.when   = (juce::Time::getCurrentTime() - juce::RelativeTime::seconds ((double) passLength / reel->sampleRate))
                        .formatted ("%d %b %Y  %H:%M");
         e.start  = juce::jmax ((juce::int64) 0, startPos - p->latency);
         e.end    = startPos - p->latency + passLength;
@@ -651,7 +622,7 @@ void TapeEngine::endRecordPass()
             i = j + 1;
         }
         e.tracks = parts.joinIntoString (", ");
-        session->takeLog.push_back (e);
+        reel->takeLog.push_back (e);
 
         if (onTakeLogged)
             onTakeLogged (e);
@@ -660,12 +631,12 @@ void TapeEngine::endRecordPass()
     if (! released)
         graveyard.push_back (std::shared_ptr<void> (p.release(), [] (void* x) { delete static_cast<RecordPass*> (x); }));
 
-    saveSession();
+    saveReel();
     rebuildPlaybackGraph();
 
-    if (droppedThisPass > 0 && session != nullptr)
+    if (droppedThisPass > 0 && reel != nullptr)
         alert ("Disk could not keep up",
-               juce::String ((double) droppedThisPass / session->sampleRate * 1000.0, 0)
+               juce::String ((double) droppedThisPass / reel->sampleRate * 1000.0, 0)
                + " ms of audio was recorded as silence.\n"
                  "Timing is preserved, but use a faster drive or close other programs.");
 
@@ -690,7 +661,7 @@ std::shared_ptr<juce::BufferingAudioReader> TapeEngine::getReader (const juce::F
     if (source == nullptr)
         return nullptr;
 
-    const auto sr = session != nullptr ? session->sampleRate : 48000.0;
+    const auto sr = reel != nullptr ? reel->sampleRate : 48000.0;
     auto reader = std::make_shared<juce::BufferingAudioReader> (source, prefetchThread, (int) juce::jmax (65536.0, sr * 2.0));
     reader->setReadTimeout (0); // never block the audio thread
     readerCache[key] = reader;
@@ -705,11 +676,11 @@ void TapeEngine::rebuildPlaybackGraph()
     auto g = std::make_unique<PlaybackGraph>();
     std::vector<Segment> fresh;
 
-    if (session != nullptr)
+    if (reel != nullptr)
     {
-        for (int t = 0; t < session->numTracks; ++t)
+        for (int t = 0; t < reel->numTracks; ++t)
         {
-            const auto file = session->getTapeFile (t);
+            const auto file = reel->getTapeFile (t);
             if (! file.existsAsFile())
                 continue;
 
@@ -731,7 +702,7 @@ void TapeEngine::rebuildPlaybackGraph()
 
     // Prime new readers before the audio thread can see them.
     const auto pos = position.load();
-    const auto window = (juce::int64) ((session != nullptr ? session->sampleRate : 48000.0) * 0.5);
+    const auto window = (juce::int64) ((reel != nullptr ? reel->sampleRate : 48000.0) * 0.5);
     for (auto& seg : fresh)
         primeSegment (seg, pos, seg.end > pos && seg.start < pos + window);
 
@@ -781,10 +752,10 @@ void TapeEngine::primeSegment (const Segment& seg, juce::int64 pos, bool waitUnt
 void TapeEngine::primeReaders (juce::int64 pos)
 {
     // Only called while stopped, so the audio thread is not reading.
-    if (ownedGraph == nullptr || session == nullptr)
+    if (ownedGraph == nullptr || reel == nullptr)
         return;
 
-    const auto window = (juce::int64) (session->sampleRate * 0.5);
+    const auto window = (juce::int64) (reel->sampleRate * 0.5);
 
     for (auto& segs : ownedGraph->tracks)
         for (auto& seg : segs)
@@ -834,16 +805,16 @@ void TapeEngine::alert (const juce::String& title, const juce::String& msg)
         onAlert (title, msg);
 }
 
-bool TapeEngine::saveSession()
+bool TapeEngine::saveReel()
 {
-    if (session == nullptr)
+    if (reel == nullptr)
         return false;
 
     juce::String err;
-    if (session->save (err))
+    if (reel->save (err))
         return true;
 
-    alert ("Could not save session", err);
+    alert ("Could not save the reel", err);
     return false;
 }
 
@@ -896,7 +867,7 @@ void TapeEngine::tick()
 
     static int freeCheckCounter = 0;
     if (++freeCheckCounter % 10 == 0
-        && session->getFolder().getBytesFreeOnVolume() < stopRecordingBelowBytes)
+        && reel->getFolder().getBytesFreeOnVolume() < stopRecordingBelowBytes)
     {
         punchOut();
         alert ("Disk almost full", "Recording was stopped because the disk is nearly full.\n"

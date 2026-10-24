@@ -2,7 +2,7 @@
 
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_formats/juce_audio_formats.h>
-#include "Session.h"
+#include "Reel.h"
 #include "RecordingStream.h"
 #include <map>
 
@@ -28,8 +28,8 @@ public:
     ~TapeEngine() override;
 
     //==========================================================================
-    void setSession (Session*);
-    Session* getSession() const noexcept { return session; }
+    void setReel (Reel*);
+    Reel* getReel() const noexcept { return reel; }
 
     //==========================================================================
     // Transport. Return an empty string on success, or a user-facing error.
@@ -50,10 +50,8 @@ public:
     void setInput (int track, int absoluteInputChannel);
 
     int getNumTracks() const noexcept { return numTracks.load(); }
-    /** Change the session's track count (not while recording). */
-    juce::String setNumTracks (int);
 
-    // Routing (swapped in atomically for the audio thread; saved with the session)
+    // Routing (swapped in atomically for the audio thread; saved with the reel)
     void setTrackToMix (int track, bool);
     void setTrackOutputs (int track, const ChannelList& deviceOutputs);
     void setMasterInputs (int side, const ChannelList& deviceInputs);    // side 0 = L, 1 = R
@@ -78,7 +76,7 @@ public:
     juce::StringArray getInputChannelNames() const  { return inputNames; }
     juce::StringArray getOutputChannelNames() const { return outputNames; }
     int getNumArmedTracks() const noexcept;
-    /** Seconds of recording possible on the session's disk with the armed tracks. */
+    /** Seconds of recording possible on the reel's disk with the armed tracks. */
     double getRecordTimeRemainingSeconds() const;
     /** Length of a track's tape in samples (0 = blank). Message thread. */
     juce::int64 getTapeLength (int track) const;
@@ -168,10 +166,10 @@ private:
     std::shared_ptr<juce::BufferingAudioReader> getReader (const juce::File&, const juce::String& key, bool& isNew);
     void primeSegment (const Segment&, juce::int64 pos, bool waitUntilLoaded);
     void alert (const juce::String& title, const juce::String& msg);
-    bool saveSession();
+    bool saveReel();
 
     //==========================================================================
-    Session* session = nullptr;
+    Reel* reel = nullptr;
     juce::AudioFormatManager formatManager;
     juce::TimeSliceThread prefetchThread { "Hawthorne Playback Prefetch" };
     DiskWriterThread diskThread;
