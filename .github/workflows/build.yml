@@ -80,29 +80,24 @@ jobs:
           done
           exit $status
 
-      - name: Patch version into NSIS script
+      - name: Build installer (Inno Setup)
         shell: pwsh
         run: |
           $ver = "${{ steps.version.outputs.ver }}"
-          (Get-Content installer/hawthorne.nsi) `
-            -replace '!define APP_VERSION.*', "!define APP_VERSION `"$ver`"" |
-            Set-Content installer/hawthorne.nsi
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          & $iscc "/DAppVersion=$ver" installer\Hawthorne.iss *>&1 | Tee-Object -FilePath iscc.log
+          if ($LASTEXITCODE -ne 0) {
+            $msg = (Get-Content iscc.log -Tail 40) -join "%0A"; Write-Output "::error title=installer::$msg"
+            exit 1
+          }
+          Get-ChildItem dist
 
-      - name: Install NSIS
-        run: choco install nsis -y --no-progress
-
-      - name: Build installer
+      - name: Release notes (first line = what the in-app updater shows)
         shell: bash
-        run: |
-          "/c/Program Files (x86)/NSIS/makensis.exe" installer/hawthorne.nsi
+        run: git log -1 --pretty=%s > notes.md
 
-      - name: Rename installer with version
-        shell: bash
-        run: |
-          mv installer/Hawthorne-Setup-${{ steps.version.outputs.ver }}.exe \
-             Hawthorne-Setup-${{ steps.version.outputs.ver }}.exe
-
-      # ── Push installer to the public releases repo ──────────────────────────
+      # Push installer to the public releases repo
       - name: Publish to Hawthorne-Releases
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
         uses: ncipollo/release-action@v1
@@ -112,15 +107,8 @@ jobs:
           owner: ShallowMouse
           tag: ${{ steps.version.outputs.tag }}
           name: Hawthorne ${{ steps.version.outputs.ver }}
-          body: |
-            ## Hawthorne ${{ steps.version.outputs.ver }}
-
-            ### Install
-            Download `Hawthorne-Setup-${{ steps.version.outputs.ver }}.exe` and run it.
-
-            ### Changes
-            <!-- Add release notes here -->
-          artifacts: Hawthorne-Setup-${{ steps.version.outputs.ver }}.exe
+          bodyFile: notes.md
+          artifacts: dist/Hawthorne-Setup-${{ steps.version.outputs.ver }}.exe
           artifactContentType: application/octet-stream
           allowUpdates: true
           draft: false

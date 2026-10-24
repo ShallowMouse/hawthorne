@@ -120,6 +120,18 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
 
     engine.onAlert = [this] (const juce::String& t, const juce::String& m) { showAlert (t, m); };
 
+    // Updates: checked in the background every time Hawthorne starts (like PEQUOD Host)
+    updateButton.setColour (juce::TextButton::buttonColourId, Colours::mustard);
+    updateButton.setColour (juce::TextButton::textColourOffId, Colours::black);
+    updateButton.setWantsKeyboardFocus (false);
+    updateButton.onClick = [this] { confirmUpdate(); };
+    addChildComponent (updateButton);
+    updater.onChange = [this] { refreshUpdateButton(); };
+    updater.onStatus = [this] (const juce::String& s) { showAlert ("Update", s); };
+   #if JUCE_WINDOWS
+    updater.checkSoon();
+   #endif
+
     initialiseAudio();
     openInitialSession();
 
@@ -329,6 +341,45 @@ void MainComponent::openSession()
     });
 }
 
+void MainComponent::refreshUpdateButton()
+{
+    const bool show = updater.isUpdateAvailable();
+    const auto version = updater.getLatestVersion();
+    updateButton.setButtonText (updater.isDownloading()
+                                    ? "DOWNLOADING " + juce::String (juce::roundToInt (updater.getProgress() * 100.0f)) + "%"
+                                    : "UPDATE " + version);
+    updateButton.setTooltip ("Hawthorne " + version + " is available. Click to download and install it - Hawthorne restarts by itself.");
+    updateButton.setEnabled (! updater.isDownloading());
+
+    if (show != updateButton.isVisible())
+    {
+        updateButton.setVisible (show);
+        resized();
+    }
+}
+
+void MainComponent::confirmUpdate()
+{
+    if (engine.isRecording())
+    {
+        showAlert ("Update", "Stop recording first - Hawthorne restarts to install the update.");
+        return;
+    }
+
+    const auto notes = updater.getReleaseNotes();
+    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::NoIcon, "Hawthorne " + updater.getLatestVersion(),
+        notes.isNotEmpty() ? "What's new:\n\n" + notes : juce::String ("A new version is ready."),
+        "Install", "Later", this,
+        juce::ModalCallbackFunction::create ([this] (int r)
+        {
+            if (r != 1 || engine.isRecording())
+                return;
+
+            engine.stop();          // tape is safe on disk before Hawthorne closes
+            updater.install();
+        }));
+}
+
 void MainComponent::showAlert (const juce::String& title, const juce::String& message)
 {
     juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, title, message, "OK", this);
@@ -352,6 +403,12 @@ void MainComponent::doStop()
 
 void MainComponent::doRecord()
 {
+    if (updater.isDownloading())
+    {
+        showAlert ("Cannot record", "An update is downloading - Hawthorne will restart when it's ready.");
+        return;
+    }
+
     if (engine.isRecording())
     {
         engine.punchOut();
@@ -549,6 +606,12 @@ void MainComponent::resized()
         openButton.setBounds (h.removeFromRight (90));
         h.removeFromRight (8);
         newButton.setBounds (h.removeFromRight (90));
+
+        if (updateButton.isVisible())
+        {
+            h.removeFromRight (16);
+            updateButton.setBounds (h.removeFromRight (170));
+        }
     }
 
     statusArea = r.removeFromBottom (26);

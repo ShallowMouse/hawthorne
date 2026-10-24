@@ -5,6 +5,7 @@
 #include "HawthorneLookAndFeel.h"
 #include "TrackStrip.h"
 #include "VUMeter.h"
+#include "../Updater.h"
 
 namespace hawthorne
 {
@@ -53,6 +54,8 @@ private:
     void matchDeviceToSession();
     void refreshInputChoices();
     void showAlert (const juce::String& title, const juce::String& message);
+    void refreshUpdateButton();
+    void confirmUpdate();
 
     void doPlay();
     void doStop();
@@ -72,7 +75,8 @@ private:
     juce::AudioDeviceManager deviceManager;
     std::unique_ptr<Session> session;
 
-    juce::TextButton newButton { "NEW" }, openButton { "OPEN" }, audioButton { "AUDIO SETTINGS" };
+    juce::TextButton newButton { "NEW" }, openButton { "OPEN" }, audioButton { "AUDIO SETTINGS" }, updateButton;
+    Updater updater;
     TransportButton rtzButton  { TransportButton::Icon::rtz,     "Return to zero (Enter)" },
                     rewButton  { TransportButton::Icon::rewind,  "Back 5 seconds (Left)" },
                     ffwButton  { TransportButton::Icon::forward, "Forward 5 seconds (Right)" },

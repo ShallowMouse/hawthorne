@@ -1,6 +1,5 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "UI/MainComponent.h"
-#include "UpdateChecker.h"
 
 #ifndef HAWTHORNE_VERSION
  #define HAWTHORNE_VERSION "1.0.0"
@@ -53,9 +52,6 @@ public:
         properties.setStorageParameters (o);
 
         mainWindow = std::make_unique<MainWindow> (properties);
-
-        updater = std::make_unique<UpdateChecker>();
-        updater->checkAsync();
     }
 
     void shutdown() override
@@ -63,7 +59,6 @@ public:
         if (mainWindow != nullptr)
             mainWindow->shutdown();   // finalise any take before anything else goes
 
-        updater = nullptr;
         mainWindow = nullptr;
         properties.closeFiles();
     }
@@ -74,7 +69,6 @@ public:
 private:
     juce::ApplicationProperties properties;
     std::unique_ptr<MainWindow> mainWindow;
-    std::unique_ptr<UpdateChecker> updater;
 };
 
 START_JUCE_APPLICATION (HawthorneApp)

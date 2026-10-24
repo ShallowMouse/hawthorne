@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(Hawthorne VERSION 1.2.0)
+project(Hawthorne VERSION 1.3.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -39,7 +39,8 @@ if(HAWTHORNE_BUILD_APP)
     target_sources(Hawthorne PRIVATE
         ${ENGINE_SOURCES}
         Source/Main.cpp
-        Source/UpdateChecker.h
+        Source/Updater.h
+        Source/Updater.cpp
         Source/UI/HawthorneLookAndFeel.h
         Source/UI/TrackStrip.h
         Source/UI/TrackStrip.cpp
