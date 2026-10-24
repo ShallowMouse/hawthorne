@@ -107,6 +107,8 @@ private:
     juce::String latencyKey() const;
     void applyStoredLatency();
 
+    void toggleFullScreen();
+
     // Network (Hawthorne Link)
     void showNetwork();
     void loadNetworkSettings();
@@ -163,7 +165,8 @@ private:
     juce::TextButton masterButton;
     TransportKey masterArmKey { "ARM",  "Arm the master: record the mix onto this reel, in step with the tracks", Colours::red },
                  monitorKey   { "TAPE", "Master monitoring: hear the master tape instead of the live mix",       Colours::mustard };
-    juce::Rectangle<int> masterLabelArea;
+    juce::Rectangle<int> masterLabelArea, masterPanelArea;
+    juce::TextButton fullScreenButton { "FULL SCREEN" };
 
     TransportKey ips7Key  { juce::String (juce::CharPointer_UTF8 ("7\xc2\xbd")), juce::String (juce::CharPointer_UTF8 ("Deck speed 7\xc2\xbd ips")), Colours::mustard },
                  ips15Key { "15",   "Deck speed 15 ips",  Colours::mustard },

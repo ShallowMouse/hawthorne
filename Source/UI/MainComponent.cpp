@@ -97,6 +97,10 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     sheetButton.onClick   = [this] { showSheet(); };
     routingButton.onClick = [this] { showRouting(); };
     networkButton.onClick = [this] { showNetwork(); };
+    fullScreenButton.onClick = [this] { toggleFullScreen(); };
+    fullScreenButton.setTooltip ("Full screen (F11)");
+    fullScreenButton.setWantsKeyboardFocus (false);
+    addAndMakeVisible (fullScreenButton);
     networkButton.setTooltip ("Hawthorne Link: record audio sent from other PCs");
     audioButton.onClick   = [this] { showAudioSettings(); };
 
@@ -772,6 +776,21 @@ void MainComponent::exportMaster (juce::int64 start, juce::int64 end, const juce
 }
 
 //==============================================================================
+void MainComponent::toggleFullScreen()
+{
+    auto& desktop = juce::Desktop::getInstance();
+    auto* top = getTopLevelComponent();
+    if (desktop.getKioskModeComponent() != nullptr)
+        desktop.setKioskModeComponent (nullptr);
+    else if (top != nullptr)
+        desktop.setKioskModeComponent (top, false);
+
+    const bool full = desktop.getKioskModeComponent() != nullptr;
+    fullScreenButton.setButtonText (full ? "EXIT FULL SCREEN" : "FULL SCREEN");
+    fullScreenButton.setTooltip (full ? "Leave full screen (F11 / Esc)" : "Full screen (F11)");
+}
+
+//==============================================================================
 // Network (Hawthorne Link)
 
 void MainComponent::showNetwork()
@@ -992,6 +1011,13 @@ void MainComponent::nudge (double seconds)
 
 bool MainComponent::keyPressed (const juce::KeyPress& k)
 {
+    if (k == juce::KeyPress::F11Key
+        || (k == juce::KeyPress::escapeKey && juce::Desktop::getInstance().getKioskModeComponent() != nullptr))
+    {
+        toggleFullScreen();
+        return true;
+    }
+
     if (library.isVisible())
         return false;
 
@@ -1172,8 +1198,14 @@ void MainComponent::paint (juce::Graphics& g)
         g.drawText ("SPEED", speedLabelArea, juce::Justification::centredLeft);
     }
 
-    g.setColour (Colours::textDim);
-    g.setFont (monoFont (10.0f, true));
+    // Master section (top of the sidebar)
+    g.setColour (Colours::panel);
+    g.fillRect (masterPanelArea);
+    g.setColour (Colours::edge);
+    g.drawVerticalLine (masterPanelArea.getX(), (float) masterPanelArea.getY(), (float) masterPanelArea.getBottom());
+    g.drawHorizontalLine (masterPanelArea.getBottom() - 1, (float) masterPanelArea.getX(), (float) masterPanelArea.getRight());
+    g.setColour (Colours::mustard);
+    g.setFont (monoFont (15.0f, true));
     g.drawText ("MASTER", masterLabelArea, juce::Justification::centredLeft);
 
     // Status bar
@@ -1192,6 +1224,8 @@ void MainComponent::resized()
     headerArea = r.removeFromTop (48);
     {
         auto h = headerArea.reduced (12, 9);
+        fullScreenButton.setBounds (h.removeFromRight (150));
+        h.removeFromRight (8);
         audioButton.setBounds (h.removeFromRight (140));
         h.removeFromRight (8);
         networkButton.setBounds (h.removeFromRight (100));
@@ -1215,23 +1249,6 @@ void MainComponent::resized()
     deckArea = r.removeFromBottom (84);
     {
         auto d = deckArea.reduced (14, 9);
-
-        // master VUs on the right
-        const int vuH = d.getHeight();
-        const int vuW = (int) ((float) vuH * ChannelModule::meterAspect);
-        masterR.setBounds (d.removeFromRight (vuW));
-        d.removeFromRight (6);
-        masterL.setBounds (d.removeFromRight (vuW));
-        d.removeFromRight (12);
-
-        auto ms = d.removeFromRight (200);
-        masterLabelArea = ms.removeFromTop (14);
-        masterButton.setBounds (ms.removeFromTop (24));
-        ms.removeFromTop (4);
-        masterArmKey.setBounds (ms.removeFromLeft (97));
-        ms.removeFromLeft (6);
-        monitorKey.setBounds (ms);
-        d.removeFromRight (16);
 
         const bool compact = getWidth() < 1700;
         counterArea = d.removeFromLeft (compact ? 180 : 250).reduced (0, 4);
@@ -1268,8 +1285,28 @@ void MainComponent::resized()
         reelInfoArea = d;
     }
 
-    // Markers sidebar on the right
-    markers.setBounds (r.removeFromRight (300));
+    // Sidebar on the right: master section on top, markers below
+    auto sidebar = r.removeFromRight (300);
+    {
+        auto ms = sidebar.removeFromTop (204);
+        masterPanelArea = ms;
+        ms = ms.reduced (12, 8).withTrimmedLeft (1);
+        masterLabelArea = ms.removeFromTop (18);
+        ms.removeFromTop (4);
+        auto controls = ms.removeFromBottom (26);
+        ms.removeFromBottom (6);
+        masterButton.setBounds (ms.removeFromBottom (26));
+        ms.removeFromBottom (8);
+        const int vuW = (ms.getWidth() - 8) / 2;
+        const int vuH = juce::jmin (ms.getHeight(), (int) ((float) vuW / ChannelModule::meterAspect));
+        auto vus = ms.withSizeKeepingCentre (ms.getWidth(), vuH);
+        masterL.setBounds (vus.removeFromLeft (vuW));
+        masterR.setBounds (vus.removeFromRight (vuW));
+        masterArmKey.setBounds (controls.removeFromLeft ((controls.getWidth() - 6) / 2));
+        controls.removeFromLeft (6);
+        monitorKey.setBounds (controls);
+    }
+    markers.setBounds (sidebar);
 
     bridgeView.setBounds (r);
     layoutBridge();
