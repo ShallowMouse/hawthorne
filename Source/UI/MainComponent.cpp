@@ -135,7 +135,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     initialiseAudio();
     openInitialSession();
 
-    setSize (1500, 500);
+    setSize (1500, 720);
     startTimerHz (30);
 }
 
@@ -647,30 +647,32 @@ void MainComponent::resized()
         strips[t]->setBounds (x0, tracks.getY(), x1 - x0, tracks.getHeight());
     }
 
-    // Meter bridge: rows of 16 analogue VUs. Row 2 = tracks 17-24, master L/R at the right.
+    // Meter bridge: 3 rows of 8 analogue VUs (tracks 1-8, 9-16, 17-24),
+    // master L/R in their own column on the right.
     bridgeArea = r;
-    auto bridge = r.reduced (8, 8);
-    constexpr int perRow = 16;
-    constexpr float aspect = 1.3f, gap = 4.0f;
-    const float slotW = (float) bridge.getWidth() / (float) perRow;
-    const float meterH = juce::jmin ((slotW - gap) / aspect, ((float) bridge.getHeight() - gap) / 2.0f);
-    const float meterW = juce::jmin (slotW - gap, meterH * aspect);
-    const float totalH = meterH * 2.0f + gap;
-    const float x0 = (float) bridge.getX() + ((float) bridge.getWidth() - slotW * perRow) * 0.5f;
-    const float y0 = (float) bridge.getY() + ((float) bridge.getHeight() - totalH) * 0.5f;
+    auto bridge = r.reduced (10, 8);
+    constexpr int perRow = 8, rows = 3;
+    constexpr float aspect = 1.3f, gap = 6.0f, masterGap = 0.35f;   // gap before master column, in slots
+    constexpr float slots = (float) perRow + masterGap + 1.0f;
 
-    auto place = [&] (VUMeter* m, int row, int slot)
+    const float pitchFromWidth = (float) bridge.getWidth() / slots;
+    const float meterH = juce::jmin ((pitchFromWidth - gap) / aspect,
+                                     ((float) bridge.getHeight() - gap * (rows - 1)) / (float) rows);
+    const float meterW = meterH * aspect;
+    const float pitchX = meterW + gap, pitchY = meterH + gap;
+    const float x0 = (float) bridge.getX() + ((float) bridge.getWidth() - pitchX * slots) * 0.5f;
+    const float y0 = (float) bridge.getY() + ((float) bridge.getHeight() - (pitchY * rows - gap)) * 0.5f;
+
+    auto place = [&] (VUMeter* m, float col, float row)
     {
-        const float cx = x0 + slotW * ((float) slot + 0.5f);
-        const float y  = y0 + (float) row * (meterH + gap);
-        m->setBounds (juce::Rectangle<float> (meterW, meterH).withCentre ({ cx, y + meterH * 0.5f }).toNearestInt());
+        m->setBounds (juce::Rectangle<float> (x0 + col * pitchX, y0 + row * pitchY, meterW, meterH).toNearestInt());
     };
 
     for (int t = 0; t < kNumTracks; ++t)
-        place (vus[t], t / perRow, t % perRow);
+        place (vus[t], (float) (t % perRow), (float) (t / perRow));
 
-    place (vus[kNumTracks],     1, perRow - 2);
-    place (vus[kNumTracks + 1], 1, perRow - 1);
+    place (vus[kNumTracks],     perRow + masterGap, 0.5f);
+    place (vus[kNumTracks + 1], perRow + masterGap, 1.5f);
 }
 
 } // namespace hawthorne
