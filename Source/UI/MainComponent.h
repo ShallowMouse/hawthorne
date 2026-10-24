@@ -89,6 +89,18 @@ private:
     void addMarker();
     void jumpToMarker (int direction);
 
+    // Masters
+    void showMasterMenu();
+    void newMaster();
+    void renameMaster();
+    void deleteMaster();
+    void exportMaster (juce::int64 start, juce::int64 end, const juce::String& suggestedName);
+    void refreshMasterSection();
+
+    // Latency (measured values are kept per audio device)
+    juce::String latencyKey() const;
+    void applyStoredLatency();
+
     // Windows
     void showRouting();
     void updateRoutingDevice();
@@ -135,6 +147,10 @@ private:
     juce::Viewport bridgeView;
     MeterBridge bridge;
     VUMeter masterL { "L" }, masterR { "R" };
+    juce::TextButton masterButton;
+    TransportKey masterArmKey { "ARM",  "Arm the master: record the mix onto this reel, in step with the tracks", Colours::red },
+                 monitorKey   { "TAPE", "Master monitoring: hear the master tape instead of the live mix",       Colours::mustard };
+    juce::Rectangle<int> masterLabelArea;
     MarkerPanel markers;
     LibraryView library { props };
 

@@ -427,7 +427,7 @@ static void testRouting()
     e.setMasterInputs (0, ChannelList { 23 });               // input 24 summed into master L
     e.setMasterOutputs (1, ChannelList { 1, 3 });            // master R -> outs 2 and 4
 
-    const int n = 256;
+    const int n = 1024;
     juce::AudioBuffer<float> in (kDefaultTracks, n), out (4, n);
     for (int t = 0; t < kDefaultTracks; ++t)
         for (int k = 0; k < n; ++k)
@@ -438,7 +438,9 @@ static void testRouting()
     int64 wrong = 0;
     for (int k = 0; k < n; ++k)
     {
-        const float mix = in.getSample (0, k) + in.getSample (1, k);
+        // With an input patched to the master, the internal mix waits one
+        // round trip so the returns line up with it.
+        const float mix = k < kLat ? 0.0f : in.getSample (0, k - kLat) + in.getSample (1, k - kLat);
         const float expect[4] = { mix + in.getSample (23, k), mix, in.getSample (2, k), mix };
         for (int o = 0; o < 4; ++o)
             if (std::abs (out.getSample (o, k) - expect[o]) > 1.0e-6f && wrong++ < 4)
@@ -652,6 +654,174 @@ static void testLibrary()
     std::printf ("    2 sessions, 3 reels; old session became Reel 01 with its audio; archive works\n");
 }
 
+
+//==============================================================================
+// A device whose outputs 3/4 are patched back into inputs 23/24 through D
+// samples of "outboard" delay. Inputs 1-2 carry the clock code.
+struct LoopbackDevice : juce::Thread
+{
+    LoopbackDevice (TapeEngine& e, int delaySamples) : juce::Thread ("Loopback"), engine (e), D (delaySamples) {}
+    ~LoopbackDevice() override { stopThread (5000); }
+
+    void run() override
+    {
+        constexpr int n = 256, numIn = kDefaultTracks;
+        juce::AudioBuffer<float> in (numIn, n), out (4, n);
+        const double t0 = juce::Time::getMillisecondCounterHiRes();
+        int64 clock = 0;
+
+        while (! threadShouldExit())
+        {
+            in.clear();
+            for (int k = 0; k < n; ++k)
+            {
+                in.setSample (0, k, encode (0, clock + k));
+                in.setSample (1, k, encode (1, clock + k) * 0.5f);
+                const int64 back = clock + k - D;
+                if (back >= 0)
+                {
+                    in.setSample (22, k, hist[0][(size_t) back]);
+                    in.setSample (23, k, hist[1][(size_t) back]);
+                }
+            }
+
+            engine.process (in.getArrayOfReadPointers(), numIn, out.getArrayOfWritePointers(), 4, n);
+
+            for (int k = 0; k < n; ++k)
+            {
+                hist[0].push_back (out.getSample (2, k));
+                hist[1].push_back (out.getSample (3, k));
+            }
+            clock += n;
+
+            const double due = t0 + (double) clock / kSR * 1000.0 / testSpeed();
+            const double now = juce::Time::getMillisecondCounterHiRes();
+            if (due > now) juce::Thread::sleep ((int) (due - now));
+        }
+    }
+
+    TapeEngine& engine;
+    const int D;
+    std::array<std::vector<float>, 2> hist;
+};
+
+static Tape readFile (const juce::File& f)
+{
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (f));
+    if (r == nullptr) return {};
+    juce::AudioBuffer<float> b (1, (int) r->lengthInSamples);
+    r->read (&b, 0, (int) r->lengthInSamples, 0, true, false);
+    return Tape (b.getReadPointer (0), b.getReadPointer (0) + b.getNumSamples());
+}
+
+/** Master L must be track1 + track2, sample for sample, wherever it was recorded. */
+static void checkMasterAligned (const Reel& reel, int m, const char* what)
+{
+    const auto t1 = readTape (reel, 0), t2 = readTape (reel, 1);
+    const auto ml = readFile (reel.getMasterFile (m, 0));
+    int64 matched = 0, wrong = 0;
+    for (size_t k = 0; k < ml.size() && k < t1.size() && k < t2.size(); ++k)
+    {
+        if (ml[k] == 0.0f) continue;
+        if (std::abs (ml[k] - (t1[k] + t2[k])) < 1.0e-5f) ++matched;
+        else if (wrong++ < 3)
+            std::printf ("    %s @%lld: master %.6f, tracks %.6f (track 1 here is clock %lld)\n", what, (long long) k,
+                         ml[k], t1[k] + t2[k], (long long) decode (0, t1[k]));
+    }
+    CHECK (wrong == 0 && matched > (int64) kSR, "%s: %lld aligned, %lld wrong", what, (long long) matched, (long long) wrong);
+    if (wrong == 0) std::printf ("    %s: %lld samples sample-exact with the tracks\n", what, (long long) matched);
+}
+
+static void testMasters()
+{
+    std::printf ("[13] masters on the reel: internal mix, outboard insert, console returns, ping\n");
+    juce::String err;
+    auto reel = Reel::create (makeTempDir ("masters"), "Masters", kSR, kDefaultTracks, err);
+    if (reel == nullptr) { CHECK (false, "%s", err.toRawUTF8()); return; }
+
+    constexpr int D = 777;   // outboard + converters
+    TapeEngine e;
+    e.setReel (reel.get());
+    prepareEngine (e, 256);
+    for (int t = 0; t < kDefaultTracks; ++t) { e.setTrackToMix (t, t < 2); e.setTrackOutputs (t, {}); }
+    e.setMasterOutputs (0, ChannelList { 0 });
+    e.setMasterOutputs (1, ChannelList { 1 });
+
+    LoopbackDevice dev (e, D);
+    dev.startThread();
+
+    // Ping through the loop
+    for (int run = 0; run < 3; ++run)
+    {
+        e.startPing (2, 22);
+        for (int i = 0; i < 200 && e.getPingState() == TapeEngine::PingState::running; ++i) juce::Thread::sleep (5);
+        CHECK (e.getPingState() == TapeEngine::PingState::done && e.getPingResult() == D,
+               "ping: state %d, measured %d, expected %d", (int) e.getPingState(), e.getPingResult(), D);
+    }
+    std::printf ("    ping measured %d samples (loop is %d)\n", e.getPingResult(), D);
+    e.setMeasuredRoundTrip (D);
+
+    // Two tracks of clock code
+    e.setArmed (0, true); e.setArmed (1, true);
+    CHECK (e.record().isEmpty(), "record tracks");
+    pump (e, (int) (3000 / testSpeed()));
+    e.stop();
+    e.setArmed (0, false); e.setArmed (1, false);
+
+    auto recordMaster = [&] (const char* name)
+    {
+        e.locate (0);
+        const int m = reel->addMaster (name);
+        e.mastersChanged();
+        e.setActiveMaster (m);
+        e.setMasterArmed (true);
+        CHECK (e.isMasterArmed(), "master arm");
+        auto r = e.record();
+        CHECK (r.isEmpty(), "record master: %s", r.toRawUTF8());
+        pump (e, (int) (2000 / testSpeed()));
+        e.stop();
+        e.setMasterArmed (false);
+        return m;
+    };
+
+    // 1. Internal mix only
+    checkMasterAligned (*reel, recordMaster ("Mix A"), "internal mix");
+
+    // 2. Insert: mix out of 3/4 through the outboard, back on 23/24
+    e.setMasterInsert (true, { 2, 3 }, { 22, 23 });
+    CHECK (e.getMasterBusLatency() == D, "insert latency %d", e.getMasterBusLatency());
+    checkMasterAligned (*reel, recordMaster ("Mix B"), "insert");
+    e.setMasterInsert (false, { -1, -1 }, { -1, -1 });
+
+    // 3. Console returns: track 1 leaves the internal mix, goes out of 3,
+    //    through a console, and comes back on master input 23.
+    e.setTrackToMix (0, false);
+    e.setTrackOutputs (0, ChannelList { 2 });
+    e.setMasterInputs (0, ChannelList { 22 });
+    e.setMasterInputs (1, {});
+    CHECK (e.getMasterBusLatency() == D, "returns latency %d", e.getMasterBusLatency());
+    checkMasterAligned (*reel, recordMaster ("Mix C"), "console returns");
+
+    dev.stopThread (5000);
+
+    // Every tape on the reel is the same length, and the masters reload.
+    juce::String lerr;
+    auto reloaded = Reel::load (reel->getFile(), lerr);
+    CHECK (reloaded != nullptr && reloaded->masters.size() == 3, "masters not saved");
+    if (reloaded != nullptr)
+    {
+        const auto len = readFile (reloaded->getMasterFile (0, 0)).size();
+        bool same = len > 0;
+        for (auto& f : reloaded->getAllTapeFiles()) same = same && readFile (f).size() == len;
+        CHECK (same, "tape lengths differ");
+        CHECK (reloaded->takeLog.back().tracks == "Mix C", "take log '%s'", reloaded->takeLog.back().tracks.toRawUTF8());
+        std::printf ("    3 masters saved, all %d tape files the same length\n", reloaded->getAllTapeFiles().size());
+    }
+    e.setReel (nullptr);
+}
+
 //==============================================================================
 int main()
 {
@@ -664,6 +834,7 @@ int main()
     testEqualLengthsAndPaperwork();
     test96Tracks();
     testLibrary();
+    testMasters();
    #if JUCE_LINUX || JUCE_MAC
     testCrashRecovery();
    #endif

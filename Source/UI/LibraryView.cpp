@@ -342,6 +342,8 @@ public:
         field ("TRACKS", juce::String (reel->numTracks) + "   " + juce::String (reel->sampleRate / 1000.0, 1) + " kHz / 24-bit");
         field ("LENGTH", reelLength (*reel));
         field ("DATE", reel->info["Date"]);
+        if (! reel->masters.isEmpty())
+            field ("MASTERS", reel->masters.joinIntoString (",  "));
         field ("TAPE", juce::StringArray { reel->info["Tape Stock"], reel->info["Speed"], reel->info["EQ"], reel->info["Noise Reduction"] }
                             .joinIntoString ("  ").trim());
 

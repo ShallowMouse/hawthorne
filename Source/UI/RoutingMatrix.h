@@ -68,6 +68,52 @@ private:
 };
 
 //==============================================================================
+/**
+    Latency strip above the matrix:
+      - interface round trip (driver figure, or measured with a loopback cable)
+      - master insert: send the mix bus to outboard and record what comes back
+*/
+class LatencyPanel : public juce::Component,
+                     private juce::Timer
+{
+public:
+    LatencyPanel (TapeEngine&, std::function<Reel*()> getReel);
+
+    void setDevice (const juce::StringArray& inputNames, const juce::BigInteger& activeInputs,
+                    const juce::StringArray& outputNames, const juce::BigInteger& activeOutputs);
+    void refresh();
+
+    /** A measurement finished: (interface round trip, insert round trip); 0 = not measured. */
+    std::function<void (int, int)> onMeasured;
+
+    static constexpr int preferredHeight = 128;
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+private:
+    void timerCallback() override;
+    void startMeasure (bool insert);
+    void applyInsert();
+    static void fill (juce::ComboBox&, const juce::StringArray& names, const juce::BigInteger& active, const juce::String& none);
+
+    TapeEngine& engine;
+    std::function<Reel*()> getReel;
+
+    juce::ComboBox pingOut, pingIn, sendL, sendR, returnL, returnR;
+    juce::TextButton measureButton { "MEASURE" }, resetButton { "USE DRIVER" },
+                     measureInsertButton { "MEASURE" }, resetInsertButton { "SAME AS INTERFACE" };
+    juce::ToggleButton insertToggle { "MASTER INSERT" };
+
+    bool measuringInsert = false;
+    int runsLeft = 0;
+    juce::Array<int> results;
+    juce::String message;
+    juce::Rectangle<int> rttText, insertText, messageArea;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LatencyPanel)
+};
+
+//==============================================================================
 class RoutingWindow : public juce::DocumentWindow
 {
 public:
@@ -75,11 +121,29 @@ public:
     ~RoutingWindow() override { clearContentComponent(); }
 
     RoutingMatrix& getMatrix() { return *matrix; }
+    LatencyPanel& getLatencyPanel() { return content.latency; }
     void fitToMatrix();
     void closeButtonPressed() override { setVisible (false); }
 
 private:
-    juce::Viewport viewport;
+    struct Content : juce::Component
+    {
+        Content (TapeEngine& e, std::function<Reel*()> gs) : latency (e, gs)
+        {
+            addAndMakeVisible (latency);
+            addAndMakeVisible (viewport);
+        }
+        void resized() override
+        {
+            auto r = getLocalBounds();
+            latency.setBounds (r.removeFromTop (LatencyPanel::preferredHeight));
+            viewport.setBounds (r);
+        }
+        LatencyPanel latency;
+        juce::Viewport viewport;
+    };
+
+    Content content;
     RoutingMatrix* matrix = nullptr;
 };
 

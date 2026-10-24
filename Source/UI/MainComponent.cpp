@@ -119,6 +119,20 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     addAndMakeVisible (masterL);
     addAndMakeVisible (masterR);
 
+    masterButton.setWantsKeyboardFocus (false);
+    masterButton.setTooltip ("Masters on this reel: choose, add, rename, delete, export");
+    masterButton.onClick = [this] { showMasterMenu(); };
+    addAndMakeVisible (masterButton);
+    addAndMakeVisible (masterArmKey);
+    addAndMakeVisible (monitorKey);
+    masterArmKey.onClick = [this]
+    {
+        if (reel == nullptr || engine.isRecording()) return;
+        if (reel->activeMaster < 0) { newMaster(); if (reel->activeMaster < 0) return; }
+        engine.setMasterArmed (! engine.isMasterArmed());
+    };
+    monitorKey.onClick = [this] { engine.setMonitorMaster (! engine.isMonitoringMaster()); };
+
     markers.onLocate    = [this] (juce::int64 pos) { locate (pos); };
     markers.onAddMarker = [this] { addMarker(); };
     markers.onChanged   = [this] { saveReel(); };
@@ -216,8 +230,24 @@ void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
         props.saveIfNeeded();
     }
 
+    applyStoredLatency();
     updateRoutingDevice();
     refreshInputChoices();
+}
+
+juce::String MainComponent::latencyKey() const
+{
+    auto* dev = deviceManager.getCurrentAudioDevice();
+    if (dev == nullptr) return {};
+    return juce::String::toHexString ((dev->getTypeName() + "|" + dev->getName()).hashCode64());
+}
+
+void MainComponent::applyStoredLatency()
+{
+    const auto key = latencyKey();
+    auto* s = props.getUserSettings();
+    engine.setMeasuredRoundTrip (key.isNotEmpty() ? s->getIntValue ("rtt_" + key, 0) : 0);
+    engine.setMeasuredInsertRoundTrip (key.isNotEmpty() ? s->getIntValue ("insertRtt_" + key, 0) : 0);
 }
 
 void MainComponent::matchDeviceToSession()
@@ -321,8 +351,9 @@ void MainComponent::setReel (std::unique_ptr<Reel> r, std::unique_ptr<Session> s
     }
 
     rebuildModules();
+    refreshMasterSection();
 
-    if (routingWindow != nullptr) routingWindow->getMatrix().tracksChanged();
+    if (routingWindow != nullptr) { routingWindow->getMatrix().tracksChanged(); routingWindow->getLatencyPanel().refresh(); }
     if (sheetWindow != nullptr)   sheetWindow->getSheet().refresh();
     repaint();
 }
@@ -464,6 +495,209 @@ void MainComponent::jumpToMarker (int direction)
 }
 
 //==============================================================================
+// Masters
+
+void MainComponent::refreshMasterSection()
+{
+    const bool has = reel != nullptr && juce::isPositiveAndBelow (reel->activeMaster, (int) reel->masters.size());
+    masterButton.setButtonText (has ? reel->masters[(size_t) reel->activeMaster].name + juce::String (juce::CharPointer_UTF8 ("  \xe2\x96\xbe"))
+                                    : juce::String (juce::CharPointer_UTF8 ("NO MASTER  \xe2\x96\xbe")));
+    masterButton.setEnabled (reel != nullptr);
+    masterArmKey.setEnabled (reel != nullptr);
+    monitorKey.setEnabled (has);
+    repaint (masterLabelArea);
+}
+
+void MainComponent::showMasterMenu()
+{
+    if (reel == nullptr)
+        return;
+
+    const bool rec = engine.isRecording();
+    juce::PopupMenu m;
+    m.addSectionHeader ("MASTERS ON THIS REEL");
+    for (int i = 0; i < (int) reel->masters.size(); ++i)
+        m.addItem (1 + i, reel->masters[(size_t) i].name, ! rec, i == reel->activeMaster);
+    if (reel->masters.empty())
+        m.addItem (999, "(none yet)", false);
+    m.addSeparator();
+    m.addItem (1001, "New master", ! rec);
+    const bool has = reel->activeMaster >= 0;
+    m.addItem (1002, "Rename...", has && ! rec);
+    m.addItem (1003, "Delete...", has && ! rec);
+
+    juce::PopupMenu ex;
+    ex.addItem (2000, "Whole reel...");
+    for (int i = 0; i < (int) reel->markers.size(); ++i)
+    {
+        const auto& mk = reel->markers[(size_t) i];
+        const auto to = i + 1 < (int) reel->markers.size() ? reel->markers[(size_t) i + 1].name : juce::String ("end");
+        ex.addItem (2100 + i, mk.name + "  ->  " + to + "...");
+    }
+    m.addSeparator();
+    m.addSubMenu ("Export stereo WAV", ex, has && ! rec);
+
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (masterButton), [this] (int r)
+    {
+        if (reel == nullptr || r == 0) return;
+        if (r >= 1 && r <= (int) reel->masters.size()) { engine.setActiveMaster (r - 1); refreshMasterSection(); }
+        else if (r == 1001) newMaster();
+        else if (r == 1002) renameMaster();
+        else if (r == 1003) deleteMaster();
+        else if (reel->activeMaster >= 0)
+        {
+            const auto& name = reel->masters[(size_t) reel->activeMaster].name;
+            const auto reelLen = engine.getReelLength();
+            if (r == 2000)
+                exportMaster (0, reelLen, (session != nullptr ? session->getName() + " - " : juce::String()) + name);
+            else if (r >= 2100 && r - 2100 < (int) reel->markers.size())
+            {
+                const int i = r - 2100;
+                const auto start = reel->markers[(size_t) i].position;
+                const auto end = i + 1 < (int) reel->markers.size() ? reel->markers[(size_t) i + 1].position : reelLen;
+                exportMaster (start, end, reel->markers[(size_t) i].name + " - " + name);
+            }
+        }
+    });
+}
+
+void MainComponent::newMaster()
+{
+    if (reel == nullptr || engine.isRecording()) return;
+    const int idx = reel->addMaster (reel->nextMasterName());
+    engine.mastersChanged();
+    engine.setActiveMaster (idx);
+    refreshMasterSection();
+}
+
+void MainComponent::renameMaster()
+{
+    if (reel == nullptr || reel->activeMaster < 0) return;
+    const int idx = reel->activeMaster;
+
+    auto* w = new juce::AlertWindow ("Rename master", "Name:", juce::MessageBoxIconType::NoIcon, this);
+    w->addTextEditor ("name", reel->masters[(size_t) idx].name);
+    w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, idx] (int r)
+    {
+        if (r != 1 || reel == nullptr || engine.isRecording()) return;
+        juce::String err;
+        engine.stop();
+        // Files are renamed, so the playback readers must let go of them first.
+        engine.setActiveMaster (-1);
+        if (! reel->renameMaster (idx, w->getTextEditorContents ("name"), err) && err.isNotEmpty())
+            showAlert ("Could not rename the master", err);
+        engine.mastersChanged();
+        engine.setActiveMaster (idx);
+        refreshMasterSection();
+    }), true);
+}
+
+void MainComponent::deleteMaster()
+{
+    if (reel == nullptr || reel->activeMaster < 0) return;
+    const int idx = reel->activeMaster;
+    const auto name = reel->masters[(size_t) idx].name;
+
+    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, "Delete " + name + "?",
+        "The master's audio goes to the Recycle Bin. The tracks are not touched.", "Delete", "Cancel", this,
+        juce::ModalCallbackFunction::create ([this, idx] (int r)
+        {
+            if (r != 1 || reel == nullptr || engine.isRecording()) return;
+            engine.stop();
+            engine.setActiveMaster (-1);
+            juce::String err;
+            if (! reel->removeMaster (idx, err) && err.isNotEmpty())
+                showAlert ("Could not delete the master", err);
+            engine.mastersChanged();
+            engine.setActiveMaster (reel->masters.empty() ? -1 : 0);
+            refreshMasterSection();
+        }));
+}
+
+void MainComponent::exportMaster (juce::int64 start, juce::int64 end, const juce::String& suggestedName)
+{
+    if (reel == nullptr || reel->activeMaster < 0 || end <= start) return;
+
+    const auto fileL = reel->getMasterFile (reel->activeMaster, 0);
+    const auto fileR = reel->getMasterFile (reel->activeMaster, 1);
+    if (! fileL.existsAsFile() || ! fileR.existsAsFile())
+    {
+        showAlert ("Nothing to export", "This master hasn't been recorded yet.");
+        return;
+    }
+
+    chooser = std::make_unique<juce::FileChooser> ("Export master",
+        juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile (juce::File::createLegalFileName (suggestedName) + ".wav"),
+        "*.wav");
+
+    chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
+                          [this, fileL, fileR, start, end] (const juce::FileChooser& fc)
+    {
+        auto dest = fc.getResult();
+        if (dest == juce::File()) return;
+        dest = dest.withFileExtension ("wav");
+
+        struct Job : juce::ThreadWithProgressWindow
+        {
+            Job (juce::File l, juce::File r, juce::File d, juce::int64 s, juce::int64 e, double sr)
+                : juce::ThreadWithProgressWindow ("Exporting master...", true, true), L (l), R (r), dest (d), start (s), end (e), rate (sr) {}
+
+            void run() override
+            {
+                juce::AudioFormatManager fm;
+                fm.registerBasicFormats();
+                std::unique_ptr<juce::AudioFormatReader> rl (fm.createReaderFor (L)), rr (fm.createReaderFor (R));
+                if (rl == nullptr || rr == nullptr) { error = "Could not read the master files."; return; }
+
+                auto tmp = dest.getSiblingFile (dest.getFileNameWithoutExtension() + ".partial.wav");
+                tmp.deleteFile();
+                std::unique_ptr<juce::OutputStream> os (tmp.createOutputStream().release());
+                juce::WavAudioFormat wav;
+                std::unique_ptr<juce::AudioFormatWriter> w (os != nullptr ? wav.createWriterFor (os.get(), rate, 2, 24, {}, 0) : nullptr);
+                if (w == nullptr) { error = "Could not create " + dest.getFullPathName(); return; }
+                os.release(); // owned by the writer now
+
+                juce::AudioBuffer<float> buf (2, 65536);
+                for (auto pos = start; pos < end && ! threadShouldExit();)
+                {
+                    const int n = (int) juce::jmin ((juce::int64) buf.getNumSamples(), end - pos);
+                    buf.clear();
+                    float* l = buf.getWritePointer (0);
+                    float* r = buf.getWritePointer (1);
+                    rl->read (&l, 1, pos, n);
+                    rr->read (&r, 1, pos, n);
+                    if (! w->writeFromAudioSampleBuffer (buf, 0, n)) { error = "Write failed (disk full?)"; break; }
+                    pos += n;
+                    setProgress ((double) (pos - start) / (double) (end - start));
+                }
+                w.reset();
+
+                if (threadShouldExit() || error.isNotEmpty()) { tmp.deleteFile(); return; }
+                if (! tmp.moveFileTo (dest)) error = "Could not write " + dest.getFullPathName();
+            }
+
+            void threadComplete (bool cancelled) override
+            {
+                if (error.isNotEmpty())
+                    juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Export failed", error);
+                else if (! cancelled)
+                    dest.revealToUser();
+                delete this;
+            }
+
+            juce::File L, R, dest;
+            juce::int64 start, end;
+            double rate;
+            juce::String error;
+        };
+
+        (new Job (fileL, fileR, dest, start, end, reel->sampleRate))->launchThread();
+    });
+}
+
+//==============================================================================
 // Windows
 
 void MainComponent::showRouting()
@@ -471,7 +705,15 @@ void MainComponent::showRouting()
     if (routingWindow == nullptr)
     {
         routingWindow = std::make_unique<RoutingWindow> (engine, [this] { return reel.get(); });
-        routingWindow->getMatrix().onChanged = [this] { refreshInputChoices(); };
+        routingWindow->getMatrix().onChanged = [this] { refreshInputChoices(); routingWindow->getLatencyPanel().repaint(); };
+        routingWindow->getLatencyPanel().onMeasured = [this] (int rtt, int insertRtt)
+        {
+            const auto key = latencyKey();
+            if (key.isEmpty()) return;
+            if (rtt >= 0)       props.getUserSettings()->setValue ("rtt_" + key, rtt);
+            if (insertRtt >= 0) props.getUserSettings()->setValue ("insertRtt_" + key, insertRtt);
+            props.saveIfNeeded();
+        };
         updateRoutingDevice();
         routingWindow->fitToMatrix();
     }
@@ -486,10 +728,17 @@ void MainComponent::updateRoutingDevice()
         return;
 
     if (auto* dev = deviceManager.getCurrentAudioDevice())
+    {
         routingWindow->getMatrix().setDevice (dev->getInputChannelNames(), dev->getActiveInputChannels(),
                                               dev->getOutputChannelNames(), dev->getActiveOutputChannels());
+        routingWindow->getLatencyPanel().setDevice (dev->getInputChannelNames(), dev->getActiveInputChannels(),
+                                                    dev->getOutputChannelNames(), dev->getActiveOutputChannels());
+    }
     else
+    {
         routingWindow->getMatrix().setDevice ({}, {}, {}, {});
+        routingWindow->getLatencyPanel().setDevice ({}, {}, {}, {});
+    }
 }
 
 void MainComponent::showSheet (bool takeLog)
@@ -658,6 +907,8 @@ void MainComponent::timerCallback()
         m->getMeter().update (engine.popTrackRms (t), engine.popTrackPeak (t), dt);
     }
 
+    masterArmKey.setLit (engine.isMasterArmed() && (! rec || flash));
+    monitorKey.setLit (engine.isMonitoringMaster());
     masterL.update (engine.popMasterRms (0), engine.popMasterPeak (0), dt);
     masterR.update (engine.popMasterRms (1), engine.popMasterPeak (1), dt);
     markers.setPlayhead (engine.getPosition());
@@ -761,6 +1012,10 @@ void MainComponent::paint (juce::Graphics& g)
                           reelInfoArea, juce::Justification::centredLeft, 2);
     }
 
+    g.setColour (Colours::textDim);
+    g.setFont (monoFont (10.0f, true));
+    g.drawText ("MASTER", masterLabelArea, juce::Justification::centredLeft);
+
     // Status bar
     g.setColour (Colours::black);
     g.fillRect (statusArea);
@@ -805,7 +1060,16 @@ void MainComponent::resized()
         masterR.setBounds (d.removeFromRight (vuW));
         d.removeFromRight (6);
         masterL.setBounds (d.removeFromRight (vuW));
-        d.removeFromRight (20);
+        d.removeFromRight (12);
+
+        auto ms = d.removeFromRight (200);
+        masterLabelArea = ms.removeFromTop (14);
+        masterButton.setBounds (ms.removeFromTop (24));
+        ms.removeFromTop (4);
+        masterArmKey.setBounds (ms.removeFromLeft (97));
+        ms.removeFromLeft (6);
+        monitorKey.setBounds (ms);
+        d.removeFromRight (16);
 
         counterArea = d.removeFromLeft (250).reduced (0, 4);
         d.removeFromLeft (18);

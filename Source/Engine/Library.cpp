@@ -42,6 +42,10 @@ ReelSummary Library::summarise (const juce::File& reelFile)
             r.trackNames.add (juce::String (t + 1).paddedLeft (' ', 2) + "  " + (name.isNotEmpty() ? name : "Track " + juce::String (t + 1)));
     }
 
+    if (auto* ms = xml->getChildByName ("Masters"))
+        for (auto* e : ms->getChildWithTagNameIterator ("Mix"))
+            r.masters.add (e->getStringAttribute ("name"));
+
     if (auto* tl = xml->getChildByName ("TakeLog"))
         for (auto* e : tl->getChildWithTagNameIterator ("Take"))
         {

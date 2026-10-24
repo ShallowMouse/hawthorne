@@ -64,6 +64,11 @@ void TapeEngine::setReel (Reel* s)
     for (int t = 0; t < kMaxTracks; ++t)
         armed[(size_t) t] = s != nullptr && t < s->numTracks && s->tracks[(size_t) t].armed;
 
+    if (s != nullptr && ! juce::isPositiveAndBelow (s->activeMaster, (int) s->masters.size()))
+        s->activeMaster = s->masters.empty() ? -1 : 0;
+    masterArmedFlag   = s != nullptr && s->masterArmed && s->activeMaster >= 0;
+    monitorMasterFlag = s != nullptr && s->monitorMaster;
+
     rebuildRouting();
     rebuildPlaybackGraph();
 }
@@ -81,6 +86,10 @@ void TapeEngine::prepare (double sampleRate, int maxBlockSize,
     trackBuffers.clear();
     mixBus.setSize (2, maxBlock);
     mixBus.clear();
+    returnBus.setSize (2, maxBlock);
+    masterTapeBus.setSize (2, maxBlock);
+    for (auto& d : returnsDelayLine)
+        d.prepare ((int) juce::jmax (48000.0, sampleRate)); // up to 1 s of outboard / converter delay
     zeros.setSize (1, maxBlock);
     zeros.clear();
 
@@ -277,20 +286,104 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         }
     }
 
-    // --- Master bus: mix + patched-in inputs, then out to its outputs
+    // --- Master bus
+    //  1. internal mix of the tracks (in step with the tape)
+    //  2. + patched-in returns. They come back one round trip late, so the
+    //     internal mix is delayed by that much to meet them.
+    //  3. optional insert: out to the outboard, back in (another round trip)
+    //  4. recorded to the master with the total lag taken off, so it lands
+    //     sample-aligned with the tracks.
+    const int roundTrip = getRoundTrip();
+    const bool recMaster = rp != nullptr && rp->masterStreams[0] != nullptr;
+    const bool monitorTape = monitorMasterFlag.load (std::memory_order_relaxed) && ! recMaster;
+
     for (int side = 0; side < 2; ++side)
     {
         float* bus = side == 0 ? mixL : mixR;
-        if (rt != nullptr)
+
+        if (rt != nullptr && rt->hasReturns)
+        {
+            returnsDelayLine[(size_t) side].process (bus, n, roundTrip);
             for (auto ch : rt->masterIn[(size_t) side])
                 if (auto* in = inputFor (ch))
                     juce::FloatVectorOperations::add (bus, in, n);
+        }
 
-        raisePeak (masterPeak[(size_t) side], peakOf (bus, n));
-        masterEnergy[(size_t) side].add (bus, n);
+        if (rt != nullptr && rt->insert)
+        {
+            const int sendCh = rt->insertSend[(size_t) side];
+            const int a = juce::isPositiveAndBelow (sendCh, (int) absToActiveOut.size()) ? absToActiveOut[(size_t) sendCh] : -1;
+            if (juce::isPositiveAndBelow (a, numOutputs) && outputs[a] != nullptr)
+                juce::FloatVectorOperations::add (outputs[a], bus, n);
+
+            if (auto* ret = inputFor (rt->insertReturn[(size_t) side]))
+                juce::FloatVectorOperations::copy (bus, ret, n);
+            else
+                juce::FloatVectorOperations::clear (bus, n);
+        }
+
+        if (recMaster)
+            rp->masterStreams[(size_t) side]->push (bus, n);
+
+        // Master tape playback
+        const float* outSig = bus;
+        if (monitorTape && isRolling && g != nullptr && ! g->master[(size_t) side].empty())
+        {
+            float* tb = masterTapeBus.getWritePointer (side);
+            juce::FloatVectorOperations::clear (tb, n);
+
+            for (const auto& seg : g->master[(size_t) side])
+            {
+                if (seg.end <= pos)       continue;
+                if (seg.start >= pos + n) break;
+                const auto s0 = juce::jmax (seg.start, pos);
+                const auto s1 = juce::jmin (seg.end, pos + n);
+                float* dest = tb + (s0 - pos);
+                if (! seg.reader->read (&dest, 1, seg.fileStart + (s0 - seg.start), (int) (s1 - s0)))
+                    playbackUnderruns.fetch_add (1, std::memory_order_relaxed);
+            }
+            outSig = tb;
+        }
+
+        raisePeak (masterPeak[(size_t) side], peakOf (outSig, n));
+        masterEnergy[(size_t) side].add (outSig, n);
         if (rt != nullptr)
-            sendToOutputs (bus, rt->masterOut[(size_t) side]);
+            sendToOutputs (outSig, rt->masterOut[(size_t) side]);
     }
+
+    // --- Latency ping: one click out, time it coming back
+    if (pingState.load (std::memory_order_relaxed) == PingState::running)
+    {
+        if (pingRequested.exchange (false))
+        {
+            const int a = juce::isPositiveAndBelow (pingOut.load(), (int) absToActiveOut.size()) ? absToActiveOut[(size_t) pingOut.load()] : -1;
+            if (juce::isPositiveAndBelow (a, numOutputs) && outputs[a] != nullptr)
+            {
+                outputs[a][0] += 0.5f;
+                pingSentAt = deviceClock;
+            }
+            else
+                pingState = PingState::failed;
+        }
+        else if (pingSentAt >= 0)
+        {
+            if (auto* in = inputFor (pingIn.load()))
+            {
+                for (int i = 0; i < n; ++i)
+                    if (std::abs (in[i]) > 0.05f)
+                    {
+                        pingResult = (int) (deviceClock + i - pingSentAt);
+                        pingState = PingState::done;
+                        break;
+                    }
+            }
+
+            if (pingState.load() == PingState::running && deviceClock - pingSentAt > (juce::int64) deviceSampleRate.load())
+                pingState = PingState::failed; // nothing came back within a second
+        }
+    }
+
+    deviceClock += n;
 
     // Only advance if nobody located us mid-block.
     if (isRolling)
@@ -430,6 +523,88 @@ void TapeEngine::setMasterOutputs (int side, const ChannelList& outs)
     saveReel();
 }
 
+void TapeEngine::setMasterInsert (bool enabled, std::array<int, 2> sends, std::array<int, 2> returns)
+{
+    if (reel == nullptr || (recording && masterArmedFlag)) return;
+    reel->master.insertEnabled = enabled;
+    reel->master.insertSend = sends;
+    reel->master.insertReturn = returns;
+    rebuildRouting();
+    saveReel();
+}
+
+//==============================================================================
+// Message thread: masters
+
+void TapeEngine::setActiveMaster (int index)
+{
+    if (reel == nullptr || recording) return;
+    reel->activeMaster = juce::isPositiveAndBelow (index, (int) reel->masters.size()) ? index : -1;
+    if (reel->activeMaster < 0) setMasterArmed (false);
+    saveReel();
+    rebuildPlaybackGraph();
+}
+
+void TapeEngine::setMasterArmed (bool on)
+{
+    if (reel == nullptr || recording) return;
+    on = on && reel->activeMaster >= 0;
+    masterArmedFlag = on;
+    reel->masterArmed = on;
+    saveReel();
+}
+
+void TapeEngine::setMonitorMaster (bool on)
+{
+    monitorMasterFlag = on;
+    if (reel != nullptr) { reel->monitorMaster = on; saveReel(); }
+}
+
+void TapeEngine::mastersChanged()
+{
+    if (reel != nullptr && ! juce::isPositiveAndBelow (reel->activeMaster, (int) reel->masters.size()))
+        reel->activeMaster = reel->masters.empty() ? -1 : 0;
+    if (reel == nullptr || reel->activeMaster < 0)
+        masterArmedFlag = false;
+    rebuildPlaybackGraph();
+}
+
+//==============================================================================
+// Latency
+
+int TapeEngine::getRoundTrip() const noexcept
+{
+    const int m = measuredRoundTrip.load();
+    return m > 0 ? m : latencySamples.load();
+}
+
+int TapeEngine::getInsertRoundTrip() const noexcept
+{
+    const int m = measuredInsertRoundTrip.load();
+    return m > 0 ? m : getRoundTrip();
+}
+
+int TapeEngine::getMasterBusLatency() const noexcept
+{
+    auto* rt = ownedRouting.get();
+    if (rt == nullptr) return 0;
+    return (rt->hasReturns ? getRoundTrip() : 0) + (rt->insert ? getInsertRoundTrip() : 0);
+}
+
+bool TapeEngine::startPing (int outputChannel, int inputChannel)
+{
+    if (! deviceRunning || recording || pingState.load() == PingState::running)
+        return false;
+
+    pingOut = outputChannel;
+    pingIn = inputChannel;
+    pingResult = 0;
+    pingSentAt = -1;           // audio thread only touches it while running
+    pingRequested = true;
+    pingState = PingState::running;
+    return true;
+}
+
 void TapeEngine::rebuildRouting()
 {
     auto r = std::make_unique<RoutingTable>();
@@ -457,11 +632,19 @@ void TapeEngine::rebuildRouting()
             const auto& m = reel->master;
             r->masterIn[(size_t) side].assign (m.inputs[(size_t) side].begin(), m.inputs[(size_t) side].end());
             r->masterOut[(size_t) side].assign (m.outputs[(size_t) side].begin(), m.outputs[(size_t) side].end());
+            r->hasReturns = r->hasReturns || ! m.inputs[(size_t) side].isEmpty();
         }
         else
         {
             r->masterOut[(size_t) side] = { side };
         }
+    }
+
+    if (reel != nullptr)
+    {
+        r->insert = reel->master.insertEnabled;
+        r->insertSend = reel->master.insertSend;
+        r->insertReturn = reel->master.insertReturn;
     }
 
     auto old = std::move (ownedRouting);
@@ -484,7 +667,8 @@ double TapeEngine::getRecordTimeRemainingSeconds() const
         return 0.0;
 
     const auto freeBytes = (double) reel->getFolder().getBytesFreeOnVolume();
-    const auto bytesPerSec = (double) juce::jmax (1, getNumArmedTracks()) * reel->sampleRate * (reel->bitDepth / 8);
+    const int files = getNumArmedTracks() + (masterArmedFlag ? 2 : 0);
+    const auto bytesPerSec = (double) juce::jmax (1, files) * reel->sampleRate * (reel->bitDepth / 8);
     return juce::jmax (0.0, freeBytes - (double) stopRecordingBelowBytes) / bytesPerSec;
 }
 
@@ -510,45 +694,67 @@ juce::String TapeEngine::beginRecordPass()
                    "Choose an input for it, or enable more inputs in Audio Settings.";
     }
 
-    if (numArmed == 0)
-        return "No tracks are armed.";
+    const bool recMaster = masterArmedFlag && juce::isPositiveAndBelow (reel->activeMaster, (int) reel->masters.size());
+
+    if (numArmed == 0 && ! recMaster)
+        return "Nothing is armed.";
 
     if (reel->getFolder().getBytesFreeOnVolume() < minFreeBytesToRecord)
         return "Not enough free disk space to record safely.\nAt least 500 MB is required.";
 
     const auto sr = reel->sampleRate;
     // 20 s of buffer per track, less when very many tracks are armed (keeps RAM sane at 96 tracks).
-    const double secs = juce::jlimit (5.0, fifoSeconds, fifoBudgetBytes / ((double) numArmed * sr * sizeof (float)));
+    const double secs = juce::jlimit (5.0, fifoSeconds, fifoBudgetBytes / ((double) (numArmed + (recMaster ? 2 : 0)) * sr * sizeof (float)));
     const int fifoSize = fifoSizeOverride > 0 ? fifoSizeOverride : (int) (sr * secs);
     const int flushInterval = (int) (sr * flushIntervalSeconds);
 
     auto p = std::make_unique<RecordPass>();
-    p->latency = latencySamples;
+    p->latency = getRoundTrip();
+    p->masterLatency = getMasterBusLatency();
+
+    auto abandon = [&p]
+    {
+        for (auto& s : p->streams)       if (s != nullptr) s->finish();
+        for (auto& s : p->masterStreams) if (s != nullptr) s->finish();
+    };
+
+    auto openStream = [&] (const juce::File& file, int latency, juce::String& err) -> std::shared_ptr<RecordingStream>
+    {
+        if (! file.existsAsFile() && ! TapeFile::createEmpty (file, sr, err))
+            return nullptr;
+
+        auto tape = std::make_unique<TapeFile>();
+        if (! tape->open (file, sr, err))
+            return nullptr;
+
+        return std::make_shared<RecordingStream> (std::move (tape), file, fifoSize, flushInterval, &p->startPos, latency);
+    };
 
     for (int t = 0; t < numTracks.load(); ++t)
     {
         if (! armed[(size_t) t])
             continue;
 
-        const auto file = reel->getTapeFile (t);
         juce::String err;
+        p->streams[(size_t) t] = openStream (reel->getTapeFile (t), p->latency, err);
+        if (p->streams[(size_t) t] == nullptr) { abandon(); return err; }
+    }
 
-        if (! file.existsAsFile() && ! TapeFile::createEmpty (file, sr, err))
-            return err;
-
-        auto tape = std::make_unique<TapeFile>();
-        if (! tape->open (file, sr, err))
+    if (recMaster)
+    {
+        p->masterName = reel->masters[(size_t) reel->activeMaster].name;
+        for (int side = 0; side < 2; ++side)
         {
-            for (auto& s : p->streams)
-                if (s != nullptr) s->finish();
-            return err;
+            juce::String err;
+            p->masterStreams[(size_t) side] = openStream (reel->getMasterFile (reel->activeMaster, side), p->masterLatency, err);
+            if (p->masterStreams[(size_t) side] == nullptr) { abandon(); return err; }
         }
-
-        p->streams[(size_t) t] = std::make_shared<RecordingStream> (std::move (tape), file, fifoSize, flushInterval,
-                                                                    &p->startPos, p->latency);
     }
 
     for (auto& s : p->streams)
+        if (s != nullptr)
+            diskThread.add (s);
+    for (auto& s : p->masterStreams)
         if (s != nullptr)
             diskThread.add (s);
 
@@ -588,28 +794,48 @@ void TapeEngine::endRecordPass()
 
         droppedThisPass += s->getDroppedSamples();
         passLength = juce::jmax (passLength, s->getTimelineLength());
-        ++tapeGeneration[(size_t) t]; // tape contents changed: readers must reload
+        ++tapeGeneration[reel->getTapeFile (t).getFullPathName()]; // tape changed: readers must reload
         recorded.add (t);
+    }
+
+    juce::int64 masterLength = 0;
+    for (int side = 0; side < 2; ++side)
+    {
+        auto& s = p->masterStreams[(size_t) side];
+        if (s == nullptr)
+            continue;
+
+        diskThread.remove (s.get());
+        if (! s->finish())
+            problems.add (p->masterName + ": writing to tape failed");
+
+        droppedThisPass += s->getDroppedSamples();
+        masterLength = juce::jmax (masterLength, s->getTimelineLength());
+        ++tapeGeneration[s->getFile().getFullPathName()];
     }
 
     droppedTotal = droppedBeforePass.load() + droppedThisPass;
 
     // Every recorded track is kept the length of the reel (silence where unrecorded).
     juce::String padError;
-    for (auto t : reel->equaliseTapeLengths (padError))
-        ++tapeGeneration[(size_t) t];
+    for (auto& f : reel->equaliseTapeLengths (padError))
+        ++tapeGeneration[f.getFullPathName()];
     if (padError.isNotEmpty())
         problems.add (padError);
 
     // Recording sheet: one line per take
+    const bool tracksRecorded = ! recorded.isEmpty();
+    const int lat = tracksRecorded ? p->latency : p->masterLatency;
+    if (! tracksRecorded) passLength = masterLength;
+
     if (const auto startPos = p->startPos.load(); startPos >= 0 && passLength > 0)
     {
         TakeEntry e;
         e.take   = reel->nextTake++;
         e.when   = (juce::Time::getCurrentTime() - juce::RelativeTime::seconds ((double) passLength / reel->sampleRate))
                        .formatted ("%d %b %Y  %H:%M");
-        e.start  = juce::jmax ((juce::int64) 0, startPos - p->latency);
-        e.end    = startPos - p->latency + passLength;
+        e.start  = juce::jmax ((juce::int64) 0, startPos - lat);
+        e.end    = startPos - lat + passLength;
 
         // "1-4, 7" style track list
         juce::StringArray parts;
@@ -622,6 +848,8 @@ void TapeEngine::endRecordPass()
             i = j + 1;
         }
         e.tracks = parts.joinIntoString (", ");
+        if (p->masterName.isNotEmpty())
+            e.tracks = e.tracks.isEmpty() ? p->masterName : e.tracks + " + " + p->masterName;
         reel->takeLog.push_back (e);
 
         if (onTakeLogged)
@@ -676,6 +904,23 @@ void TapeEngine::rebuildPlaybackGraph()
     auto g = std::make_unique<PlaybackGraph>();
     std::vector<Segment> fresh;
 
+    auto addFile = [&] (const juce::File& file, std::vector<Segment>& dest)
+    {
+        const auto key = file.getFullPathName() + "|" + juce::String (tapeGeneration[file.getFullPathName()]);
+        bool isNew = false;
+        auto reader = getReader (file, key, isNew);
+
+        if (reader == nullptr || reader->lengthInSamples <= 0)
+            return;
+
+        const Segment seg { reader.get(), 0, reader->lengthInSamples, 0 };
+        dest.push_back (seg);
+        g->keepAlive.push_back (reader);
+
+        if (isNew)
+            fresh.push_back (seg);
+    };
+
     if (reel != nullptr)
     {
         for (int t = 0; t < reel->numTracks; ++t)
@@ -684,20 +929,16 @@ void TapeEngine::rebuildPlaybackGraph()
             if (! file.existsAsFile())
                 continue;
 
-            const auto key = file.getFullPathName() + "|" + juce::String (tapeGeneration[(size_t) t]);
-            bool isNew = false;
-            auto reader = getReader (file, key, isNew);
-
-            if (reader == nullptr || reader->lengthInSamples <= 0)
-                continue;
-
-            const Segment seg { reader.get(), 0, reader->lengthInSamples, 0 };
-            g->tracks[(size_t) t].push_back (seg);
-            g->keepAlive.push_back (reader);
-
-            if (isNew)
-                fresh.push_back (seg);
+            addFile (file, g->tracks[(size_t) t]);
         }
+
+        if (juce::isPositiveAndBelow (reel->activeMaster, (int) reel->masters.size()))
+            for (int side = 0; side < 2; ++side)
+            {
+                const auto file = reel->getMasterFile (reel->activeMaster, side);
+                if (file.existsAsFile())
+                    addFile (file, g->master[(size_t) side]);
+            }
     }
 
     // Prime new readers before the audio thread can see them.
@@ -720,6 +961,9 @@ juce::int64 TapeEngine::getReelLength() const
     juce::int64 reel = 0;
     for (int t = 0; t < kMaxTracks; ++t)
         reel = juce::jmax (reel, getTapeLength (t));
+    if (ownedGraph != nullptr)
+        for (auto& m : ownedGraph->master)
+            if (! m.empty()) reel = juce::jmax (reel, m.back().end);
     return reel;
 }
 
@@ -758,6 +1002,9 @@ void TapeEngine::primeReaders (juce::int64 pos)
     const auto window = (juce::int64) (reel->sampleRate * 0.5);
 
     for (auto& segs : ownedGraph->tracks)
+        for (auto& seg : segs)
+            primeSegment (seg, pos, seg.end > pos && seg.start < pos + window);
+    for (auto& segs : ownedGraph->master)
         for (auto& seg : segs)
             primeSegment (seg, pos, seg.end > pos && seg.start < pos + window);
 }
@@ -845,13 +1092,17 @@ void TapeEngine::tick()
     float bufferPeak = 0.0f;
     bool writeFailed = false;
 
-    for (auto& s : p->streams)
+    auto check = [&] (const std::shared_ptr<RecordingStream>& s)
+    {
         if (s != nullptr)
         {
             dropped    += s->getDroppedSamples();
             bufferPeak  = juce::jmax (bufferPeak, s->getPeakFifoUsage());
             writeFailed = writeFailed || s->hasError();
         }
+    };
+    for (auto& s : p->streams)       check (s);
+    for (auto& s : p->masterStreams) check (s);
 
     droppedTotal = droppedBeforePass.load() + dropped;
     diskBufferPeak = bufferPeak;

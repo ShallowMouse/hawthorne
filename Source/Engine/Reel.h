@@ -27,11 +27,21 @@ struct TrackInfo
     juce::String instrument, mic, notes;
 };
 
-/** The master is a stereo bus: the mix of the tracks plus any patched-in inputs. */
+/** The master is a stereo bus: the mix of the tracks plus any patched-in inputs,
+    optionally through a hardware insert (bus compressor, EQ...). */
 struct MasterRouting
 {
     std::array<ChannelList, 2> inputs, outputs;
+    bool insertEnabled = false;
+    std::array<int, 2> insertSend   { -1, -1 };   // device outputs feeding the outboard
+    std::array<int, 2> insertReturn { -1, -1 };   // device inputs it comes back on
     MasterRouting() { outputs[0].add (0); outputs[1].add (1); }
+};
+
+/** A stereo master mix recorded onto the reel, sample-aligned with its tracks. */
+struct MasterInfo
+{
+    juce::String name;
 };
 
 struct Marker
@@ -84,12 +94,25 @@ public:
         return getAudioFolder().getChildFile ("Track" + juce::String (track + 1).paddedLeft ('0', 2) + ".wav");
     }
 
-    /** Longest recorded track, in samples. */
+    /** Master mix files: Audio/Masters/<name> L.wav and R.wav. side 0 = L, 1 = R. */
+    juce::File getMasterFile (int master, int side) const;
+
+    /** Every tape file on this reel that exists (tracks and masters). */
+    juce::Array<juce::File> getAllTapeFiles() const;
+
+    /** Longest recorded track or master, in samples. */
     juce::int64 getReelLength() const;
 
-    /** Pads every recorded track with silence up to the reel length.
-        Returns the tracks whose files changed. */
-    juce::Array<int> equaliseTapeLengths (juce::String& error);
+    /** Pads every recorded track and master with silence up to the reel length.
+        Returns the files that changed. */
+    juce::Array<juce::File> equaliseTapeLengths (juce::String& error);
+
+    // Masters
+    int  addMaster (const juce::String& name);                     // returns its index
+    bool renameMaster (int index, const juce::String& newName, juce::String& error);
+    bool removeMaster (int index, juce::String& error);            // files go to the Recycle Bin
+    juce::String uniqueMasterName (const juce::String& wanted) const;
+    juce::String nextMasterName() const;                           // "Mix A", "Mix B" ...
 
     // Markers - always kept in time order
     int  addMarker (juce::int64 position, const juce::String& name);   // returns its index
@@ -108,6 +131,10 @@ public:
     int    numTracks  = kDefaultTracks;
     std::array<TrackInfo, kMaxTracks> tracks;
     MasterRouting master;
+    std::vector<MasterInfo> masters;
+    int  activeMaster = -1;        // the master on the machine
+    bool masterArmed = false;
+    bool monitorMaster = false;    // hear the master tape instead of the live mix
     std::vector<Marker> markers;
     juce::StringPairArray info;
     std::vector<TakeEntry> takeLog;

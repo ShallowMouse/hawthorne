@@ -98,19 +98,16 @@ std::unique_ptr<Reel> Reel::load (const juce::File& file, juce::String& error)
     s->getAudioFolder().createDirectory();
 
     // A crash mid-record leaves audio on disk beyond what the header says.
-    for (int t = 0; t < kMaxTracks; ++t)
+    for (auto& tape : s->getAllTapeFiles())
     {
-        const auto tape = s->getTapeFile (t);
-        if (! tape.existsAsFile())
-            continue;
-
         bool repaired = false;
         const auto frames = repairWavHeader (tape, repaired);
+        const auto what = tape.getFileNameWithoutExtension();
 
         if (frames < 0)
-            s->recoveryLog.add ("Track " + juce::String (t + 1) + ": tape file is unreadable (" + tape.getFileName() + ")");
+            s->recoveryLog.add (what + ": tape file is unreadable");
         else if (repaired)
-            s->recoveryLog.add ("Track " + juce::String (t + 1) + ": tape restored after an unexpected shutdown ("
+            s->recoveryLog.add (what + ": tape restored after an unexpected shutdown ("
                                 + juce::String ((double) frames / s->sampleRate, 1) + " s)");
     }
 
@@ -154,43 +151,139 @@ void Reel::sortMarkers()
                       [] (const Marker& a, const Marker& b) { return a.position < b.position; });
 }
 
+juce::File Reel::getMasterFile (int m, int side) const
+{
+    if (! juce::isPositiveAndBelow (m, (int) masters.size()))
+        return {};
+    return getAudioFolder().getChildFile ("Masters")
+             .getChildFile (juce::File::createLegalFileName (masters[(size_t) m].name) + (side == 0 ? " L.wav" : " R.wav"));
+}
+
+juce::Array<juce::File> Reel::getAllTapeFiles() const
+{
+    juce::Array<juce::File> files;
+    for (int t = 0; t < kMaxTracks; ++t)
+        if (getTapeFile (t).existsAsFile())
+            files.add (getTapeFile (t));
+    for (int m = 0; m < (int) masters.size(); ++m)
+        for (int side = 0; side < 2; ++side)
+            if (getMasterFile (m, side).existsAsFile())
+                files.add (getMasterFile (m, side));
+    return files;
+}
+
 juce::int64 Reel::getReelLength() const
 {
     juce::int64 reel = 0;
 
-    for (int t = 0; t < kMaxTracks; ++t)
+    for (auto& f : getAllTapeFiles())
     {
         WavLayout l;
-        const auto f = getTapeFile (t);
-        if (f.existsAsFile() && readWavLayout (f, l))
+        if (readWavLayout (f, l))
             reel = juce::jmax (reel, l.headerFrames);
     }
 
     return reel;
 }
 
-juce::Array<int> Reel::equaliseTapeLengths (juce::String& error)
+juce::Array<juce::File> Reel::equaliseTapeLengths (juce::String& error)
 {
-    juce::Array<int> changed;
+    juce::Array<juce::File> changed;
     const auto reel = getReelLength();
 
-    for (int t = 0; t < kMaxTracks; ++t)
+    for (auto& f : getAllTapeFiles())
     {
         WavLayout l;
-        const auto f = getTapeFile (t);
-
-        if (! f.existsAsFile() || ! readWavLayout (f, l) || l.headerFrames >= reel)
+        if (! readWavLayout (f, l) || l.headerFrames >= reel)
             continue;
 
         TapeFile tape;
         juce::String err;
         if (tape.open (f, sampleRate, err) && tape.extendTo (reel) && tape.close())
-            changed.add (t);
+            changed.add (f);
         else
-            error = "Track " + juce::String (t + 1) + ": could not pad the tape to the reel length. " + err;
+            error = f.getFileNameWithoutExtension() + ": could not pad the tape to the reel length. " + err;
     }
 
     return changed;
+}
+
+juce::String Reel::nextMasterName() const
+{
+    for (int i = 0; i < 26 * 4; ++i)
+    {
+        const auto name = "Mix " + juce::String::charToString ((juce::juce_wchar) ('A' + i % 26)) + (i >= 26 ? juce::String (i / 26 + 1) : juce::String());
+        if (uniqueMasterName (name) == name)
+            return name;
+    }
+    return uniqueMasterName ("Mix");
+}
+
+juce::String Reel::uniqueMasterName (const juce::String& wanted) const
+{
+    auto base = juce::File::createLegalFileName (wanted.trim());
+    if (base.isEmpty()) base = "Mix";
+
+    auto taken = [&] (const juce::String& n)
+    {
+        for (auto& m : masters)
+            if (m.name.equalsIgnoreCase (n)) return true;
+        return false;
+    };
+
+    auto name = base;
+    for (int n = 2; taken (name); ++n)
+        name = base + " " + juce::String (n);
+    return name;
+}
+
+int Reel::addMaster (const juce::String& name)
+{
+    masters.push_back ({ uniqueMasterName (name) });
+    return (int) masters.size() - 1;
+}
+
+bool Reel::renameMaster (int index, const juce::String& newName, juce::String& error)
+{
+    if (! juce::isPositiveAndBelow (index, (int) masters.size()))
+        return false;
+
+    const auto oldL = getMasterFile (index, 0), oldR = getMasterFile (index, 1);
+    const auto oldName = masters[(size_t) index].name;
+    masters[(size_t) index].name = "";                       // so it doesn't clash with itself
+    const auto name = uniqueMasterName (newName);
+    masters[(size_t) index].name = name;
+
+    for (auto [from, to] : { std::pair { oldL, getMasterFile (index, 0) }, std::pair { oldR, getMasterFile (index, 1) } })
+        if (from.existsAsFile() && from != to && ! from.moveFileTo (to))
+        {
+            masters[(size_t) index].name = oldName;
+            error = "Could not rename " + from.getFileName();
+            return false;
+        }
+
+    return true;
+}
+
+bool Reel::removeMaster (int index, juce::String& error)
+{
+    if (! juce::isPositiveAndBelow (index, (int) masters.size()))
+        return false;
+
+    for (int side = 0; side < 2; ++side)
+    {
+        const auto f = getMasterFile (index, side);
+        if (f.existsAsFile() && ! f.moveToTrash())
+        {
+            error = "Could not move " + f.getFileName() + " to the Recycle Bin.";
+            return false;
+        }
+    }
+
+    masters.erase (masters.begin() + index);
+    if (activeMaster >= (int) masters.size()) activeMaster = (int) masters.size() - 1;
+    if (masters.empty()) { masterArmed = false; monitorMaster = false; }
+    return true;
 }
 
 //==============================================================================
@@ -224,6 +317,18 @@ std::unique_ptr<juce::XmlElement> Reel::toXml() const
     me->setAttribute ("inR",  channelsToString (master.inputs[1]));
     me->setAttribute ("outL", channelsToString (master.outputs[0]));
     me->setAttribute ("outR", channelsToString (master.outputs[1]));
+    me->setAttribute ("insert", master.insertEnabled);
+    me->setAttribute ("sendL", master.insertSend[0] + 1);
+    me->setAttribute ("sendR", master.insertSend[1] + 1);
+    me->setAttribute ("returnL", master.insertReturn[0] + 1);
+    me->setAttribute ("returnR", master.insertReturn[1] + 1);
+
+    auto* ms = root->createNewChildElement ("Masters");
+    ms->setAttribute ("active", activeMaster);
+    ms->setAttribute ("armed", masterArmed);
+    ms->setAttribute ("monitor", monitorMaster);
+    for (auto& m : masters)
+        ms->createNewChildElement ("Mix")->setAttribute ("name", m.name);
 
     auto* ie = root->createNewChildElement ("Info");
     for (auto& key : info.getAllKeys())
@@ -295,6 +400,20 @@ bool Reel::fromXml (const juce::XmlElement& root, juce::String& error)
         master.inputs[1]  = channelsFromString (me->getStringAttribute ("inR"));
         master.outputs[0] = channelsFromString (me->getStringAttribute ("outL", "1"));
         master.outputs[1] = channelsFromString (me->getStringAttribute ("outR", "2"));
+        master.insertEnabled   = me->getBoolAttribute ("insert", false);
+        master.insertSend[0]   = me->getIntAttribute ("sendL") - 1;
+        master.insertSend[1]   = me->getIntAttribute ("sendR") - 1;
+        master.insertReturn[0] = me->getIntAttribute ("returnL") - 1;
+        master.insertReturn[1] = me->getIntAttribute ("returnR") - 1;
+    }
+
+    if (auto* ms = root.getChildByName ("Masters"))
+    {
+        for (auto* e : ms->getChildWithTagNameIterator ("Mix"))
+            masters.push_back ({ e->getStringAttribute ("name") });
+        activeMaster  = juce::jlimit (-1, (int) masters.size() - 1, ms->getIntAttribute ("active", masters.empty() ? -1 : 0));
+        masterArmed   = ms->getBoolAttribute ("armed", false) && activeMaster >= 0;
+        monitorMaster = ms->getBoolAttribute ("monitor", false) && activeMaster >= 0;
     }
 
     if (auto* ie = root.getChildByName ("Info"))

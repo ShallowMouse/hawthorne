@@ -15,6 +15,7 @@ struct ReelSummary
     juce::int64 lengthSamples = 0;
     juce::StringPairArray info;       // tape box label fields
     juce::StringArray trackNames;     // recorded / named tracks, for the box
+    juce::StringArray masters;        // master mixes on the reel
     std::vector<TakeEntry> takes;
     bool archived = false;
     juce::Time modified;

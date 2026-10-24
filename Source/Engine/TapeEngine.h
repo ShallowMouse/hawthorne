@@ -56,6 +56,36 @@ public:
     void setTrackOutputs (int track, const ChannelList& deviceOutputs);
     void setMasterInputs (int side, const ChannelList& deviceInputs);    // side 0 = L, 1 = R
     void setMasterOutputs (int side, const ChannelList& deviceOutputs);
+    void setMasterInsert (bool enabled, std::array<int, 2> sendOutputs, std::array<int, 2> returnInputs);
+
+    //==========================================================================
+    // Masters: stereo mixes recorded onto the reel, aligned with its tracks
+    void setActiveMaster (int index);           // the master on the machine (-1 = none)
+    void setMasterArmed (bool);
+    bool isMasterArmed() const noexcept       { return masterArmedFlag.load(); }
+    void setMonitorMaster (bool);               // hear the master tape instead of the live mix
+    bool isMonitoringMaster() const noexcept  { return monitorMasterFlag.load(); }
+    /** Rebuild playback after masters were added / renamed / removed. */
+    void mastersChanged();
+
+    //==========================================================================
+    // Latency. Round trip = out -> (cable or outboard) -> in, in samples.
+    /** Measured interface round trip (loopback cable); <= 0 = trust the driver's figure. */
+    void setMeasuredRoundTrip (int samples)   { measuredRoundTrip = samples; }
+    /** Measured round trip through the master insert's outboard; <= 0 = same as the interface. */
+    void setMeasuredInsertRoundTrip (int samples) { measuredInsertRoundTrip = samples; }
+    int  getReportedRoundTrip() const noexcept { return latencySamples.load(); }
+    int  getRoundTrip() const noexcept;        // what compensation actually uses
+    int  getInsertRoundTrip() const noexcept;
+    /** How far behind the tape the master bus is right now (returns / insert). */
+    int  getMasterBusLatency() const noexcept;
+
+    enum class PingState { idle, running, done, failed };
+    /** Sends one click out of a device output and times it back in on an input.
+        The click is audible on that output - use an unused one, or the insert path. */
+    bool startPing (int outputChannel, int inputChannel);
+    PingState getPingState() const noexcept   { return pingState.load(); }
+    int getPingResult() const noexcept        { return pingResult.load(); }
 
     /** Peak since last call (0..1+). Safe from the message thread. */
     float popTrackPeak (int track) noexcept { return trackPeak[(size_t) track].exchange (0.0f); }
@@ -134,6 +164,7 @@ private:
     {
         std::vector<std::shared_ptr<juce::BufferingAudioReader>> keepAlive;
         std::array<std::vector<Segment>, kMaxTracks> tracks;
+        std::array<std::vector<Segment>, 2> master;     // the active master, L / R
     };
 
     struct RoutingTable
@@ -142,11 +173,38 @@ private:
         std::array<bool, kMaxTracks>             toMix;
         std::array<std::vector<int>, kMaxTracks> outputs;   // absolute device outputs
         std::array<std::vector<int>, 2>          masterIn, masterOut;
+        bool insert = false;
+        std::array<int, 2> insertSend { -1, -1 }, insertReturn { -1, -1 };
+        bool hasReturns = false;  // inputs patched to the master: internal mix is delayed to meet them
+    };
+
+    /** Simple ring-buffer delay (audio thread only after prepare). */
+    struct Delay
+    {
+        juce::AudioBuffer<float> buf;
+        int write = 0;
+        void prepare (int maxDelay) { buf.setSize (1, juce::jmax (1, maxDelay) + 1); buf.clear(); write = 0; }
+        void process (float* data, int n, int delay) noexcept
+        {
+            const int size = buf.getNumSamples();
+            delay = juce::jlimit (0, size - 1, delay);
+            auto* b = buf.getWritePointer (0);
+            for (int i = 0; i < n; ++i)
+            {
+                b[write] = data[i];
+                int r = write - delay; if (r < 0) r += size;
+                data[i] = b[r];
+                if (++write == size) write = 0;
+            }
+        }
     };
 
     struct RecordPass
     {
         std::array<std::shared_ptr<RecordingStream>, kMaxTracks> streams;
+        std::array<std::shared_ptr<RecordingStream>, 2> masterStreams;
+        juce::String masterName;
+        int masterLatency = 0;
         std::atomic<juce::int64> startPos { -1 };
         int latency = 0;
     };
@@ -174,7 +232,7 @@ private:
     juce::TimeSliceThread prefetchThread { "Hawthorne Playback Prefetch" };
     DiskWriterThread diskThread;
     std::map<juce::String, std::shared_ptr<juce::BufferingAudioReader>> readerCache;
-    std::array<int, kMaxTracks> tapeGeneration {};
+    std::map<juce::String, int> tapeGeneration;   // file path -> bumped whenever the tape changes
 
     std::atomic<PlaybackGraph*> graph { nullptr };
     std::atomic<RecordPass*>    pass  { nullptr };
@@ -222,7 +280,16 @@ private:
     std::atomic<juce::uint64> callbackCount { 0 };
     juce::StringArray inputNames, outputNames;
     std::array<int, 256> absToActive {}, absToActiveOut {};
-    juce::AudioBuffer<float> mixBus;
+    juce::AudioBuffer<float> mixBus, returnBus, masterTapeBus;
+    std::array<Delay, 2> returnsDelayLine;
+    std::atomic<bool> masterArmedFlag { false }, monitorMasterFlag { false };
+    std::atomic<int>  measuredRoundTrip { 0 }, measuredInsertRoundTrip { 0 };
+
+    // Ping (latency measurement)
+    std::atomic<PingState> pingState { PingState::idle };
+    std::atomic<int> pingOut { -1 }, pingIn { -1 }, pingResult { 0 };
+    std::atomic<bool> pingRequested { false };
+    juce::int64 deviceClock = 0, pingSentAt = -1;
     int maxBlock = 0;
     juce::AudioBuffer<float> trackBuffers, zeros;
 
