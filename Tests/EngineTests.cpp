@@ -5,6 +5,9 @@
 
 #include "../Source/Engine/TapeEngine.h"
 #include "../Source/Engine/Library.h"
+#include "../Source/Network/NetSender.h"
+#include <deque>
+#include <thread>
 #include <cstdio>
 #include <random>
 #if JUCE_LINUX || JUCE_MAC
@@ -736,7 +739,7 @@ static void checkMasterAligned (const Reel& reel, int m, const char* what)
 
 static void testMasters()
 {
-    std::printf ("[13] masters on the reel: internal mix, outboard insert, console returns, ping\n");
+    std::printf ("[13] masters on the reel: internal mix, console returns, ping\n");
     juce::String err;
     auto reel = Reel::create (makeTempDir ("masters"), "Masters", kSR, kDefaultTracks, err);
     if (reel == nullptr) { CHECK (false, "%s", err.toRawUTF8()); return; }
@@ -789,11 +792,6 @@ static void testMasters()
     // 1. Internal mix only
     checkMasterAligned (*reel, recordMaster ("Mix A"), "internal mix");
 
-    // 2. Insert: mix out of 3/4 through the outboard, back on 23/24
-    e.setMasterInsert (true, { 2, 3 }, { 22, 23 });
-    CHECK (e.getMasterBusLatency() == D, "insert latency %d", e.getMasterBusLatency());
-    checkMasterAligned (*reel, recordMaster ("Mix B"), "insert");
-    e.setMasterInsert (false, { -1, -1 }, { -1, -1 });
 
     // 3. Console returns: track 1 leaves the internal mix, goes out of 3,
     //    through a console, and comes back on master input 23.
@@ -802,22 +800,22 @@ static void testMasters()
     e.setMasterInputs (0, ChannelList { 22 });
     e.setMasterInputs (1, {});
     CHECK (e.getMasterBusLatency() == D, "returns latency %d", e.getMasterBusLatency());
-    checkMasterAligned (*reel, recordMaster ("Mix C"), "console returns");
+    checkMasterAligned (*reel, recordMaster ("Mix B"), "console returns");
 
     dev.stopThread (5000);
 
     // Every tape on the reel is the same length, and the masters reload.
     juce::String lerr;
     auto reloaded = Reel::load (reel->getFile(), lerr);
-    CHECK (reloaded != nullptr && reloaded->masters.size() == 3, "masters not saved");
+    CHECK (reloaded != nullptr && reloaded->masters.size() == 2, "masters not saved");
     if (reloaded != nullptr)
     {
         const auto len = readFile (reloaded->getMasterFile (0, 0)).size();
         bool same = len > 0;
         for (auto& f : reloaded->getAllTapeFiles()) same = same && readFile (f).size() == len;
         CHECK (same, "tape lengths differ");
-        CHECK (reloaded->takeLog.back().tracks == "Mix C", "take log '%s'", reloaded->takeLog.back().tracks.toRawUTF8());
-        std::printf ("    3 masters saved, all %d tape files the same length\n", reloaded->getAllTapeFiles().size());
+        CHECK (reloaded->takeLog.back().tracks == "Mix B", "take log '%s'", reloaded->takeLog.back().tracks.toRawUTF8());
+        std::printf ("    2 masters saved, all %d tape files the same length\n", reloaded->getAllTapeFiles().size());
     }
     e.setReel (nullptr);
 }
@@ -967,6 +965,213 @@ static void testVarispeed()
     e.setReel (nullptr);
 }
 
+//==============================================================================
+// Hawthorne Link: a simulated network between a sender and the receiver,
+// with its own sample clock, bursty sends, jitter and packet loss.
+struct LinkSim
+{
+    struct Options { double ppm = 0.0; double jitterMs = 2.0; double loss = 0.0; bool redundant = true;
+                     int senderBlock = 128; double senderRate = kSR; uint32_t session = 0x1234; double seconds = 40.0; };
+
+    explicit LinkSim (Options o) : opt (o) {}
+
+    double signal (int ch, int64 frame) const
+    {
+        return 0.4 * std::sin (2.0 * juce::MathConstants<double>::pi * (997.0 + 31.0 * ch) * (double) frame / kSR);
+    }
+
+    // Runs; calls check (output block, receiver) after every receiver block.
+    template <typename Check>
+    void run (NetReceiver& rx, Check&& check)
+    {
+        const int ch = 2;
+        Packetizer pk;
+        pk.prepare (0xabcd, opt.session, opt.senderRate, ch, opt.redundant);
+        rx.connectToSenderId (0, 0xabcd, "Sim");
+        rx.prepare (kSR);
+
+        std::mt19937 rng (99);
+        std::uniform_real_distribution<double> uni (0.0, 1.0);
+        struct InFlight { double arrive; std::vector<uint8_t> data; };
+        std::deque<InFlight> flight;
+
+        const double senderPerRx = (1.0 + opt.ppm * 1.0e-6);    // sender frames per receiver frame
+        int64 sent = 0;
+        std::vector<float> l ((size_t) opt.senderBlock), r ((size_t) opt.senderBlock);
+        const int block = 256;
+        for (int64 T = 0; T < (int64) (opt.seconds * kSR); T += block)
+        {
+            // sender produces in bursts of its own block size, at its own clock
+            while ((double) (sent + opt.senderBlock) <= (double) (T + block) * senderPerRx)
+            {
+                for (int i = 0; i < opt.senderBlock; ++i) { l[(size_t) i] = (float) signal (0, sent + i); r[(size_t) i] = (float) signal (1, sent + i); }
+                const float* ptrs[2] = { l.data(), r.data() };
+                const double now = (double) (sent + opt.senderBlock) / senderPerRx;
+                pk.push (ptrs, 2, opt.senderBlock, [&] (const uint8_t* d, int size)
+                {
+                    if (uni (rng) < opt.loss) return;
+                    flight.push_back ({ now + uni (rng) * opt.jitterMs * kSR / 1000.0, std::vector<uint8_t> (d, d + size) });
+                });
+                sent += opt.senderBlock;
+            }
+
+            std::sort (flight.begin(), flight.end(), [] (auto& a, auto& b) { return a.arrive < b.arrive; });
+            while (! flight.empty() && flight.front().arrive <= (double) T)
+            {
+                rx.handleDatagram (flight.front().data.data(), (int) flight.front().data.size(), "sim");
+                flight.pop_front();
+            }
+
+            rx.process (block);
+            check (T, block);
+        }
+    }
+
+    Options opt;
+};
+
+static void testNetworkLink()
+{
+    std::printf ("[15] Hawthorne Link: word-clock lock, drift, jitter, packet loss\n");
+
+    // 1. Same clock (word clock): must lock and pass audio bit-perfect.
+    {
+        NetReceiver rx;
+        LinkSim::Options o; o.ppm = 0.0; o.jitterMs = 3.0; o.seconds = 130.0;
+        LinkSim sim (o);
+        int64 lockedAt = -1, compared = 0, wrong = 0, offset = INT64_MIN;
+        sim.run (rx, [&] (int64 T, int n)
+        {
+            if (rx.getStatus (0).state != NetReceiver::State::locked) return;
+            if (lockedAt < 0) lockedAt = T;
+            const float* out = rx.getChannel (0, 1);
+            if (out == nullptr) { ++wrong; return; }
+            double p0, rt;
+            rx.getReadPosition (0, p0, rt);
+            CHECK (rt == 1.0 && p0 == std::floor (p0), "locked but reading at %.6f x%.9f", p0, rt);
+            offset = (int64) p0 - T;
+            for (int k = 0; k < n; ++k, ++compared)
+            {
+                uint8_t b[3];
+                net::writeInt24 (b, (float) sim.signal (1, T + offset + k));
+                if (out[k] != net::readInt24 (b) && wrong++ < 3)
+                {
+                    double p0, rt; rx.getReadPosition (0, p0, rt);
+                    std::printf ("    wrong at T=%lld k=%d (locked since %lld): got %.7f want %.7f  pos %.6f rate %.9f frame %lld\n", (long long) T, k, (long long) lockedAt, out[k], net::readInt24 (b), p0, rt, (long long) (T + offset + k));
+                }
+            }
+        });
+        const auto st = rx.getStatus (0);
+        CHECK (lockedAt > 0 && lockedAt < (int64) (110 * kSR), "never locked (%s)", NetReceiver::describe (st.state).toRawUTF8());
+        CHECK (compared > (int64) (5 * kSR) && wrong == 0, "bit-perfect: %lld compared, %lld wrong", (long long) compared, (long long) wrong);
+        CHECK (st.dropouts == 0, "dropouts %lld", (long long) st.dropouts);
+        std::printf ("    shared clock: locked after %.1f s, %.1f s bit-perfect, latency %.1f ms, 0 dropouts\n",
+                     (double) lockedAt / kSR, (double) compared / kSR, st.bufferMs);
+    }
+
+    // 2. Independent clocks (+43 ppm and -87 ppm): drift corrected, clean, no dropouts.
+    for (double ppm : { 43.0, -87.0 })
+    {
+        NetReceiver rx;
+        LinkSim::Options o; o.ppm = ppm; o.jitterMs = 3.0; o.seconds = 120.0;
+        LinkSim sim (o);
+        // Every output sample against the signal at the exact sender position it was read from
+        // (interpolation quality), plus how steady the rate is once settled.
+        double err = 0, sig = 0, rmin = 2, rmax = 0;
+        sim.run (rx, [&] (int64 T, int n)
+        {
+            if (T < (int64) (100 * kSR)) return;
+            const float* out = rx.getChannel (0, 0);
+            double p0, rate;
+            rx.getReadPosition (0, p0, rate);
+            rmin = juce::jmin (rmin, rate); rmax = juce::jmax (rmax, rate);
+            for (int k = 0; k < n; ++k)
+            {
+                const double pos = p0 + rate * k;
+                const double ideal = 0.4 * std::sin (2.0 * juce::MathConstants<double>::pi * 997.0 * pos / kSR);
+                const double d = (out != nullptr ? out[k] : 0.0f) - ideal;
+                err += d * d; sig += ideal * ideal;
+            }
+        });
+        const double db = 10.0 * std::log10 (err / sig);
+        const double wobble = (rmax - rmin) * 1.0e6;
+        const auto st = rx.getStatus (0);
+        CHECK (st.state == NetReceiver::State::corrected, "state %s", NetReceiver::describe (st.state).toRawUTF8());
+        CHECK (std::abs (st.ppm - ppm) < 3.0, "measured %.2f ppm, actual %.0f", st.ppm, ppm);
+        CHECK (db < -100.0 && st.dropouts == 0, "drift %.0f ppm: error %.1f dB, dropouts %lld", ppm, db, (long long) st.dropouts);
+        CHECK (wobble < 15.0, "rate wobble %.2f ppm", wobble);   // 15 ppm = 0.026 cents
+        std::printf ("    %+.0f ppm clocks: measured %+.2f ppm, rate steady to %.2f ppm, error %.1f dB, 0 dropouts\n", ppm, st.ppm, wobble, db);
+    }
+
+    // 3. Packet loss: redundancy covers it; without it, losses are silenced and counted.
+    for (bool red : { true, false })
+    {
+        NetReceiver rx;
+        LinkSim::Options o; o.loss = 0.002; o.redundant = red; o.seconds = 20.0;
+        LinkSim sim (o);
+        sim.run (rx, [] (int64, int) {});
+        const auto st = rx.getStatus (0);
+        if (red) CHECK (st.dropouts == 0, "0.2%% loss with redundancy: %lld dropouts", (long long) st.dropouts);
+        else     CHECK (st.dropouts > 0, "0.2%% loss without redundancy should be reported");
+        std::printf ("    0.2%% packet loss, redundancy %s: %lld dropouts\n", red ? "on " : "off", (long long) st.dropouts);
+    }
+
+    // 4. Wrong sample rate is refused, not played at the wrong speed.
+    {
+        NetReceiver rx;
+        LinkSim::Options o; o.senderRate = 44100.0; o.seconds = 2.0;
+        LinkSim sim (o);
+        bool everLive = false;
+        sim.run (rx, [&] (int64, int) { everLive = everLive || rx.isLive (0); });
+        CHECK (! everLive && rx.getStatus (0).state == NetReceiver::State::rateMismatch, "rate mismatch not refused");
+    }
+
+    // 5. Real sockets on this machine: sender found by address, subscribed, streaming.
+    {
+        NetSender tx;
+        NetReceiver rx;
+        juce::String err;
+        CHECK (tx.start ("Loopback Sender", err), "sender start: %s", err.toRawUTF8());
+        CHECK (rx.start (err), "receiver start: %s", err.toRawUTF8());
+        tx.prepare (kSR, 4);
+        rx.prepare (kSR);
+        rx.setManualAddresses ({ "127.0.0.1" });
+        rx.connect (0, "Loopback Sender");
+
+        std::atomic<bool> stopAudio { false };
+        std::thread audio ([&]
+        {
+            std::vector<float> buf (4 * 256);
+            const float* ptrs[4] = { buf.data(), buf.data() + 256, buf.data() + 512, buf.data() + 768 };
+            int64 f = 0;
+            const auto t0 = juce::Time::getMillisecondCounterHiRes();
+            while (! stopAudio)
+            {
+                for (int c = 0; c < 4; ++c)
+                    for (int k = 0; k < 256; ++k) buf[(size_t) (c * 256 + k)] = 0.3f * (float) std::sin (0.05 * (double) (f + k) + c);
+                tx.push (ptrs, 4, 256);
+                rx.process (256);
+                f += 256;
+                const double due = t0 + (double) f / kSR * 1000.0;
+                const double now = juce::Time::getMillisecondCounterHiRes();
+                if (due > now) juce::Thread::sleep ((int) (due - now));
+            }
+        });
+
+        bool live = false;
+        for (int i = 0; i < 60 && ! live; ++i) { juce::Thread::sleep (100); live = rx.isLive (0); }
+        juce::Thread::sleep (500);
+        const auto st = rx.getStatus (0);
+        stopAudio = true;
+        audio.join();
+        CHECK (live && st.channels == 4, "loopback: live %d, %s, %d ch", (int) live, NetReceiver::describe (st.state).toRawUTF8(), st.channels);
+        CHECK (tx.getSubscribers().size() == 1, "sender has %d subscribers", (int) tx.getSubscribers().size());
+        std::printf ("    real sockets: found by address, subscribed, %d ch live, %lld packets\n", st.channels, (long long) st.packets);
+        rx.stop();
+        tx.stop();
+    }
+}
+
 static void benchVarispeed()
 {
     // HAWTHORNE_BENCH=1: CPU cost of varispeed playback with every track full.
@@ -1014,6 +1219,7 @@ int main()
     testLibrary();
     testMasters();
     testVarispeed();
+    testNetworkLink();
    #if JUCE_LINUX || JUCE_MAC
     testCrashRecovery();
    #endif

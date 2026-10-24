@@ -20,9 +20,25 @@ void RoutingMatrix::setDevice (const juce::StringArray& in, const juce::BigInteg
     repaint();
 }
 
+void RoutingMatrix::setNetworkInputs (const std::vector<NetInput>& n)
+{
+    const bool sameLayout = n.size() == netInputs.size();
+    netInputs = n;
+    if (! sameLayout) layout();
+    repaint();
+}
+
+int RoutingMatrix::inputIdOf (const Col& c) const
+{
+    if (c.kind == ColKind::network)
+        return juce::isPositiveAndBelow (c.channel, (int) netInputs.size()) ? netInputs[(size_t) c.channel].id : -1;
+    return c.channel;
+}
+
 void RoutingMatrix::layout()
 {
-    const int w = labelW + juce::jmax (1, numIn) * cell + colGap + cell + 4 + juce::jmax (1, numOut) * cell + 12;
+    const int netW = netInputs.empty() ? 0 : colGap + (int) netInputs.size() * cell;
+    const int w = labelW + juce::jmax (1, numIn) * cell + netW + colGap + cell + 4 + juce::jmax (1, numOut) * cell + 12;
     const int h = titleH + numbersH + tracks() * cell + rowGap + 2 * cell + 12;
     setSize (w, h);
 }
@@ -36,12 +52,15 @@ int RoutingMatrix::rowY (int row) const
 int RoutingMatrix::colX (const Col& c) const
 {
     const int inStart  = labelW;
-    const int mixX     = inStart + numIn * cell + colGap;
+    const int netStart = inStart + numIn * cell + colGap;
+    const int mixX     = netInputs.empty() ? inStart + numIn * cell + colGap
+                                           : netStart + (int) netInputs.size() * cell + colGap;
     const int outStart = mixX + cell + 4;
 
     switch (c.kind)
     {
         case ColKind::input:  return inStart + c.channel * cell;
+        case ColKind::network: return netStart + c.channel * cell;
         case ColKind::mix:    return mixX;
         case ColKind::output: return outStart + c.channel * cell;
         case ColKind::none:   break;
@@ -63,6 +82,10 @@ RoutingMatrix::Col RoutingMatrix::colAt (int x) const
         if (x >= colX ({ ColKind::input, i }) && x < colX ({ ColKind::input, i }) + cell)
             return { ColKind::input, i };
 
+    for (int i = 0; i < (int) netInputs.size(); ++i)
+        if (x >= colX ({ ColKind::network, i }) && x < colX ({ ColKind::network, i }) + cell)
+            return { ColKind::network, i };
+
     if (x >= colX ({ ColKind::mix, 0 }) && x < colX ({ ColKind::mix, 0 }) + cell)
         return { ColKind::mix, 0 };
 
@@ -78,6 +101,7 @@ bool RoutingMatrix::isEnabled (const Col& c) const
     switch (c.kind)
     {
         case ColKind::input:  return inActive[c.channel];
+        case ColKind::network: return juce::isPositiveAndBelow (c.channel, (int) netInputs.size()) && netInputs[(size_t) c.channel].live;
         case ColKind::output: return outActive[c.channel];
         case ColKind::mix:    return true;
         case ColKind::none:   break;
@@ -91,7 +115,7 @@ bool RoutingMatrix::isOn (int row, const Col& c) const
     if (s == nullptr || row < 0)
         return false;
 
-    const auto bit = [&] (const ChannelList& l) { return l.contains (c.channel); };
+    const auto bit = [&] (const ChannelList& l) { return l.contains (c.kind == ColKind::network ? inputIdOf (c) : c.channel); };
 
     if (row < tracks())
     {
@@ -99,6 +123,7 @@ bool RoutingMatrix::isOn (int row, const Col& c) const
         switch (c.kind)
         {
             case ColKind::input:  return tr.input == c.channel;
+            case ColKind::network: return tr.input == inputIdOf (c);
             case ColKind::mix:    return tr.toMix;
             case ColKind::output: return bit (tr.outputs);
             case ColKind::none:   break;
@@ -109,7 +134,8 @@ bool RoutingMatrix::isOn (int row, const Col& c) const
     const int side = row - tracks();
     switch (c.kind)
     {
-        case ColKind::input:  return bit (s->master.inputs[(size_t) side]);
+        case ColKind::input:
+        case ColKind::network: return bit (s->master.inputs[(size_t) side]);
         case ColKind::output: return bit (s->master.outputs[(size_t) side]);
         case ColKind::mix:
         case ColKind::none:   break;
@@ -133,6 +159,7 @@ juce::String RoutingMatrix::colName (const Col& c) const
     {
         case ColKind::input:  return "In " + juce::String (c.channel + 1) + (inNames[c.channel].isNotEmpty() ? " (" + inNames[c.channel] + ")" : "");
         case ColKind::output: return "Out " + juce::String (c.channel + 1) + (outNames[c.channel].isNotEmpty() ? " (" + outNames[c.channel] + ")" : "");
+        case ColKind::network: return juce::isPositiveAndBelow (c.channel, (int) netInputs.size()) ? netInputs[(size_t) c.channel].name : juce::String();
         case ColKind::mix:    return "the master mix";
         case ColKind::none:   break;
     }
@@ -153,6 +180,22 @@ void RoutingMatrix::paint (juce::Graphics& g)
     g.drawText ("INPUTS", inX, 2, juce::jmax (cell * 3, numIn * cell), titleH - 4, juce::Justification::centredLeft);
     g.drawText ("OUTPUTS", mixX, 2, (outX - mixX) + juce::jmax (cell * 3, numOut * cell), titleH - 4, juce::Justification::centredLeft);
     g.drawHorizontalLine (titleH - 2, (float) inX, (float) (inX + numIn * cell));
+    if (! netInputs.empty())
+    {
+        // one title per sender
+        int i = 0;
+        while (i < (int) netInputs.size())
+        {
+            int j = i;
+            while (j + 1 < (int) netInputs.size() && netInputs[(size_t) j + 1].slot == netInputs[(size_t) i].slot) ++j;
+            const int x0 = colX ({ ColKind::network, i }), x1 = colX ({ ColKind::network, j }) + cell;
+            g.setColour (Colours::mustard);
+            g.drawText ("NET " + juce::String (netInputs[(size_t) i].slot + 1), x0, 2, juce::jmax (x1 - x0, cell * 3), titleH - 4,
+                        juce::Justification::centredLeft, true);
+            g.drawHorizontalLine (titleH - 2, (float) x0, (float) x1 - 2.0f);
+            i = j + 1;
+        }
+    }
     g.drawHorizontalLine (titleH - 2, (float) mixX, (float) (outX + numOut * cell));
 
     // Column numbers
@@ -164,6 +207,7 @@ void RoutingMatrix::paint (juce::Graphics& g)
         g.drawText (text, colX (c), titleH, cell, numbersH - 4, juce::Justification::centredBottom);
     };
     for (int i = 0; i < numIn; ++i)  drawColHeader ({ ColKind::input, i }, juce::String (i + 1));
+    for (int i = 0; i < (int) netInputs.size(); ++i) drawColHeader ({ ColKind::network, i }, juce::String (netInputs[(size_t) i].channel + 1));
     drawColHeader ({ ColKind::mix, 0 }, "MIX");
     for (int i = 0; i < numOut; ++i) drawColHeader ({ ColKind::output, i }, juce::String (i + 1));
 
@@ -192,7 +236,8 @@ void RoutingMatrix::paint (juce::Graphics& g)
 
             auto rc = juce::Rectangle<float> ((float) colX (c), (float) y, (float) cell, (float) cell).reduced (1.5f);
             const bool hot = hotRow || (hoverCol.kind == c.kind && hoverCol.channel == c.channel);
-            const bool groupShade = (c.kind != ColKind::mix) && ((c.channel / 8) % 2 == 1);
+            const bool groupShade = c.kind == ColKind::network ? (netInputs[(size_t) c.channel].slot % 2 == 1)
+                                                               : (c.kind != ColKind::mix) && ((c.channel / 8) % 2 == 1);
             const bool enabled = isEnabled (c);
 
             g.setColour (Colours::black.brighter (groupShade ? 0.06f : 0.0f).brighter (hot ? 0.12f : 0.0f));
@@ -211,6 +256,7 @@ void RoutingMatrix::paint (juce::Graphics& g)
         };
 
         for (int i = 0; i < numIn; ++i)  drawCell ({ ColKind::input, i });
+        for (int i = 0; i < (int) netInputs.size(); ++i) drawCell ({ ColKind::network, i });
         drawCell ({ ColKind::mix, 0 });
         for (int i = 0; i < numOut; ++i) drawCell ({ ColKind::output, i });
     }
@@ -246,7 +292,8 @@ juce::String RoutingMatrix::getTooltip()
         return {};
 
     if (! isEnabled (hoverCol))
-        return colName (hoverCol) + " is not enabled - turn it on in Audio Settings";
+        return colName (hoverCol) + (hoverCol.kind == ColKind::network ? " isn't receiving audio - see NETWORK"
+                                                                       : " is not enabled - turn it on in Audio Settings");
 
     const bool isMaster = hoverRow >= tracks();
     if (isMaster && hoverCol.kind == ColKind::mix)
@@ -255,7 +302,7 @@ juce::String RoutingMatrix::getTooltip()
     const auto who = isMaster ? rowName (hoverRow) : "Track " + juce::String (hoverRow + 1);
     const bool on = isOn (hoverRow, hoverCol);
 
-    if (hoverCol.kind == ColKind::input)
+    if (hoverCol.kind == ColKind::input || hoverCol.kind == ColKind::network)
         return who + (on ? " is fed from " : " <- click to feed from ") + colName (hoverCol);
 
     return who + (on ? " goes to " : " -> click to send to ") + colName (hoverCol);
@@ -270,10 +317,12 @@ void RoutingMatrix::mouseDown (const juce::MouseEvent& e)
     if (s == nullptr || r < 0 || c.kind == ColKind::none || ! isEnabled (c))
         return;
 
+    const int id = inputIdOf (c);
     const auto flip = [&] (ChannelList l)
     {
-        if (l.contains (c.channel)) l.removeFirstMatchingValue (c.channel);
-        else                        { l.add (c.channel); l.sort(); }
+        const int v = c.kind == ColKind::network ? id : c.channel;
+        if (l.contains (v)) l.removeFirstMatchingValue (v);
+        else                { l.add (v); l.sort(); }
         return l;
     };
 
@@ -283,6 +332,7 @@ void RoutingMatrix::mouseDown (const juce::MouseEvent& e)
         switch (c.kind)
         {
             case ColKind::input:  engine.setInput (r, tr.input == c.channel ? -1 : c.channel); break;
+            case ColKind::network: engine.setInput (r, tr.input == id ? -1 : id); break;
             case ColKind::mix:    engine.setTrackToMix (r, ! tr.toMix); break;
             case ColKind::output: engine.setTrackOutputs (r, flip (tr.outputs)); break;
             case ColKind::none:   break;
@@ -293,7 +343,8 @@ void RoutingMatrix::mouseDown (const juce::MouseEvent& e)
         const int side = r - tracks();
         switch (c.kind)
         {
-            case ColKind::input:  engine.setMasterInputs (side, flip (s->master.inputs[(size_t) side])); break;
+            case ColKind::input:
+            case ColKind::network: engine.setMasterInputs (side, flip (s->master.inputs[(size_t) side])); break;
             case ColKind::output: engine.setMasterOutputs (side, flip (s->master.outputs[(size_t) side])); break;
             case ColKind::mix:
             case ColKind::none:   return;
@@ -307,35 +358,24 @@ void RoutingMatrix::mouseDown (const juce::MouseEvent& e)
 //==============================================================================
 LatencyPanel::LatencyPanel (TapeEngine& e, std::function<Reel*()> gs) : engine (e), getReel (std::move (gs))
 {
-    for (auto* c : { &pingOut, &pingIn, &sendL, &sendR, &returnL, &returnR })
+    for (auto* c : { &pingOut, &pingIn })
     {
         c->setWantsKeyboardFocus (false);
         addAndMakeVisible (c);
     }
-    for (auto* b : { &measureButton, &resetButton, &measureInsertButton, &resetInsertButton })
+    for (auto* b : { &measureButton, &resetButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (b);
     }
-    insertToggle.setWantsKeyboardFocus (false);
-    addAndMakeVisible (insertToggle);
 
     pingOut.setTooltip ("Output the test click is sent from. Patch it straight back to the input with a cable.");
     pingIn.setTooltip ("Input the cable comes back on");
     measureButton.setTooltip ("Sends a click out and times it coming back. Patch a cable from the output to the input first - the click is audible on that output.");
     resetButton.setTooltip ("Forget the measurement and trust the figure the audio driver reports");
-    insertToggle.setTooltip ("Send the master bus out to outboard (bus compressor, EQ...) and record what comes back.");
-    measureInsertButton.setTooltip ("Clicks through the outboard (send L to return L) and times it. Set the gear to unity / bypass-ish so the click survives.");
-    resetInsertButton.setTooltip ("Assume the outboard adds nothing beyond the interface round trip (analogue gear)");
 
-    measureButton.onClick       = [this] { startMeasure (false); };
-    measureInsertButton.onClick = [this] { startMeasure (true); };
-    resetButton.onClick         = [this] { engine.setMeasuredRoundTrip (0);       if (onMeasured) onMeasured (0, -1); message = "Using the driver's figure."; refresh(); };
-    resetInsertButton.onClick   = [this] { engine.setMeasuredInsertRoundTrip (0); if (onMeasured) onMeasured (-1, 0); message = "Insert assumed to add no extra delay."; refresh(); };
-
-    insertToggle.onClick = [this] { applyInsert(); };
-    for (auto* c : { &sendL, &sendR, &returnL, &returnR })
-        c->onChange = [this] { applyInsert(); };
+    measureButton.onClick = [this] { startMeasure(); };
+    resetButton.onClick   = [this] { engine.setMeasuredRoundTrip (0); if (onMeasured) onMeasured (0); message = "Using the driver's figure."; refresh(); };
 }
 
 void LatencyPanel::fill (juce::ComboBox& c, const juce::StringArray& names, const juce::BigInteger& active, const juce::String& none)
@@ -354,41 +394,27 @@ void LatencyPanel::setDevice (const juce::StringArray& inN, const juce::BigInteg
 {
     fill (pingOut, outN, outA, "-");
     fill (pingIn, inN, inA, "-");
-    fill (sendL, outN, outA, "none");
-    fill (sendR, outN, outA, "none");
-    fill (returnL, inN, inA, "none");
-    fill (returnR, inN, inA, "none");
     refresh();
 }
 
 void LatencyPanel::refresh()
 {
-    if (auto* reel = getReel())
-    {
-        auto sel = [] (juce::ComboBox& c, int ch) { c.setSelectedId (ch >= 0 ? ch + 1 : 1000, juce::dontSendNotification); };
-        insertToggle.setToggleState (reel->master.insertEnabled, juce::dontSendNotification);
-        sel (sendL, reel->master.insertSend[0]);    sel (sendR, reel->master.insertSend[1]);
-        sel (returnL, reel->master.insertReturn[0]); sel (returnR, reel->master.insertReturn[1]);
-    }
     repaint();
 }
 
-void LatencyPanel::applyInsert()
+static int selectedChannel (const juce::ComboBox& c)
 {
-    auto ch = [] (juce::ComboBox& c) { const int id = c.getSelectedId(); return id > 0 && id != 1000 ? id - 1 : -1; };
-    engine.setMasterInsert (insertToggle.getToggleState(), { ch (sendL), ch (sendR) }, { ch (returnL), ch (returnR) });
-    refresh();
+    const int id = c.getSelectedId();
+    return id > 0 && id != 1000 ? id - 1 : -1;
 }
 
-void LatencyPanel::startMeasure (bool insert)
+void LatencyPanel::startMeasure()
 {
-    auto ch = [] (juce::ComboBox& c) { const int id = c.getSelectedId(); return id > 0 && id != 1000 ? id - 1 : -1; };
-    const int out = insert ? ch (sendL) : ch (pingOut);
-    const int in  = insert ? ch (returnL) : ch (pingIn);
+    const int out = selectedChannel (pingOut), in = selectedChannel (pingIn);
 
     if (out < 0 || in < 0)
     {
-        message = insert ? "Choose the insert's SEND L and RETURN L first." : "Choose an output and an input, and patch a cable between them.";
+        message = "Choose an output and an input, and patch a cable between them.";
         repaint();
         return;
     }
@@ -399,7 +425,6 @@ void LatencyPanel::startMeasure (bool insert)
         return;
     }
 
-    measuringInsert = insert;
     results.clear();
     runsLeft = 3;
     if (! engine.startPing (out, in))
@@ -422,7 +447,7 @@ void LatencyPanel::timerCallback()
     if (state == TapeEngine::PingState::failed)
     {
         stopTimer();
-        message = "Nothing came back. Check the cable / outboard and the levels.";
+        message = "Nothing came back. Check the cable and the levels.";
         repaint();
         return;
     }
@@ -431,8 +456,7 @@ void LatencyPanel::timerCallback()
 
     if (--runsLeft > 0)
     {
-        auto ch = [] (juce::ComboBox& c) { const int id = c.getSelectedId(); return id > 0 && id != 1000 ? id - 1 : -1; };
-        engine.startPing (measuringInsert ? ch (sendL) : ch (pingOut), measuringInsert ? ch (returnL) : ch (pingIn));
+        engine.startPing (selectedChannel (pingOut), selectedChannel (pingIn));
         return;
     }
 
@@ -448,9 +472,8 @@ void LatencyPanel::timerCallback()
         return;
     }
 
-    if (measuringInsert) engine.setMeasuredInsertRoundTrip (value);
-    else                 engine.setMeasuredRoundTrip (value);
-    if (onMeasured) onMeasured (measuringInsert ? -1 : value, measuringInsert ? value : -1);
+    engine.setMeasuredRoundTrip (value);
+    if (onMeasured) onMeasured (value);
 
     message = "Measured " + juce::String (value) + " samples, 3 readings agree. Saved for this audio device.";
     refresh();
@@ -476,26 +499,18 @@ void LatencyPanel::paint (juce::Graphics& g)
                     + (measured ? "  - measured" : ""),
                 rttText, juce::Justification::centredLeft, true);
 
-    if (insertToggle.getToggleState())
-        g.drawText ("insert " + fmt (engine.getInsertRoundTrip()) + "     master records " + fmt (engine.getMasterBusLatency()) + " early",
-                    insertText, juce::Justification::centredLeft, true);
-    else
-        g.drawText ("Off: the master is the mix of the tracks (plus any inputs patched to it below)",
-                    insertText, juce::Justification::centredLeft, true);
-
     g.setFont (monoFont (10.0f, true));
     g.setColour (Colours::textDim);
     g.drawText ("OUT", pingOut.getBounds().translated (-32, 0).withWidth (30), juce::Justification::centredLeft);
     g.drawText ("IN",  pingIn.getBounds().translated (-24, 0).withWidth (22), juce::Justification::centredLeft);
-    const std::pair<juce::ComboBox*, const char*> caps[] = { { &sendL, "SEND L" }, { &sendR, "SEND R" },
-                                                             { &returnL, "RETURN L" }, { &returnR, "RETURN R" } };
-    for (auto& [c, t] : caps)
-        g.drawText (t, c->getBounds().translated (0, c->getHeight() + 1).withHeight (14), juce::Justification::centredLeft);
 
     g.setFont (monoFont (12.0f));
-    g.drawText (message.isNotEmpty() ? message
-                                     : juce::String ("Everything recorded is shifted back by these figures so it lands in step with the tape."),
-                messageArea, juce::Justification::centredLeft, true);
+    juce::String info = message;
+    if (info.isEmpty())
+        info = engine.getMasterBusLatency() > 0
+                 ? "Inputs are patched to the master, so the internal mix waits " + fmt (engine.getMasterBusLatency()) + " to meet them."
+                 : juce::String ("Everything recorded is shifted back by this figure so it lands in step with the tape.");
+    g.drawText (info, messageArea, juce::Justification::centredLeft, true);
 }
 
 void LatencyPanel::resized()
@@ -503,29 +518,13 @@ void LatencyPanel::resized()
     auto r = getLocalBounds().reduced (12, 8);
     auto row1 = r.removeFromTop (26);
     row1.removeFromLeft (120);
-    auto label = [] (juce::Rectangle<int>& row, int w) { row.removeFromLeft (w); };
-    label (row1, 32); pingOut.setBounds (row1.removeFromLeft (150)); row1.removeFromLeft (6);
-    label (row1, 24); pingIn.setBounds (row1.removeFromLeft (150));  row1.removeFromLeft (8);
+    row1.removeFromLeft (32); pingOut.setBounds (row1.removeFromLeft (150)); row1.removeFromLeft (6);
+    row1.removeFromLeft (24); pingIn.setBounds (row1.removeFromLeft (150));  row1.removeFromLeft (8);
     measureButton.setBounds (row1.removeFromLeft (90)); row1.removeFromLeft (6);
     resetButton.setBounds (row1.removeFromLeft (100)); row1.removeFromLeft (14);
     rttText = row1;
 
     r.removeFromTop (8);
-    auto row2 = r.removeFromTop (26);
-    insertToggle.setBounds (row2.removeFromLeft (150));
-    label (row2, 2);
-    sendL.setBounds (row2.removeFromLeft (110));   row2.removeFromLeft (4);
-    sendR.setBounds (row2.removeFromLeft (110));   row2.removeFromLeft (14);
-    returnL.setBounds (row2.removeFromLeft (110)); row2.removeFromLeft (4);
-    returnR.setBounds (row2.removeFromLeft (110)); row2.removeFromLeft (8);
-    measureInsertButton.setBounds (row2.removeFromLeft (90)); row2.removeFromLeft (6);
-    resetInsertButton.setBounds (row2.removeFromLeft (150)); row2.removeFromLeft (14);
-    insertText = row2;
-
-    r.removeFromTop (6);
-    auto row3 = r.removeFromTop (20);
-    juce::ignoreUnused (row3);
-    r.removeFromTop (2);
     messageArea = r.removeFromTop (22);
 }
 

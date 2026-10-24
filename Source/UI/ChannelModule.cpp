@@ -9,16 +9,6 @@ ChannelModule::ChannelModule (int i) : index (i), meter ("Track " + juce::String
     meter.onDoubleClick = [this] { if (onRenameRequest) onRenameRequest (index); };
     addAndMakeVisible (meter);
 
-    inputBox.setTooltip ("Input");
-    inputBox.setWantsKeyboardFocus (false);
-    inputBox.onChange = [this]
-    {
-        const int id = inputBox.getSelectedId();
-        if (id > 0 && onInputChanged)
-            onInputChanged (index, id - 2); // id 1 = none (-1)
-    };
-    addAndMakeVisible (inputBox);
-
     armButton.setClickingTogglesState (false);
     armButton.setWantsKeyboardFocus (false);
     armButton.setColour (juce::TextButton::buttonOnColourId, Colours::red);
@@ -31,27 +21,6 @@ ChannelModule::ChannelModule (int i) : index (i), meter ("Track " + juce::String
 void ChannelModule::setTrackName (const juce::String& n)
 {
     meter.setLabel (n);
-}
-
-void ChannelModule::setInputChoices (const juce::StringArray& names, const juce::BigInteger& active, int selected)
-{
-    inputBox.clear (juce::dontSendNotification);
-    inputBox.addItem ("--", 1);
-
-    for (int ch = 0; ch < names.size(); ++ch)
-    {
-        inputBox.addItem ("In " + juce::String (ch + 1), ch + 2);
-        inputBox.setItemEnabled (ch + 2, active[ch]);
-    }
-
-    if (selected >= names.size())
-        inputBox.addItem ("In " + juce::String (selected + 1) + "?", selected + 2);
-
-    inputBox.setSelectedId (selected + 2, juce::dontSendNotification);
-
-    const bool ok = selected >= 0 && selected < names.size() && active[selected];
-    inputBox.setColour (juce::ComboBox::textColourId, ok ? Colours::text : Colours::red);
-    inputBox.setTooltip (ok ? names[selected] : (selected < 0 ? "No input" : "Input not active - enable it in Audio Settings"));
 }
 
 void ChannelModule::setArmed (bool armed, bool recording, bool flashPhase)
@@ -81,10 +50,7 @@ void ChannelModule::resized()
     meter.setBounds (r.reduced (0, 2));
 
     numberArea = controls.removeFromRight (juce::jmax (30, controls.getWidth() / 4));
-    const int w = controls.getWidth();
-    inputBox.setBounds (controls.removeFromLeft (w / 2 - 2));
-    controls.removeFromLeft (4);
-    armButton.setBounds (controls.removeFromLeft (juce::jmin (controls.getWidth(), 60)));
+    armButton.setBounds (controls.removeFromLeft (juce::jmin (controls.getWidth() - 8, 90)));
 }
 
 } // namespace hawthorne

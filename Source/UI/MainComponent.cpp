@@ -88,7 +88,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     juce::LookAndFeel::setDefaultLookAndFeel (&lnf);
     setWantsKeyboardFocus (true);
 
-    for (auto* b : { &libraryButton, &sheetButton, &routingButton, &audioButton })
+    for (auto* b : { &libraryButton, &sheetButton, &routingButton, &networkButton, &audioButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (b);
@@ -96,6 +96,8 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     libraryButton.onClick = [this] { showLibrary (true); };
     sheetButton.onClick   = [this] { showSheet(); };
     routingButton.onClick = [this] { showRouting(); };
+    networkButton.onClick = [this] { showNetwork(); };
+    networkButton.setTooltip ("Hawthorne Link: record audio sent from other PCs");
     audioButton.onClick   = [this] { showAudioSettings(); };
 
     for (auto* k : { &rtzKey, &rewKey, &ffwKey, &stopKey, &playKey, &recKey, &markKey })
@@ -204,6 +206,14 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     };
     addChildComponent (library);
 
+    // Hawthorne Link: network inputs, ready before the audio starts
+    engine.setNetworkReceiver (&netRx);
+    {
+        juce::String netErr;
+        netRx.start (netErr);
+        loadNetworkSettings();
+    }
+
     initialiseAudio();
     showLibrary (true);   // the tape library is the first thing you see
 
@@ -216,6 +226,7 @@ MainComponent::~MainComponent()
     shutdown();
     sheetWindow = nullptr;
     routingWindow = nullptr;
+    networkWindow = nullptr;
     juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
     setLookAndFeel (nullptr);
 }
@@ -227,6 +238,8 @@ void MainComponent::shutdown()
     deviceManager.removeAudioCallback (&engine);
     deviceManager.removeChangeListener (this);
     deviceManager.closeAudioDevice();
+    saveNetworkSettings();
+    netRx.stop();
     juce::Desktop::setScreenSaverEnabled (true);
 }
 
@@ -283,7 +296,6 @@ void MainComponent::applyStoredLatency()
     const auto key = latencyKey();
     auto* s = props.getUserSettings();
     engine.setMeasuredRoundTrip (key.isNotEmpty() ? s->getIntValue ("rtt_" + key, 0) : 0);
-    engine.setMeasuredInsertRoundTrip (key.isNotEmpty() ? s->getIntValue ("insertRtt_" + key, 0) : 0);
 }
 
 void MainComponent::matchDeviceToSession()
@@ -425,11 +437,6 @@ void MainComponent::rebuildModules()
             if (! engine.isRecording())     // arming is locked during a take
                 engine.setArmed (track, arm);
         };
-        m->onInputChanged = [this] (int track, int ch)
-        {
-            engine.setInput (track, ch);
-            refreshInputChoices();
-        };
         m->onRenameRequest = [this] (int track) { renameTrack (track); };
         bridge.addAndMakeVisible (m);
     }
@@ -448,18 +455,6 @@ void MainComponent::layoutBridge()
 
 void MainComponent::refreshInputChoices()
 {
-    juce::StringArray names;
-    juce::BigInteger active;
-
-    if (auto* dev = deviceManager.getCurrentAudioDevice())
-    {
-        names  = dev->getInputChannelNames();
-        active = dev->getActiveInputChannels();
-    }
-
-    for (int t = 0; t < bridge.modules.size(); ++t)
-        bridge.modules[t]->setInputChoices (names, active, reel != nullptr ? reel->tracks[(size_t) t].input : -1);
-
     if (routingWindow != nullptr)
         routingWindow->getMatrix().repaint();
 }
@@ -777,6 +772,70 @@ void MainComponent::exportMaster (juce::int64 start, juce::int64 end, const juce
 }
 
 //==============================================================================
+// Network (Hawthorne Link)
+
+void MainComponent::showNetwork()
+{
+    if (networkWindow == nullptr)
+    {
+        networkWindow = std::make_unique<NetworkWindow> (netRx);
+        networkWindow->getPanel().onChanged = [this] { saveNetworkSettings(); updateNetworkInputs(); };
+    }
+    networkWindow->setVisible (true);
+    networkWindow->toFront (true);
+}
+
+void MainComponent::loadNetworkSettings()
+{
+    auto* s = props.getUserSettings();
+    netRx.setTargetLatencyMs (s->getDoubleValue ("netLatencyMs", 15.0));
+    netRx.setManualAddresses (juce::StringArray::fromLines (s->getValue ("netManual")));
+    const auto names = juce::StringArray::fromLines (s->getValue ("netSlots"));
+    for (int slot = 0; slot < juce::jmin (names.size(), NetReceiver::maxSlots); ++slot)
+        if (names[slot].isNotEmpty())
+            netRx.connect (slot, names[slot]);
+}
+
+void MainComponent::saveNetworkSettings()
+{
+    auto* s = props.getUserSettings();
+    s->setValue ("netLatencyMs", netRx.getTargetLatencyMs());
+    s->setValue ("netManual", netRx.getManualAddresses().joinIntoString ("\n"));
+    juce::StringArray names;
+    for (int slot = 0; slot < NetReceiver::maxSlots; ++slot)
+        names.add (netRx.getSlotName (slot));
+    s->setValue ("netSlots", names.joinIntoString ("\n"));
+    props.saveIfNeeded();
+}
+
+void MainComponent::updateNetworkInputs()
+{
+    // Network channels become inputs in the routing matrix while their sender is connected.
+    std::vector<RoutingMatrix::NetInput> inputs;
+    juce::String key;
+    for (int slot = 0; slot < NetReceiver::maxSlots; ++slot)
+    {
+        const auto st = netRx.getStatus (slot);
+        if (st.state == NetReceiver::State::off || st.channels <= 0)
+            continue;
+        const bool live = netRx.isLive (slot);
+        for (int ch = 0; ch < st.channels; ++ch)
+            inputs.push_back ({ NetReceiver::inputId (slot, ch),
+                                "NET " + juce::String (slot + 1) + " " + st.name + " ch " + juce::String (ch + 1), slot, ch, live });
+        key << slot << ":" << st.channels << (live ? "L" : "-") << st.name << "|";
+    }
+
+    if (key != netInputsKey)
+    {
+        netInputsKey = key;
+        if (routingWindow != nullptr)
+        {
+            routingWindow->getMatrix().setNetworkInputs (inputs);
+        }
+    }
+}
+
+//==============================================================================
 // Windows
 
 void MainComponent::showRouting()
@@ -785,12 +844,13 @@ void MainComponent::showRouting()
     {
         routingWindow = std::make_unique<RoutingWindow> (engine, [this] { return reel.get(); });
         routingWindow->getMatrix().onChanged = [this] { refreshInputChoices(); routingWindow->getLatencyPanel().repaint(); };
-        routingWindow->getLatencyPanel().onMeasured = [this] (int rtt, int insertRtt)
+        netInputsKey.clear();
+        updateNetworkInputs();
+        routingWindow->getLatencyPanel().onMeasured = [this] (int rtt)
         {
             const auto key = latencyKey();
             if (key.isEmpty()) return;
-            if (rtt >= 0)       props.getUserSettings()->setValue ("rtt_" + key, rtt);
-            if (insertRtt >= 0) props.getUserSettings()->setValue ("insertRtt_" + key, insertRtt);
+            props.getUserSettings()->setValue ("rtt_" + key, rtt);
             props.saveIfNeeded();
         };
         updateRoutingDevice();
@@ -995,6 +1055,9 @@ void MainComponent::timerCallback()
     masterR.update (engine.popMasterRms (1), engine.popMasterPeak (1), dt);
     markers.setPlayhead (engine.getPosition());
 
+    if (frame % 15 == 0)
+        updateNetworkInputs();
+
     if (frame % 10 == 0)
     {
         statusText = buildStatus();
@@ -1031,6 +1094,17 @@ juce::String MainComponent::buildStatus() const
     }
 
     parts.add ("disk buffer peak " + juce::String (juce::roundToInt (engine.getDiskBufferPeak() * 100.0f)) + "%");
+
+    for (int slot = 0; slot < NetReceiver::maxSlots; ++slot)
+    {
+        const auto st = netRx.getStatus (slot);
+        if (st.state == NetReceiver::State::off) continue;
+        const bool bad = st.state == NetReceiver::State::rateMismatch || st.state == NetReceiver::State::waiting
+                      || st.state == NetReceiver::State::searching;
+        parts.add ((bad ? "!! " : "") + juce::String ("NET ") + juce::String (slot + 1) + " "
+                   + (st.state == NetReceiver::State::locked ? "locked" : NetReceiver::describe (st.state))
+                   + (st.dropouts > 0 ? " (" + juce::String (st.dropouts) + " dropouts)" : juce::String()));
+    }
 
     if (engine.getDroppedSamples() > 0)
         parts.add ("!! DROPPED " + juce::String ((double) engine.getDroppedSamples() / sr * 1000.0, 0) + " ms");
@@ -1119,6 +1193,8 @@ void MainComponent::resized()
     {
         auto h = headerArea.reduced (12, 9);
         audioButton.setBounds (h.removeFromRight (140));
+        h.removeFromRight (8);
+        networkButton.setBounds (h.removeFromRight (100));
         h.removeFromRight (8);
         routingButton.setBounds (h.removeFromRight (96));
         h.removeFromRight (8);

@@ -28,6 +28,7 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 CloseApplications=yes
+; (Hawthorne Link is closed too while updating)
 RestartApplications=no
 
 [Tasks]
@@ -35,9 +36,11 @@ Name: "desktopicon"; Description: "Put a Hawthorne shortcut on the desktop"; Gro
 
 [Files]
 Source: "..\build\Hawthorne_artefacts\Release\Hawthorne.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\build\HawthorneLink_artefacts\Release\Hawthorne Link.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\Hawthorne"; Filename: "{app}\Hawthorne.exe"
+Name: "{autoprograms}\Hawthorne Link"; Filename: "{app}\Hawthorne Link.exe"
 Name: "{autodesktop}\Hawthorne"; Filename: "{app}\Hawthorne.exe"; Tasks: desktopicon
 
 [Run]

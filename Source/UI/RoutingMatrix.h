@@ -24,6 +24,10 @@ public:
     void setDevice (const juce::StringArray& inputNames, const juce::BigInteger& activeInputs,
                     const juce::StringArray& outputNames, const juce::BigInteger& activeOutputs);
 
+    /** Network inputs (Hawthorne Link) shown after the device inputs. */
+    struct NetInput { int id; juce::String name; int slot; int channel; bool live; };
+    void setNetworkInputs (const std::vector<NetInput>&);
+
     std::function<void()> onChanged;
 
     void paint (juce::Graphics&) override;
@@ -33,7 +37,7 @@ public:
     juce::String getTooltip() override;
 
 private:
-    enum class ColKind { none, input, mix, output };
+    enum class ColKind { none, input, network, mix, output };
     struct Col { ColKind kind = ColKind::none; int channel = -1; };
 
     static constexpr int cell = 22, labelW = 150, titleH = 22, numbersH = 30, rowGap = 10, colGap = 12;
@@ -58,6 +62,8 @@ private:
 
     TapeEngine& engine;
     std::function<Reel*()> getReel;
+    std::vector<NetInput> netInputs;
+    int inputIdOf (const Col&) const;
     juce::StringArray inNames, outNames;
     juce::BigInteger inActive, outActive;
     int numIn = 0, numOut = 0;
@@ -68,11 +74,8 @@ private:
 };
 
 //==============================================================================
-/**
-    Latency strip above the matrix:
-      - interface round trip (driver figure, or measured with a loopback cable)
-      - master insert: send the mix bus to outboard and record what comes back
-*/
+/** Latency strip above the matrix: the interface round trip (driver figure,
+    or measured with a loopback cable) that every recording is shifted by. */
 class LatencyPanel : public juce::Component,
                      private juce::Timer
 {
@@ -83,32 +86,28 @@ public:
                     const juce::StringArray& outputNames, const juce::BigInteger& activeOutputs);
     void refresh();
 
-    /** A measurement finished: (interface round trip, insert round trip); 0 = not measured. */
-    std::function<void (int, int)> onMeasured;
+    /** A measurement finished (0 = measurement cleared, use the driver's figure). */
+    std::function<void (int)> onMeasured;
 
-    static constexpr int preferredHeight = 128;
+    static constexpr int preferredHeight = 76;
     void paint (juce::Graphics&) override;
     void resized() override;
 
 private:
     void timerCallback() override;
-    void startMeasure (bool insert);
-    void applyInsert();
+    void startMeasure();
     static void fill (juce::ComboBox&, const juce::StringArray& names, const juce::BigInteger& active, const juce::String& none);
 
     TapeEngine& engine;
     std::function<Reel*()> getReel;
 
-    juce::ComboBox pingOut, pingIn, sendL, sendR, returnL, returnR;
-    juce::TextButton measureButton { "MEASURE" }, resetButton { "USE DRIVER" },
-                     measureInsertButton { "MEASURE" }, resetInsertButton { "SAME AS INTERFACE" };
-    juce::ToggleButton insertToggle { "MASTER INSERT" };
+    juce::ComboBox pingOut, pingIn;
+    juce::TextButton measureButton { "MEASURE" }, resetButton { "USE DRIVER" };
 
-    bool measuringInsert = false;
     int runsLeft = 0;
     juce::Array<int> results;
     juce::String message;
-    juce::Rectangle<int> rttText, insertText, messageArea;
+    juce::Rectangle<int> rttText, messageArea;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LatencyPanel)
 };

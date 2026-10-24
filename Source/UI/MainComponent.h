@@ -9,6 +9,7 @@
 #include "RoutingMatrix.h"
 #include "SessionSheet.h"
 #include "LibraryView.h"
+#include "NetworkWindow.h"
 #include "../Updater.h"
 
 namespace hawthorne
@@ -106,6 +107,12 @@ private:
     juce::String latencyKey() const;
     void applyStoredLatency();
 
+    // Network (Hawthorne Link)
+    void showNetwork();
+    void loadNetworkSettings();
+    void saveNetworkSettings();
+    void updateNetworkInputs();
+
     // Windows
     void showRouting();
     void updateRoutingDevice();
@@ -132,13 +139,14 @@ private:
     HawthorneLookAndFeel lnf;
     juce::TooltipWindow tooltips { this, 600 };
 
+    NetReceiver netRx;                   // outlives the engine (which reads it on the audio thread)
     TapeEngine engine;
     juce::AudioDeviceManager deviceManager;
     std::unique_ptr<Reel> reel;          // the tape on the deck
     std::unique_ptr<Session> session;    // the session it belongs to
 
     juce::TextButton libraryButton { "LIBRARY" }, sheetButton { "SESSION SHEET" },
-                     routingButton { "ROUTING" }, audioButton { "AUDIO SETTINGS" }, updateButton;
+                     routingButton { "ROUTING" }, networkButton { "NETWORK" }, audioButton { "AUDIO SETTINGS" }, updateButton;
     Updater updater;
 
     TransportKey rtzKey  { "RTZ",  "Return to zero (Enter)",          Colours::mustard },
@@ -168,6 +176,8 @@ private:
     LibraryView library { props };
 
     std::unique_ptr<RoutingWindow> routingWindow;
+    std::unique_ptr<NetworkWindow> networkWindow;
+    juce::String netInputsKey;
     std::unique_ptr<SessionSheetWindow> sheetWindow;
     std::unique_ptr<juce::FileChooser> chooser;
 

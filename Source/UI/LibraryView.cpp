@@ -542,6 +542,24 @@ void LibraryView::newSession()
     w->addButton ("Create", 1, juce::KeyPress (juce::KeyPress::returnKey));
     w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
+    // Don't close without a name - remind instead.
+    if (auto* create = w->getButton ("Create"))
+        create->onClick = [w]
+        {
+            if (w->getTextEditorContents ("name").trim().isEmpty())
+            {
+                w->setMessage ("Please give the session a name.");
+                if (auto* ed = w->getTextEditor ("name"))
+                {
+                    ed->setColour (juce::TextEditor::outlineColourId, Colours::red);
+                    ed->grabKeyboardFocus();
+                    ed->repaint();
+                }
+                return;
+            }
+            w->exitModalState (1);
+        };
+
     w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int result)
     {
         if (result != 1) return;

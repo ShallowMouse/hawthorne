@@ -11,7 +11,8 @@ namespace hawthorne
 /**
     One track on the meter bridge, laid out like a Studer channel module:
     the VU (track name on its plate, double-click to rename), and underneath
-    the input selector, the record-ready (ARM) button and a big track number.
+    the record-ready (ARM) button and a big track number. Inputs are patched
+    in the routing matrix.
 */
 class ChannelModule : public juce::Component
 {
@@ -21,11 +22,9 @@ public:
     VUMeter& getMeter() { return meter; }
 
     void setTrackName (const juce::String&);
-    void setInputChoices (const juce::StringArray& channelNames, const juce::BigInteger& active, int selected);
     void setArmed (bool armed, bool recording, bool flashPhase);
 
     std::function<void (int track, bool arm)>                 onArm;
-    std::function<void (int track, int inputChannel)>         onInputChanged;
     std::function<void (int track)>                           onRenameRequest;
 
     static constexpr float meterAspect = 1.3f;
@@ -37,7 +36,6 @@ public:
 private:
     const int index;
     VUMeter meter;
-    juce::ComboBox inputBox;
     juce::TextButton armButton { "ARM" };
     bool isArmed = false;
     juce::Rectangle<int> numberArea;

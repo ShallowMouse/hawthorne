@@ -27,14 +27,10 @@ struct TrackInfo
     juce::String instrument, mic, notes;
 };
 
-/** The master is a stereo bus: the mix of the tracks plus any patched-in inputs,
-    optionally through a hardware insert (bus compressor, EQ...). */
+/** The master is a stereo bus: the mix of the tracks plus any patched-in inputs. */
 struct MasterRouting
 {
     std::array<ChannelList, 2> inputs, outputs;
-    bool insertEnabled = false;
-    std::array<int, 2> insertSend   { -1, -1 };   // device outputs feeding the outboard
-    std::array<int, 2> insertReturn { -1, -1 };   // device inputs it comes back on
     MasterRouting() { outputs[0].add (0); outputs[1].add (1); }
 };
 

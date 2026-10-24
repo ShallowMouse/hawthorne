@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(Hawthorne VERSION 1.8.0)
+project(Hawthorne VERSION 1.9.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,6 +20,8 @@ set(ENGINE_SOURCES
     Source/Engine/RecordingStream.h
     Source/Engine/RecordingStream.cpp
     Source/Engine/Varispeed.cpp
+    Source/Network/NetReceiver.cpp
+    Source/Network/NetSender.cpp
     Source/Engine/TapeEngine.h
     Source/Engine/TapeEngine.cpp
 )
@@ -60,6 +62,8 @@ if(HAWTHORNE_BUILD_APP)
         Source/UI/VUMeter.cpp
         Source/UI/RoutingMatrix.h
         Source/UI/RoutingMatrix.cpp
+        Source/UI/NetworkWindow.h
+        Source/UI/NetworkWindow.cpp
         Source/UI/MainComponent.h
         Source/UI/MainComponent.cpp
     )
@@ -81,6 +85,37 @@ if(HAWTHORNE_BUILD_APP)
         juce::juce_audio_basics
         juce::juce_audio_devices
         juce::juce_audio_formats
+        juce::juce_audio_utils
+        juce::juce_core
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags
+    )
+
+    #--------------------------------------------------------------------------
+    # Hawthorne Link: runs on the other PC and streams its inputs to Hawthorne.
+    juce_add_gui_app(HawthorneLink
+        PRODUCT_NAME "Hawthorne Link"
+        COMPANY_NAME "Hawthorne"
+        BUNDLE_ID "com.hawthorne.link"
+        VERSION ${PROJECT_VERSION}
+    )
+    target_sources(HawthorneLink PRIVATE
+        Source/Link/LinkMain.cpp
+        Source/Network/NetProtocol.h
+        Source/Network/NetSender.h
+        Source/Network/NetSender.cpp
+    )
+    target_compile_definitions(HawthorneLink PRIVATE ${COMMON_DEFS} JUCE_WASAPI=1 JUCE_DIRECTSOUND=1)
+    if(WIN32 AND HAWTHORNE_ASIO_SDK AND EXISTS "${HAWTHORNE_ASIO_SDK}/common/iasiodrv.h")
+        target_include_directories(HawthorneLink PRIVATE "${HAWTHORNE_ASIO_SDK}/common")
+        target_compile_definitions(HawthorneLink PRIVATE JUCE_ASIO=1)
+    endif()
+    target_link_libraries(HawthorneLink PRIVATE
+        juce::juce_audio_basics
+        juce::juce_audio_devices
         juce::juce_audio_utils
         juce::juce_core
         juce::juce_events

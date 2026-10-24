@@ -98,6 +98,9 @@ void TapeEngine::prepare (double sampleRate, int maxBlockSize,
     vsWeights.calloc ((size_t) vsChunk * (size_t) (2 * vsMaxHalfSpan));
     vsSpan.calloc ((size_t) std::ceil (vsChunk * maxSpeedRatio) + (size_t) (2 * vsMaxHalfSpan) + 16);
     vsOffset.calloc ((size_t) vsChunk);
+    static_assert (vsChunk <= NetReceiver::maxBlock, "network blocks");
+    if (auto* net = netRx.load())
+        net->prepare (sampleRate);
 
     auto buildMap = [] (std::array<int, 256>& map, const juce::BigInteger& active)
     {
@@ -323,8 +326,15 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     juce::FloatVectorOperations::clear (mixL, n);
     juce::FloatVectorOperations::clear (mixR, n);
 
+    auto* net = netRx.load (std::memory_order_relaxed);
+    if (net != nullptr)
+        net->process (n);
+
     auto inputFor = [&] (int absCh) -> const float*
     {
+        if (NetReceiver::isNetworkInput (absCh))
+            return net != nullptr ? net->getChannel (NetReceiver::slotOf (absCh), NetReceiver::channelOf (absCh)) : nullptr;
+
         const int a = juce::isPositiveAndBelow (absCh, (int) absToActive.size()) ? absToActive[(size_t) absCh] : -1;
         return juce::isPositiveAndBelow (a, numInputs) ? inputs[a] : nullptr;
     };
@@ -397,8 +407,7 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     //  1. internal mix of the tracks (in step with the tape)
     //  2. + patched-in returns. They come back one round trip late, so the
     //     internal mix is delayed by that much to meet them.
-    //  3. optional insert: out to the outboard, back in (another round trip)
-    //  4. recorded to the master with the total lag taken off, so it lands
+    //  3. recorded to the master with the total lag taken off, so it lands
     //     sample-aligned with the tracks.
     const int roundTrip = getRoundTrip();
     const bool recMaster = rp != nullptr && rp->masterStreams[0] != nullptr;
@@ -416,18 +425,6 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
                     juce::FloatVectorOperations::add (bus, in, n);
         }
 
-        if (rt != nullptr && rt->insert)
-        {
-            const int sendCh = rt->insertSend[(size_t) side];
-            const int a = juce::isPositiveAndBelow (sendCh, (int) absToActiveOut.size()) ? absToActiveOut[(size_t) sendCh] : -1;
-            if (juce::isPositiveAndBelow (a, numOutputs) && outputs[a] != nullptr)
-                juce::FloatVectorOperations::add (outputs[a], bus, n);
-
-            if (auto* ret = inputFor (rt->insertReturn[(size_t) side]))
-                juce::FloatVectorOperations::copy (bus, ret, n);
-            else
-                juce::FloatVectorOperations::clear (bus, n);
-        }
 
         if (recMaster)
         {
@@ -655,15 +652,6 @@ void TapeEngine::setMasterOutputs (int side, const ChannelList& outs)
     saveReel();
 }
 
-void TapeEngine::setMasterInsert (bool enabled, std::array<int, 2> sends, std::array<int, 2> returns)
-{
-    if (reel == nullptr || (recording && masterArmedFlag)) return;
-    reel->master.insertEnabled = enabled;
-    reel->master.insertSend = sends;
-    reel->master.insertReturn = returns;
-    rebuildRouting();
-    saveReel();
-}
 
 //==============================================================================
 // Message thread: masters
@@ -710,17 +698,12 @@ int TapeEngine::getRoundTrip() const noexcept
     return m > 0 ? m : latencySamples.load();
 }
 
-int TapeEngine::getInsertRoundTrip() const noexcept
-{
-    const int m = measuredInsertRoundTrip.load();
-    return m > 0 ? m : getRoundTrip();
-}
 
 int TapeEngine::getMasterBusLatency() const noexcept
 {
     auto* rt = ownedRouting.get();
     if (rt == nullptr) return 0;
-    return (rt->hasReturns ? getRoundTrip() : 0) + (rt->insert ? getInsertRoundTrip() : 0);
+    return rt->hasReturns ? getRoundTrip() : 0;
 }
 
 bool TapeEngine::startPing (int outputChannel, int inputChannel)
@@ -772,12 +755,6 @@ void TapeEngine::rebuildRouting()
         }
     }
 
-    if (reel != nullptr)
-    {
-        r->insert = reel->master.insertEnabled;
-        r->insertSend = reel->master.insertSend;
-        r->insertReturn = reel->master.insertReturn;
-    }
 
     auto old = std::move (ownedRouting);
     ownedRouting = std::move (r);
@@ -820,6 +797,15 @@ juce::String TapeEngine::beginRecordPass()
 
         ++numArmed;
         const int ch = reel->tracks[(size_t) t].input;
+
+        if (NetReceiver::isNetworkInput (ch))
+        {
+            auto* net = netRx.load();
+            if (net == nullptr || ! net->isLive (NetReceiver::slotOf (ch)))
+                return reel->tracks[(size_t) t].name + " is armed on a network input that isn't receiving audio.\n"
+                       "Check the sender in the NETWORK window.";
+            continue;
+        }
 
         if (! juce::isPositiveAndBelow (ch, (int) absToActive.size()) || absToActive[(size_t) ch] < 0)
             return reel->tracks[(size_t) t].name + " is armed but has no active input.\n"

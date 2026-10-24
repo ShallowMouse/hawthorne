@@ -324,11 +324,6 @@ std::unique_ptr<juce::XmlElement> Reel::toXml() const
     me->setAttribute ("inR",  channelsToString (master.inputs[1]));
     me->setAttribute ("outL", channelsToString (master.outputs[0]));
     me->setAttribute ("outR", channelsToString (master.outputs[1]));
-    me->setAttribute ("insert", master.insertEnabled);
-    me->setAttribute ("sendL", master.insertSend[0] + 1);
-    me->setAttribute ("sendR", master.insertSend[1] + 1);
-    me->setAttribute ("returnL", master.insertReturn[0] + 1);
-    me->setAttribute ("returnR", master.insertReturn[1] + 1);
 
     auto* ms = root->createNewChildElement ("Masters");
     ms->setAttribute ("active", activeMaster);
@@ -433,11 +428,6 @@ bool Reel::fromXml (const juce::XmlElement& root, juce::String& error)
         master.inputs[1]  = channelsFromString (me->getStringAttribute ("inR"));
         master.outputs[0] = channelsFromString (me->getStringAttribute ("outL", "1"));
         master.outputs[1] = channelsFromString (me->getStringAttribute ("outR", "2"));
-        master.insertEnabled   = me->getBoolAttribute ("insert", false);
-        master.insertSend[0]   = me->getIntAttribute ("sendL") - 1;
-        master.insertSend[1]   = me->getIntAttribute ("sendR") - 1;
-        master.insertReturn[0] = me->getIntAttribute ("returnL") - 1;
-        master.insertReturn[1] = me->getIntAttribute ("returnR") - 1;
     }
 
     if (auto* ms = root.getChildByName ("Masters"))

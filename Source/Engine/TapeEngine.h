@@ -5,6 +5,7 @@
 #include "Reel.h"
 #include "RecordingStream.h"
 #include "Varispeed.h"
+#include "../Network/NetReceiver.h"
 #include <map>
 
 namespace hawthorne
@@ -68,7 +69,10 @@ public:
     void setTrackOutputs (int track, const ChannelList& deviceOutputs);
     void setMasterInputs (int side, const ChannelList& deviceInputs);    // side 0 = L, 1 = R
     void setMasterOutputs (int side, const ChannelList& deviceOutputs);
-    void setMasterInsert (bool enabled, std::array<int, 2> sendOutputs, std::array<int, 2> returnInputs);
+
+    /** Hawthorne Link: network inputs (ids NetReceiver::inputBase + ...) become available
+        anywhere a device input can be patched. Set before the audio starts. */
+    void setNetworkReceiver (NetReceiver* r) noexcept { netRx = r; }
 
     //==========================================================================
     // Masters: stereo mixes recorded onto the reel, aligned with its tracks
@@ -84,17 +88,14 @@ public:
     // Latency. Round trip = out -> (cable or outboard) -> in, in samples.
     /** Measured interface round trip (loopback cable); <= 0 = trust the driver's figure. */
     void setMeasuredRoundTrip (int samples)   { measuredRoundTrip = samples; }
-    /** Measured round trip through the master insert's outboard; <= 0 = same as the interface. */
-    void setMeasuredInsertRoundTrip (int samples) { measuredInsertRoundTrip = samples; }
     int  getReportedRoundTrip() const noexcept { return latencySamples.load(); }
     int  getRoundTrip() const noexcept;        // what compensation actually uses
-    int  getInsertRoundTrip() const noexcept;
-    /** How far behind the tape the master bus is right now (returns / insert). */
+    /** How far behind the tape the master bus is right now (when inputs are patched to it). */
     int  getMasterBusLatency() const noexcept;
 
     enum class PingState { idle, running, done, failed };
     /** Sends one click out of a device output and times it back in on an input.
-        The click is audible on that output - use an unused one, or the insert path. */
+        The click is audible on that output - use an unused one. */
     bool startPing (int outputChannel, int inputChannel);
     PingState getPingState() const noexcept   { return pingState.load(); }
     int getPingResult() const noexcept        { return pingResult.load(); }
@@ -185,8 +186,6 @@ private:
         std::array<bool, kMaxTracks>             toMix;
         std::array<std::vector<int>, kMaxTracks> outputs;   // absolute device outputs
         std::array<std::vector<int>, 2>          masterIn, masterOut;
-        bool insert = false;
-        std::array<int, 2> insertSend { -1, -1 }, insertReturn { -1, -1 };
         bool hasReturns = false;  // inputs patched to the master: internal mix is delayed to meet them
     };
 
@@ -262,6 +261,7 @@ private:
     std::atomic<juce::int64> position { 0 };
     double posFrac = 0.0;                                  // audio thread: sub-sample tape position
     std::atomic<double> targetRate { 1.0 }, currentRate { 1.0 };
+    std::atomic<NetReceiver*> netRx { nullptr };
     static constexpr int vsChunk = 256;                    // varispeed processes at most this many samples at once
     int vsMaxHalfSpan = 0;
     juce::HeapBlock<float> vsWeights, vsSpan;
@@ -306,7 +306,7 @@ private:
     juce::AudioBuffer<float> mixBus, returnBus, masterTapeBus;
     std::array<Delay, 2> returnsDelayLine;
     std::atomic<bool> masterArmedFlag { false }, monitorMasterFlag { false };
-    std::atomic<int>  measuredRoundTrip { 0 }, measuredInsertRoundTrip { 0 };
+    std::atomic<int>  measuredRoundTrip { 0 };
 
     // Ping (latency measurement)
     std::atomic<PingState> pingState { PingState::idle };
