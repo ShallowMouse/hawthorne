@@ -54,6 +54,12 @@ struct NetReceiver::Slot
     // Long-baseline rate: (read position + buffer) sampled every 10 s, up to 2 minutes back.
     double fillSlow = 0.0, snapTimer = 0.0, longRate = 0.0;     // 0 = not known yet
     double baseRate = 1.0;
+    // Buffer sizing: how bursty arrival is (sender's audio buffer, network jitter,
+    // our own audio buffer), measured for a second before playing and grown on any underrun.
+    bool measured = false;
+    double measureT = 0.0, wclock = 0.0, dMin = 0.0, dMax = 0.0, swing = 0.0;
+    std::atomic<double> targetMs { 0.0 };
+    std::atomic<int> senderLatency { 0 };
     std::array<std::pair<double, double>, 13> snaps {};
     int numSnaps = 0;
     juce::AudioBuffer<float> out { net::maxChannels, maxBlock };
@@ -103,6 +109,7 @@ bool NetReceiver::start (juce::String& error)
         return false;
     }
     boundDataPort = dataSocket->getBoundPort();
+    net::setSocketBuffers (dataSocket->getRawSocketHandle(), 8 << 20, 1 << 20);   // ride out a stalled thread without losing packets
 
     announceSocket = std::make_unique<juce::DatagramSocket> (true);
     announceSocket->setEnablePortReuse (true);
@@ -248,6 +255,8 @@ NetReceiver::Status NetReceiver::getStatus (int slot) const
     st.ppm        = s.ppm;
     st.bufferMs   = s.bufferMs;
     st.dropouts   = s.dropouts;
+    st.targetMs   = s.targetMs;
+    st.senderLatencyMs = s.senderRate.load() > 0 ? s.senderLatency.load() / s.senderRate.load() * 1000.0 : 0.0;
     st.packets    = s.packets;
     return st;
 }
@@ -452,6 +461,7 @@ void NetReceiver::handleAudio (const net::PacketHeader& h, const uint8_t* payloa
     if (end > s->latest.load())
         s->latest.store (end, std::memory_order_release);
     s->packets.fetch_add (1, std::memory_order_relaxed);
+    s->senderLatency.store (h.latency, std::memory_order_relaxed);
 }
 
 void NetReceiver::writeBlock (Slot& s, uint32_t session, juce::uint64 first, int frames, int channels, const uint8_t* pcm) noexcept
@@ -565,6 +575,9 @@ void NetReceiver::processSlot (Slot& s, int n) noexcept
     {
         s.aSession = sess;
         s.started = false;
+        s.measured = false;
+        s.measureT = 0.0;
+        s.swing = 0.0;
     }
 
     const double sr = sampleRate.load (std::memory_order_relaxed);
@@ -573,7 +586,28 @@ void NetReceiver::processSlot (Slot& s, int n) noexcept
 
     const int ch = s.channels.load (std::memory_order_relaxed);
     const auto latest = s.latest.load (std::memory_order_acquire);
-    const double target = juce::jmax ((double) (hs + 2 * n), targetLatencyMs.load (std::memory_order_relaxed) * sr / 1000.0);
+    if (! s.started && ! s.measured)
+    {
+        // Watch how bursty the arrivals are before playing anything.
+        if (latest < 0)
+            return silence (State::waiting);
+        const double d = (double) latest - s.wclock;
+        if (s.measureT == 0.0) s.dMin = s.dMax = d;
+        s.dMin = juce::jmin (s.dMin, d);
+        s.dMax = juce::jmax (s.dMax, d);
+        s.wclock += n;
+        s.measureT += (double) n / sr;
+        if (s.measureT < 1.0)
+            return silence (State::waiting);
+        s.swing = juce::jmax (s.swing, s.dMax - s.dMin);
+        s.measured = true;
+    }
+
+    // Smallest safe buffer: the burst size + the interpolator's look-ahead + a margin.
+    // (The BUFFER setting is a minimum.)
+    const double target = juce::jmax (targetLatencyMs.load (std::memory_order_relaxed) * sr / 1000.0,
+                                      s.swing + (double) (hs + 2 * n) + 0.0015 * sr);
+    s.targetMs.store (target / sr * 1000.0, std::memory_order_relaxed);
 
     if (! s.started)
     {
@@ -608,6 +642,8 @@ void NetReceiver::processSlot (Slot& s, int n) noexcept
     // Under- or overrun (sender stopped, network stalled, machine hiccup): start afresh.
     if (fill < (double) (n + hs + 2) || fill > (double) (ringFrames - 4 * maxBlock - hs))
     {
+        if (fill < (double) (n + hs + 2))
+            s.swing += juce::jmax ((double) maxBlock, target * 0.25);    // ran dry: give it more room from now on
         s.started = false;
         s.dropouts.fetch_add (1, std::memory_order_relaxed);
         return silence (State::waiting);

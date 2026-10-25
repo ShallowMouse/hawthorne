@@ -807,7 +807,7 @@ void MainComponent::showNetwork()
 void MainComponent::loadNetworkSettings()
 {
     auto* s = props.getUserSettings();
-    netRx.setTargetLatencyMs (s->getDoubleValue ("netLatencyMs", 15.0));
+    netRx.setTargetLatencyMs (s->getDoubleValue ("netMinBufferMs", 3.0));
     netRx.setManualAddresses (juce::StringArray::fromLines (s->getValue ("netManual")));
     const auto names = juce::StringArray::fromLines (s->getValue ("netSlots"));
     for (int slot = 0; slot < juce::jmin (names.size(), NetReceiver::maxSlots); ++slot)
@@ -818,7 +818,7 @@ void MainComponent::loadNetworkSettings()
 void MainComponent::saveNetworkSettings()
 {
     auto* s = props.getUserSettings();
-    s->setValue ("netLatencyMs", netRx.getTargetLatencyMs());
+    s->setValue ("netMinBufferMs", netRx.getTargetLatencyMs());
     s->setValue ("netManual", netRx.getManualAddresses().joinIntoString ("\n"));
     juce::StringArray names;
     for (int slot = 0; slot < NetReceiver::maxSlots; ++slot)

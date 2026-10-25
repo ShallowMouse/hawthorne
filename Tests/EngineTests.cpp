@@ -971,7 +971,8 @@ static void testVarispeed()
 struct LinkSim
 {
     struct Options { double ppm = 0.0; double jitterMs = 2.0; double loss = 0.0; bool redundant = true;
-                     int senderBlock = 128; double senderRate = kSR; uint32_t session = 0x1234; double seconds = 40.0; };
+                     int senderBlock = 128; double senderRate = kSR; uint32_t session = 0x1234; double seconds = 40.0;
+                     int receiverBlock = 256; double minBufferMs = 3.0; };
 
     explicit LinkSim (Options o) : opt (o) {}
 
@@ -988,6 +989,7 @@ struct LinkSim
         Packetizer pk;
         pk.prepare (0xabcd, opt.session, opt.senderRate, ch, opt.redundant);
         rx.connectToSenderId (0, 0xabcd, "Sim");
+        rx.setTargetLatencyMs (opt.minBufferMs);
         rx.prepare (kSR);
 
         std::mt19937 rng (99);
@@ -998,7 +1000,7 @@ struct LinkSim
         const double senderPerRx = (1.0 + opt.ppm * 1.0e-6);    // sender frames per receiver frame
         int64 sent = 0;
         std::vector<float> l ((size_t) opt.senderBlock), r ((size_t) opt.senderBlock);
-        const int block = 256;
+        const int block = opt.receiverBlock;     // our audio callback size (processed in chunks of 256)
         for (int64 T = 0; T < (int64) (opt.seconds * kSR); T += block)
         {
             // sender produces in bursts of its own block size, at its own clock
@@ -1022,8 +1024,11 @@ struct LinkSim
                 flight.pop_front();
             }
 
-            rx.process (block);
-            check (T, block);
+            for (int done = 0; done < block; done += 256)
+            {
+                rx.process (256);
+                check (T + done, 256);
+            }
         }
     }
 
@@ -1065,7 +1070,7 @@ static void testNetworkLink()
         CHECK (lockedAt > 0 && lockedAt < (int64) (110 * kSR), "never locked (%s)", NetReceiver::describe (st.state).toRawUTF8());
         CHECK (compared > (int64) (5 * kSR) && wrong == 0, "bit-perfect: %lld compared, %lld wrong", (long long) compared, (long long) wrong);
         CHECK (st.dropouts == 0, "dropouts %lld", (long long) st.dropouts);
-        std::printf ("    shared clock: locked after %.1f s, %.1f s bit-perfect, latency %.1f ms, 0 dropouts\n",
+        std::printf ("    shared clock: locked after %.1f s, %.1f s bit-perfect, buffer %.1f ms, 0 dropouts\n",
                      (double) lockedAt / kSR, (double) compared / kSR, st.bufferMs);
     }
 
@@ -1114,6 +1119,19 @@ static void testNetworkLink()
         if (red) CHECK (st.dropouts == 0, "0.2%% loss with redundancy: %lld dropouts", (long long) st.dropouts);
         else     CHECK (st.dropouts > 0, "0.2%% loss without redundancy should be reported");
         std::printf ("    0.2%% packet loss, redundancy %s: %lld dropouts\n", red ? "on " : "off", (long long) st.dropouts);
+    }
+
+    // 3b. Big audio buffers on both ends (1024 sent in bursts, 512 here) and 5 ms of
+    //     jitter: the buffer sizes itself, no dropouts, and stays as small as is safe.
+    {
+        NetReceiver rx;
+        LinkSim::Options o; o.senderBlock = 1024; o.receiverBlock = 512; o.jitterMs = 5.0; o.seconds = 30.0;
+        LinkSim sim (o);
+        sim.run (rx, [] (int64, int) {});
+        const auto st = rx.getStatus (0);
+        CHECK (st.dropouts == 0 && rx.isLive (0), "bursty: %lld dropouts", (long long) st.dropouts);
+        CHECK (st.targetMs < 60.0, "bursty: buffer grew to %.1f ms", st.targetMs);
+        std::printf ("    1024-sample sender, 512-sample receiver, 5 ms jitter: buffer %.1f ms, 0 dropouts\n", st.targetMs);
     }
 
     // 4. Wrong sample rate is refused, not played at the wrong speed.

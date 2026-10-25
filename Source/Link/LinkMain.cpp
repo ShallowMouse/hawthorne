@@ -161,7 +161,7 @@ private:
     {
         const int ch = juce::jlimit (1, net::maxChannels, d->getActiveInputChannels().countNumberOfSetBits());
         numChannels = ch;
-        sender.prepare (d->getCurrentSampleRate(), ch);
+        sender.prepare (d->getCurrentSampleRate(), ch, d->getInputLatencyInSamples() + d->getCurrentBufferSizeSamples());
     }
 
     void audioDeviceStopped() override {}

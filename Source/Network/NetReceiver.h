@@ -78,13 +78,15 @@ public:
         State state = State::off;
         juce::String name;
         int channels = 0;
-        double senderRate = 0.0, ppm = 0.0, bufferMs = 0.0;
+        double senderRate = 0.0, ppm = 0.0, bufferMs = 0.0, targetMs = 0.0;
+        double senderLatencyMs = 0.0;     // the sender's own input latency + audio buffer
         juce::int64 dropouts = 0, packets = 0;
     };
     Status getStatus (int slot) const;
     static juce::String describe (State);
 
-    void setTargetLatencyMs (double ms) noexcept { targetLatencyMs = juce::jlimit (2.0, 200.0, ms); }
+    /** The smallest network buffer to use; it grows by itself if the stream needs more. */
+    void setTargetLatencyMs (double ms) noexcept { targetLatencyMs = juce::jlimit (1.0, 200.0, ms); }
     double getTargetLatencyMs() const noexcept   { return targetLatencyMs.load(); }
 
     //==========================================================================
@@ -115,7 +117,7 @@ private:
     void sendSubscriptions();
 
     std::array<std::unique_ptr<Slot>, maxSlots> slots;
-    std::atomic<double> sampleRate { 48000.0 }, targetLatencyMs { 15.0 };
+    std::atomic<double> sampleRate { 48000.0 }, targetLatencyMs { 3.0 };
 
     mutable juce::CriticalSection lock;          // senders + manual addresses + slot names
     std::vector<SenderInfo> senders;

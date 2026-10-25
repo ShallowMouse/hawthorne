@@ -11,10 +11,11 @@ NetworkPanel::NetworkPanel (NetReceiver& r) : rx (r)
     addButton.setWantsKeyboardFocus (false);
     addAndMakeVisible (addButton);
 
-    latency.setRange (3.0, 100.0, 0.5);
+    latency.setRange (1.0, 100.0, 0.5);
     latency.setValue (rx.getTargetLatencyMs(), juce::dontSendNotification);
     latency.setTextValueSuffix (" ms");
-    latency.setTooltip ("Network buffer. Lower = less delay; raise it if you see dropouts. 10-20 ms suits a wired gigabit LAN.");
+    latency.setTooltip ("Smallest network buffer. Hawthorne measures each sender and uses the smallest buffer that won't drop out "
+                        "(it grows by itself if needed). Raise this only for extra safety.");
     latency.onValueChange = [this] { rx.setTargetLatencyMs (latency.getValue()); };
     latency.onDragEnd = [this] { if (onChanged) onChanged(); };
     latency.setWantsKeyboardFocus (false);
@@ -151,7 +152,7 @@ void NetworkPanel::paint (juce::Graphics& g)
                       helpArea, juce::Justification::topLeft, 3);
 
     g.setFont (monoFont (11.0f, true));
-    g.drawText ("BUFFER", latency.getX() - 70, latency.getY(), 64, latency.getHeight(), juce::Justification::centredRight);
+    g.drawText ("MIN BUFFER", latency.getX() - 90, latency.getY(), 84, latency.getHeight(), juce::Justification::centredRight);
 
     // Senders
     g.setColour (Colours::mustard);
@@ -199,7 +200,8 @@ void NetworkPanel::paint (juce::Graphics& g)
         if (st.state == NetReceiver::State::rateMismatch)
             line << "  sender " << juce::String (st.senderRate / 1000.0, 1) << " kHz";
         if (st.state == NetReceiver::State::locked || st.state == NetReceiver::State::corrected || st.state == NetReceiver::State::syncing)
-            line << "   " << st.channels << " ch   buffer " << juce::String (st.bufferMs, 1) << " ms";
+            line << "   " << st.channels << " ch   buffer " << juce::String (st.bufferMs, 1) << " ms (auto)"
+                 << "   delay " << juce::String (st.senderLatencyMs + st.bufferMs, 1) << " ms";
         line << "   dropouts " << juce::String (st.dropouts);
 
         const bool bad = st.state == NetReceiver::State::rateMismatch || st.dropouts > 0;
