@@ -73,6 +73,35 @@ public:
     /** Audio thread. */
     void push (const float* const* in, int numChannels, int n) noexcept;
 
+    //==========================================================================
+    // Hawthorne Sync (see NetProtocol.h)
+
+    /** The latest tape position Hawthorne sent (numbers only; safe on the audio thread,
+        lock-free). receivedMs = juce::Time::getMillisecondCounter() when it arrived. */
+    struct TapeClock
+    {
+        uint32_t session = 0;
+        double senderFrame = 0.0, tapePos = 0.0, tapePerFrame = 0.0;
+        int flags = 0;
+        double bpm = 0.0;
+        int beatsPerBar = 4;
+        double barOne = 0.0;
+        int tempoRev = 0;
+        juce::uint32 receivedMs = 0;
+        juce::uint64 count = 0;          // messages received so far
+    };
+    bool getTapeClock (TapeClock&) const noexcept;
+    /** Message thread: name of the reel on Hawthorne's deck (empty = none / not synced). */
+    juce::String getReelName() const;
+    /** Message thread: asks Hawthorne to set the reel's tempo (sent with the next packets). */
+    void sendTempo (double bpm, int beatsPerBar, double barOne);
+    /** For the TapeClock: the session our current frames belong to. */
+    uint32_t getSession() const noexcept { return session.load(); }
+    /** Audio thread: the frame number the next pushed sample will have. */
+    juce::uint64 getNextFrame() const noexcept { return packetizer.getFramePosition(); }
+    /** Tests: feed a control message as if it came from the network. */
+    void handleControlForTest (const juce::String& msg) { handleControl (msg, "127.0.0.1", 0); }
+
     struct Subscriber { juce::String address; int port = 0; juce::uint32 lastSeenMs = 0; uint32_t receiverId = 0; };
     std::vector<Subscriber> getSubscribers() const;
     juce::int64 getPacketsSent() const noexcept  { return packetsSent.load(); }
@@ -107,6 +136,15 @@ private:
     std::atomic<bool> running { false };
     std::atomic<int> boundPort { 0 };
     std::atomic<juce::int64> packetsSent { 0 }, overruns { 0 };
+
+    // Sync: seqlock for the tape clock (written by the TX thread)
+    std::atomic<uint32_t> clkSeq { 0 };
+    std::atomic<uint32_t> clkSession { 0 };
+    std::atomic<double> clkFrame { 0.0 }, clkTape { 0.0 }, clkPer { 0.0 }, clkBpm { 0.0 }, clkBarOne { 0.0 };
+    std::atomic<int> clkFlags { 0 }, clkBpb { 4 }, clkRev { 0 };
+    std::atomic<juce::uint32> clkMs { 0 };
+    std::atomic<juce::uint64> clkCount { 0 };
+    juce::String reelName, pendingTempo;      // lock
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NetSender)
 };

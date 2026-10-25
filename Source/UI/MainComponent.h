@@ -78,6 +78,11 @@ private:
     void setReel (std::unique_ptr<Reel>, std::unique_ptr<Session>);
     void saveReel();
     void saveSessionInfo();
+    // Hawthorne Sync: tempo is kept with the reel; synced drum machines follow it
+    void pushReelSync();
+    void handleTempoRequests();
+    juce::String tempoText() const;
+    double tempoSaveDueMs = 0.0;
 
     // Tracks / bridge
     void rebuildModules();

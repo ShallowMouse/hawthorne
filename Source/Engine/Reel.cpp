@@ -303,6 +303,13 @@ std::unique_ptr<juce::XmlElement> Reel::toXml() const
     deck->setAttribute ("ips", deckIps);
     deck->setAttribute ("vari", variOn);
     deck->setAttribute ("varispeed", variPercent);
+    if (tempoBpm > 0.0)
+    {
+        auto* tempo = root->createNewChildElement ("Tempo");
+        tempo->setAttribute ("bpm", tempoBpm);
+        tempo->setAttribute ("beatsPerBar", beatsPerBar);
+        tempo->setAttribute ("barOne", barOne);
+    }
 
     for (int t = 0; t < kMaxTracks; ++t)
     {
@@ -397,6 +404,14 @@ bool Reel::fromXml (const juce::XmlElement& root, juce::String& error)
         deckIps = validIps (deck->getDoubleAttribute ("ips")) ? deck->getDoubleAttribute ("ips") : ips;
         variOn = deck->getBoolAttribute ("vari", false);
         variPercent = juce::jlimit (-50.0, 50.0, deck->getDoubleAttribute ("varispeed", 0.0));
+    }
+
+    if (auto* tempo = root.getChildByName ("Tempo"))
+    {
+        const double b = tempo->getDoubleAttribute ("bpm", 0.0);
+        tempoBpm = (b >= 20.0 && b <= 400.0) ? b : 0.0;
+        beatsPerBar = juce::jlimit (1, 32, tempo->getIntAttribute ("beatsPerBar", 4));
+        barOne = tempo->getDoubleAttribute ("barOne", 0.0);
     }
 
     if (sampleRate < 8000.0 || sampleRate > 768000.0)

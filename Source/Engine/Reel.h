@@ -145,6 +145,23 @@ public:
         return (deckIps / ips) * (variOn ? 1.0 + variPercent / 100.0 : 1.0);
     }
     static juce::String formatIps (double v) { return v == 7.5 ? juce::String (juce::CharPointer_UTF8 ("7\xc2\xbd")) : juce::String ((int) v); }
+    // Tempo (Hawthorne Sync). Set by a synced drum machine and kept with the reel,
+    // so the drums land in the same place next time. bpm 0 = no tempo.
+    double tempoBpm = 0.0;
+    int    beatsPerBar = 4;
+    double barOne = 0.0;           // tape position (reel samples) of bar 1's downbeat
+    /** Bar and beat (both from 1) at a tape position; false if the reel has no tempo. */
+    bool barBeatAt (juce::int64 pos, int& bar, int& beat) const noexcept
+    {
+        if (tempoBpm <= 0.0 || sampleRate <= 0.0) return false;
+        const double beats = ((double) pos - barOne) / (sampleRate * 60.0 / tempoBpm);
+        const auto b = (juce::int64) std::floor (beats + 1.0e-9);
+        const int bpb = juce::jmax (1, beatsPerBar);
+        auto barIdx = b >= 0 ? b / bpb : -((-b + bpb - 1) / bpb);
+        bar = (int) (barIdx + (barIdx >= 0 ? 1 : 0));     // ... bar -1, bar 1, bar 2 ... (count-in bars are negative)
+        beat = (int) (b - barIdx * bpb) + 1;
+        return true;
+    }
     std::vector<Marker> markers;
     juce::StringPairArray info;
     std::vector<TakeEntry> takeLog;

@@ -203,6 +203,8 @@ void NetworkPanel::paint (juce::Graphics& g)
             line << "   " << st.channels << " ch   buffer " << juce::String (st.bufferMs, 1) << " ms (auto)"
                  << "   delay " << juce::String (st.senderLatencyMs + st.bufferMs, 1) << " ms";
         line << "   dropouts " << juce::String (st.dropouts);
+        if (rx.isSyncing (slot))
+            line << "   TAPE SYNC";
 
         const bool bad = st.state == NetReceiver::State::rateMismatch || st.dropouts > 0;
         g.setColour (st.state == NetReceiver::State::locked ? Colours::mustard : (bad ? Colours::red : Colours::text));

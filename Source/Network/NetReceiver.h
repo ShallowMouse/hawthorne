@@ -85,6 +85,25 @@ public:
     Status getStatus (int slot) const;
     static juce::String describe (State);
 
+    //==========================================================================
+    // Hawthorne Sync (see NetProtocol.h): tells each live sender where its audio
+    // lands on tape, and takes tempo changes from it.
+
+    /** Message thread: the loaded reel's name and tempo (bpm 0 = no tempo). */
+    void setReelSync (bool reelLoaded, const juce::String& reelName, double bpm, int beatsPerBar, double barOne);
+    /** Message thread: a sender asked to set the reel's tempo. */
+    bool popTempoRequest (int& slot, net::TempoRequest& request);
+    /** Message thread: the sender in this slot is being told the tape position. */
+    bool isSyncing (int slot) const noexcept;
+
+    /** Audio thread, right after process(): where the start of this block is on tape
+        (where an input sample of it gets recorded) and how many tape samples go by
+        per device sample (0 when stopped). flags = net::TapeSync rolling / recording / reelLoaded. */
+    void publishTape (double tapePosAtBlockStart, double tapePerSample, int flags) noexcept;
+
+    /** Any thread: the POS message for a slot right now; false if its sender isn't live. */
+    bool getTapeSync (int slot, net::TapeSync& out) const;
+
     /** The smallest network buffer to use; it grows by itself if the stream needs more. */
     void setTargetLatencyMs (double ms) noexcept { targetLatencyMs = juce::jlimit (1.0, 200.0, ms); }
     double getTargetLatencyMs() const noexcept   { return targetLatencyMs.load(); }
@@ -114,6 +133,7 @@ private:
     void ensureChecked (Slot&, juce::int64 upTo) noexcept;
     void networkLoop();
     void controlLoop();
+    void syncLoop();
     void sendSubscriptions();
 
     std::array<std::unique_ptr<Slot>, maxSlots> slots;
@@ -126,12 +146,19 @@ private:
     std::vector<Outgoing> outbox;                // sent by the control thread (sockets aren't shared across threads for writing)
     std::atomic<bool> subscribeNow { false };
 
-    std::unique_ptr<juce::DatagramSocket> dataSocket, announceSocket;
-    std::unique_ptr<juce::Thread> dataThread, controlThread;
+    // Sync (lock): reel tempo, and tempo changes asked for by senders
+    struct ReelSync { bool loaded = false; juce::String name; double bpm = 0.0; int beatsPerBar = 4; double barOne = 0.0; int rev = 0; };
+    ReelSync reelSync;
+    std::vector<std::pair<int, net::TempoRequest>> tempoRequests;
+    juce::WaitableEvent syncWake;
+
+    std::unique_ptr<juce::DatagramSocket> dataSocket, announceSocket, syncSocket;
+    std::unique_ptr<juce::Thread> dataThread, controlThread, syncThread;
     std::atomic<bool> running { false };
     std::atomic<int> boundDataPort { 0 };
     const uint32_t receiverId;
 
+    int lastPublishedFlags = 0;                  // audio thread
     std::vector<float> weights;                  // audio thread scratch
     std::vector<int> bases;
 

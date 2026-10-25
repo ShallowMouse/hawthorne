@@ -402,6 +402,7 @@ void MainComponent::setReel (std::unique_ptr<Reel> r, std::unique_ptr<Session> s
             showAlert ("Recovered after an unexpected shutdown", reel->recoveryLog.joinIntoString ("\n"));
     }
 
+    pushReelSync();
     rebuildModules();
     refreshMasterSection();
     refreshSpeedSection();
@@ -416,6 +417,56 @@ void MainComponent::saveReel()
     juce::String err;
     if (reel != nullptr && ! reel->save (err))
         showAlert ("Could not save the reel", err);
+}
+
+//==============================================================================
+// Hawthorne Sync
+
+void MainComponent::pushReelSync()
+{
+    if (reel != nullptr)
+        netRx.setReelSync (true, reel->getName(), reel->tempoBpm, reel->beatsPerBar, reel->barOne);
+    else
+        netRx.setReelSync (false, {}, 0.0, 4, 0.0);
+}
+
+void MainComponent::handleTempoRequests()
+{
+    int slot = -1;
+    net::TempoRequest tr;
+    bool changed = false;
+    while (netRx.popTempoRequest (slot, tr))
+    {
+        if (reel == nullptr) continue;
+        if (reel->tempoBpm != tr.bpm || reel->beatsPerBar != tr.beatsPerBar || reel->barOne != tr.barOne)
+        {
+            reel->tempoBpm = tr.bpm;
+            reel->beatsPerBar = tr.beatsPerBar;
+            reel->barOne = tr.barOne;
+            changed = true;
+        }
+    }
+
+    if (changed)
+    {
+        pushReelSync();
+        tempoSaveDueMs = juce::Time::getMillisecondCounterHiRes() + 1500.0;   // a knob may still be turning
+        repaint (reelInfoArea);
+    }
+
+    if (tempoSaveDueMs > 0.0 && juce::Time::getMillisecondCounterHiRes() >= tempoSaveDueMs)
+    {
+        tempoSaveDueMs = 0.0;
+        saveReel();
+    }
+}
+
+juce::String MainComponent::tempoText() const
+{
+    int bar = 0, beat = 0;
+    if (reel == nullptr || ! reel->barBeatAt (engine.getPosition(), bar, beat))
+        return {};
+    return "BAR " + juce::String (bar) + "." + juce::String (beat) + "  " + juce::String (reel->tempoBpm, 1) + " BPM";
 }
 
 void MainComponent::saveSessionInfo()
@@ -1084,6 +1135,8 @@ void MainComponent::timerCallback()
     if (frame % 15 == 0)
         updateNetworkInputs();
 
+    handleTempoRequests();
+
     if (frame % 10 == 0)
     {
         statusText = buildStatus();
@@ -1183,6 +1236,13 @@ void MainComponent::paint (juce::Graphics& g)
     g.setFont (monoFont (10.0f, true));
     g.setColour (rec ? Colours::red : (engine.isPlaying() ? Colours::mustard : Colours::textDim));
     g.drawText (rec ? "REC" : (engine.isPlaying() ? "PLAY" : "STOP"), counterArea.reduced (7, 4), juce::Justification::topLeft);
+
+    const auto tempo = tempoText();       // reel has a tempo (from a synced drum machine)
+    if (tempo.isNotEmpty())
+    {
+        g.setColour (Colours::textDim);
+        g.drawText (tempo, counterArea.reduced (7, 4), juce::Justification::topRight);
+    }
 
     if (reel != nullptr)
     {

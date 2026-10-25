@@ -1190,6 +1190,195 @@ static void testNetworkLink()
     }
 }
 
+//==============================================================================
+// Hawthorne Sync: a simulated drum machine on its own clock, linked over a simulated
+// network, schedules a band-limited click on every beat using only the POS messages
+// (delivered late, as over a real network). Recorded onto tape through the network
+// input, every click must land on its beat to within a fraction of a sample - with
+// latency compensation, clock drift and varispeed.
+static void testTapeSync()
+{
+    std::printf ("[16] Hawthorne Sync: drum machine clicks land on the beat on tape\n");
+
+    struct Case { const char* name; double ppm; bool vari; double variPct; };
+    for (auto c : { Case { "same clock, 15 ips", 0.0, false, 0.0 },
+                    Case { "+41 ppm drift, varispeed +6 %", 41.0, true, 6.0 },
+                    Case { "-63 ppm drift, varispeed -9 %", -63.0, true, -9.0 } })
+    {
+        juce::String err;
+        auto reel = Reel::create (makeTempDir ("sync"), "Sync", kSR, kDefaultTracks, err);
+        CHECK (reel != nullptr, "create: %s", err.toRawUTF8());
+        if (reel == nullptr) return;
+
+        NetReceiver rx;
+        TapeEngine e;
+        e.setNetworkReceiver (&rx);
+        e.setReel (reel.get());
+        const int block = 256;
+        prepareEngine (e, block);
+        rx.connectToSenderId (0, 0xd2u, "Drums");
+        rx.setReelSync (true, "Sync", 120.0, 4, 1.25 * kSR);
+        e.setInput (0, NetReceiver::inputId (0, 0));
+        e.setArmed (0, true);
+        e.setSpeed (15.0, c.vari, c.variPct);
+
+        const double bpm = 120.0, barOne = 1.25 * kSR, spb = kSR * 60.0 / bpm;  // tape samples per beat
+        Packetizer pk;
+        const uint32_t session = 0x51u;
+        pk.prepare (0xd2u, session, kSR, 1, true);
+
+        // POS messages in flight (built from the receiver's own getTapeSync), 4-9 ms late
+        std::mt19937 rng (7);
+        std::uniform_real_distribution<double> uni (0.0, 1.0);
+        struct Msg { double arrive; net::TapeSync ts; };
+        std::deque<Msg> posFlight;
+        std::deque<std::pair<double, std::vector<uint8_t>>> audioFlight;
+        bool haveClock = false;
+        net::TapeSync clock;
+
+        const double senderPerRx = 1.0 + c.ppm * 1.0e-6;
+        const int sBlock = 128;
+        int64 sent = 0;
+        std::vector<float> buf ((size_t) sBlock);
+        juce::AudioBuffer<float> in (kDefaultTracks, block), out (4, block);
+        in.clear();
+
+        // band-limited click centred on a fractional frame
+        auto pulse = [] (double x) -> double
+        {
+            if (std::abs (x) >= 24.0) return 0.0;
+            const double w = 0.5 + 0.5 * std::cos (juce::MathConstants<double>::pi * x / 24.0);
+            const double a = juce::MathConstants<double>::pi * 0.4 * x;
+            return w * 0.4 * (x == 0.0 ? 1.0 : std::sin (a) / a);
+        };
+
+        const double recStartAt = 3.0, recEndAt = 9.0;   // seconds of our clock
+        bool recording = false, stopped = false;
+        double lastSent = -1.0;
+        for (int64 T = 0; T < (int64) (10.0 * kSR); T += block)
+        {
+            const double now = (double) T;
+
+            // --- drum machine: render its blocks (its own clock), using the newest POS it has
+            while (! posFlight.empty() && posFlight.front().arrive <= now)
+            {
+                if (posFlight.front().ts.session == session) { clock = posFlight.front().ts; haveClock = true; }
+                posFlight.pop_front();
+            }
+            while ((double) (sent + sBlock) <= (now + block) * senderPerRx)
+            {
+                std::fill (buf.begin(), buf.end(), 0.0f);
+                if (haveClock && clock.isRolling() && clock.tapePerFrame > 0.0)
+                {
+                    const double t0 = clock.tapePos + ((double) sent - clock.senderFrame) * clock.tapePerFrame;
+                    const double t1 = t0 + sBlock * clock.tapePerFrame;
+                    const int64 b0 = (int64) std::floor ((t0 - 30.0 - barOne) / spb), b1 = (int64) std::ceil ((t1 + 30.0 - barOne) / spb);
+                    for (int64 b = juce::jmax ((int64) 0, b0); b <= b1; ++b)
+                    {
+                        const double fB = clock.senderFrame + (barOne + (double) b * spb - clock.tapePos) / clock.tapePerFrame;
+                        for (int i = 0; i < sBlock; ++i)
+                            buf[(size_t) i] += (float) pulse ((double) (sent + i) - fB);
+                    }
+                }
+                const float* ptr[1] = { buf.data() };
+                const double at = (double) (sent + sBlock) / senderPerRx;
+                pk.push (ptr, 1, sBlock, [&] (const uint8_t* d, int size)
+                {
+                    audioFlight.push_back ({ at + 1.0e-3 * kSR * (1.0 + 2.0 * uni (rng)), std::vector<uint8_t> (d, d + size) });
+                });
+                sent += sBlock;
+            }
+
+            std::sort (audioFlight.begin(), audioFlight.end(), [] (auto& a, auto& b) { return a.first < b.first; });
+            while (! audioFlight.empty() && audioFlight.front().first <= now)
+            {
+                rx.handleDatagram (audioFlight.front().second.data(), (int) audioFlight.front().second.size(), "sim");
+                audioFlight.pop_front();
+            }
+
+            // --- Hawthorne
+            if (! recording && T >= (int64) (recStartAt * kSR))
+            {
+                e.locate ((int64) (0.5 * kSR));
+                e.process (in.getArrayOfReadPointers(), kDefaultTracks, out.getArrayOfWritePointers(), 4, block);
+                CHECK (e.record().isEmpty(), "record");
+                recording = true;
+            }
+            if (recording && ! stopped && T >= (int64) (recEndAt * kSR)) { e.stop(); stopped = true; }
+
+            e.process (in.getArrayOfReadPointers(), kDefaultTracks, out.getArrayOfWritePointers(), 4, block);
+            if ((T / block) % 16 == 0) e.tick();
+
+            // Hawthorne sends POS ~ every 20 ms (and the drum machine gets it 4-9 ms later)
+            net::TapeSync ts;
+            if (rx.getTapeSync (0, ts) && (lastSent < 0 || now - lastSent >= 0.02 * kSR || ts.isRolling() != clock.isRolling()))
+            {
+                lastSent = now;
+                posFlight.push_back ({ now + (4.0 + 5.0 * uni (rng)) * 1.0e-3 * kSR, ts });
+            }
+        }
+        for (int i = 0; i < 20; ++i) { e.tick(); juce::Thread::sleep (20); }
+
+        auto tape = readTape (*reel, 0);
+        int found = 0, missing = 0;
+        double worst = 0.0;
+        for (int64 b = 0;; ++b)
+        {
+            const double B = barOne + (double) b * spb;
+            if (B + 64 >= (double) tape.size()) break;
+            if (B < 0.5 * kSR + 0.25 * kSR) continue;       // first moments of the take: the drum machine is still catching up
+            int64 best = -1; float bv = 0;
+            for (int64 k = (int64) B - 40; k <= (int64) B + 40; ++k)
+                if (k > 0 && k + 1 < (int64) tape.size() && std::abs (tape[(size_t) k]) > bv) { bv = std::abs (tape[(size_t) k]); best = k; }
+            if (best < 0 || bv < 0.2f) { ++missing; continue; }
+            const double y0 = tape[(size_t) best - 1], y1 = tape[(size_t) best], y2 = tape[(size_t) best + 1];
+            const double peak = (double) best + 0.5 * (y0 - y2) / (y0 - 2.0 * y1 + y2);
+            worst = juce::jmax (worst, std::abs (peak - B));
+            ++found;
+        }
+        CHECK (found >= 8 && missing == 0, "%s: %d clicks found, %d missing", c.name, found, missing);
+        CHECK (worst < 0.25, "%s: worst click %.3f samples off the beat", c.name, worst);
+        std::printf ("    %-32s %d beats on tape, worst %.3f samples off\n", c.name, found, worst);
+        e.setReel (nullptr);
+        e.setNetworkReceiver (nullptr);
+    }
+
+    // Tempo kept with the reel, and the messages survive a round trip through text.
+    {
+        juce::String err;
+        auto dir = makeTempDir ("synctempo");
+        auto reel = Reel::create (dir, "Tempo", kSR, kDefaultTracks, err);
+        reel->tempoBpm = 97.5; reel->beatsPerBar = 3; reel->barOne = 12345.0;
+        CHECK (reel->save (err), "save");
+        auto again = Reel::load (reel->getFile(), err);
+        CHECK (again != nullptr && again->tempoBpm == 97.5 && again->beatsPerBar == 3 && again->barOne == 12345.0, "tempo not kept with the reel");
+        int bar = 0, beat = 0;
+        CHECK (again != nullptr && again->barBeatAt (12345 + (int64) (kSR * 60.0 / 97.5 * 4.5), bar, beat) && bar == 2 && beat == 2, "bar/beat %d.%d", bar, beat);
+        CHECK (again != nullptr && again->barBeatAt (12345 - 10, bar, beat) && bar == -1 && beat == 3, "count-in bar/beat %d.%d", bar, beat);
+
+        net::TapeSync a; a.senderId = 0xabc; a.session = 0x77; a.senderFrame = 123456.5; a.tapePos = 987654.25;
+        a.tapePerFrame = 1.0599999; a.flags = 7; a.bpm = 133.3; a.beatsPerBar = 7; a.barOne = 4800.5; a.tempoRev = 9; a.reelName = "Song 2 take";
+        net::TapeSync b;
+        CHECK (net::parsePos (net::makePos (a), b) && b.senderFrame == a.senderFrame && b.tapePos == a.tapePos
+               && std::abs (b.tapePerFrame - a.tapePerFrame) < 1e-12 && b.flags == 7 && b.beatsPerBar == 7 && b.reelName == a.reelName, "POS round trip");
+
+        NetSender tx;
+        a.senderId = tx.getSenderId();
+        tx.handleControlForTest (net::makePos (a));
+        NetSender::TapeClock tc;
+        CHECK (tx.getTapeClock (tc) && tc.tapePos == a.tapePos && tc.bpm == a.bpm && tx.getReelName() == a.reelName, "sender didn't take POS");
+
+        NetReceiver rx;
+        rx.connectToSenderId (2, 0x5eu, "Drums");
+        net::TempoRequest tr; tr.senderId = 0x5eu; tr.bpm = 88.0; tr.beatsPerBar = 4; tr.barOne = 100.0;
+        const auto m = net::makeTempo (tr);
+        rx.handleDatagram (m.toRawUTF8(), (int) m.getNumBytesAsUTF8(), "x");
+        int slot = -1; net::TempoRequest got;
+        CHECK (rx.popTempoRequest (slot, got) && slot == 2 && got.bpm == 88.0 && got.barOne == 100.0, "tempo request not received");
+        std::printf ("    tempo kept with the reel; POS / TMP messages round-trip\n");
+    }
+}
+
 static void benchVarispeed()
 {
     // HAWTHORNE_BENCH=1: CPU cost of varispeed playback with every track full.
@@ -1238,6 +1427,7 @@ int main()
     testMasters();
     testVarispeed();
     testNetworkLink();
+    testTapeSync();
    #if JUCE_LINUX || JUCE_MAC
     testCrashRecovery();
    #endif

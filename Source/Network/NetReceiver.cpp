@@ -70,6 +70,15 @@ struct NetReceiver::Slot
     std::atomic<double> ppm { 0.0 }, bufferMs { 0.0 };
     std::atomic<juce::int64> dropouts { 0 };
 
+    // Hawthorne Sync: this block's start, in the sender's clock and on tape (seqlock,
+    // written by the audio thread). seq odd = being written; 0 = never.
+    std::atomic<uint32_t> clkSeq { 0 };
+    std::atomic<uint32_t> clkSession { 0 };
+    std::atomic<double> clkFrame { 0.0 }, clkTape { 0.0 }, clkPer { 0.0 };
+    std::atomic<int> clkFlags { 0 };
+    std::atomic<bool> clkLive { false };
+    std::atomic<juce::uint32> lastSyncSentMs { 0 };
+
     void allocate()
     {
         if (ring.empty())
@@ -116,11 +125,20 @@ bool NetReceiver::start (juce::String& error)
     if (! announceSocket->bindToPort (net::announcePort))
         announceSocket.reset();   // discovery by broadcast unavailable; manual addresses still work
 
+    syncSocket = std::make_unique<juce::DatagramSocket> (false);
+    if (! syncSocket->bindToPort (0))
+        syncSocket.reset();       // no tape sync, audio still works
+
     running = true;
     dataThread = std::make_unique<LambdaThread> ("Hawthorne Link RX", [this] { networkLoop(); });
     controlThread = std::make_unique<LambdaThread> ("Hawthorne Link control", [this] { controlLoop(); });
     dataThread->startThread (juce::Thread::Priority::highest);
     controlThread->startThread();
+    if (syncSocket != nullptr)
+    {
+        syncThread = std::make_unique<LambdaThread> ("Hawthorne Sync", [this] { syncLoop(); });
+        syncThread->startThread (juce::Thread::Priority::high);
+    }
     return true;
 }
 
@@ -138,14 +156,19 @@ void NetReceiver::stop()
         juce::Thread::sleep (10);
 
     running = false;
+    syncWake.signal();
     if (dataSocket != nullptr)     dataSocket->shutdown();
     if (announceSocket != nullptr) announceSocket->shutdown();
+    if (syncSocket != nullptr)     syncSocket->shutdown();
     if (dataThread != nullptr)     dataThread->stopThread (2000);
     if (controlThread != nullptr)  controlThread->stopThread (2000);
+    if (syncThread != nullptr)     syncThread->stopThread (2000);
     dataThread.reset();
     controlThread.reset();
+    syncThread.reset();
     dataSocket.reset();
     announceSocket.reset();
+    syncSocket.reset();
 }
 
 //==============================================================================
@@ -408,6 +431,20 @@ void NetReceiver::handleDatagram (const void* data, int size, const juce::String
 
 void NetReceiver::handleControl (const juce::String& msg, const juce::String& from)
 {
+    net::TempoRequest tr;
+    if (net::parseTempo (msg, tr))
+    {
+        for (int i = 0; i < maxSlots; ++i)
+            if (slots[(size_t) i]->active.load() && slots[(size_t) i]->senderId.load() == tr.senderId)
+            {
+                const juce::ScopedLock sl (lock);
+                for (auto& q : tempoRequests)
+                    if (q.first == i) { q.second = tr; return; }     // newest wins
+                tempoRequests.push_back ({ i, tr });
+            }
+        return;
+    }
+
     net::Announce a;
     if (! net::parseAnnounce (msg, a))
         return;
@@ -487,6 +524,165 @@ void NetReceiver::writeBlock (Slot& s, uint32_t session, juce::uint64 first, int
             r[pos + ringFrames] = v;
         }
         s.stamps[(size_t) pos].store (tag, std::memory_order_release);
+    }
+}
+
+//==============================================================================
+// Hawthorne Sync
+
+void NetReceiver::setReelSync (bool loaded, const juce::String& name, double bpm, int beatsPerBar, double barOne)
+{
+    {
+        const juce::ScopedLock sl (lock);
+        auto& r = reelSync;
+        if (r.loaded != loaded || r.name != name || r.bpm != bpm || r.beatsPerBar != beatsPerBar || r.barOne != barOne)
+        {
+            r.loaded = loaded;
+            r.name = name;
+            r.bpm = bpm;
+            r.beatsPerBar = juce::jlimit (1, 32, beatsPerBar);
+            r.barOne = barOne;
+            ++r.rev;
+        }
+    }
+    syncWake.signal();
+}
+
+bool NetReceiver::popTempoRequest (int& slot, net::TempoRequest& request)
+{
+    const juce::ScopedLock sl (lock);
+    if (tempoRequests.empty())
+        return false;
+    slot = tempoRequests.front().first;
+    request = tempoRequests.front().second;
+    tempoRequests.erase (tempoRequests.begin());
+    return true;
+}
+
+bool NetReceiver::isSyncing (int slot) const noexcept
+{
+    if (! juce::isPositiveAndBelow (slot, maxSlots))
+        return false;
+    auto& s = *slots[(size_t) slot];
+    return s.clkLive.load() && juce::Time::getMillisecondCounter() - s.lastSyncSentMs.load() < 500;
+}
+
+void NetReceiver::publishTape (double tapePos, double tapePerSample, int flags) noexcept
+{
+    for (auto& sp : slots)
+    {
+        auto& s = *sp;
+        const bool live = s.live.load (std::memory_order_relaxed);
+        if (! live)
+        {
+            s.clkLive.store (false, std::memory_order_relaxed);
+            continue;
+        }
+
+        // The block's first output sample was read at sender frame lastPos0, and each
+        // following one lastRate sender frames further on: tape per sender frame =
+        // tape per our sample / sender frames per our sample.
+        const auto seq = s.clkSeq.load (std::memory_order_relaxed);
+        s.clkSeq.store (seq + 1, std::memory_order_relaxed);         // odd: writing
+        std::atomic_thread_fence (std::memory_order_release);
+        s.clkSession.store (s.aSession, std::memory_order_relaxed);
+        s.clkFrame.store (s.lastPos0, std::memory_order_relaxed);
+        s.clkTape.store (tapePos, std::memory_order_relaxed);
+        s.clkPer.store (s.lastRate > 0.0 ? tapePerSample / s.lastRate : 0.0, std::memory_order_relaxed);
+        s.clkFlags.store (flags, std::memory_order_relaxed);
+        s.clkSeq.store (seq + 2, std::memory_order_release);
+        s.clkLive.store (true, std::memory_order_relaxed);
+    }
+
+    if ((flags & net::TapeSync::rolling) != (lastPublishedFlags & net::TapeSync::rolling))
+        syncWake.signal();         // transport started / stopped: tell the senders now
+    lastPublishedFlags = flags;
+}
+
+bool NetReceiver::getTapeSync (int slot, net::TapeSync& out) const
+{
+    if (! juce::isPositiveAndBelow (slot, maxSlots))
+        return false;
+    auto& s = *slots[(size_t) slot];
+    if (! s.active.load() || ! s.clkLive.load())
+        return false;
+
+    for (int attempt = 0; attempt < 100; ++attempt)
+    {
+        const auto seq0 = s.clkSeq.load (std::memory_order_acquire);
+        if (seq0 == 0) return false;
+        if ((seq0 & 1) != 0) { juce::Thread::yield(); continue; }
+        out.session      = s.clkSession.load (std::memory_order_relaxed);
+        out.senderFrame  = s.clkFrame.load (std::memory_order_relaxed);
+        out.tapePos      = s.clkTape.load (std::memory_order_relaxed);
+        out.tapePerFrame = s.clkPer.load (std::memory_order_relaxed);
+        out.flags        = s.clkFlags.load (std::memory_order_relaxed);
+        std::atomic_thread_fence (std::memory_order_acquire);
+        if (s.clkSeq.load (std::memory_order_relaxed) == seq0)
+        {
+            out.senderId = s.senderId.load();
+            const juce::ScopedLock sl (lock);
+            out.bpm = reelSync.bpm;
+            out.beatsPerBar = reelSync.beatsPerBar;
+            out.barOne = reelSync.barOne;
+            out.tempoRev = reelSync.rev;
+            out.reelName = reelSync.name;
+            if (! reelSync.loaded) out.flags &= ~net::TapeSync::reelLoaded;
+            return out.senderId != 0 && out.session != 0;
+        }
+    }
+    return false;
+}
+
+void NetReceiver::syncLoop()
+{
+    // ~50 messages a second per synced sender, plus one at once whenever the transport
+    // starts or stops, the tape jumps (locate) or the reel / tempo changes.
+    struct Sent { bool any = false; net::TapeSync last; juce::uint32 when = 0; };
+    std::array<Sent, maxSlots> sent;
+    auto* thread = juce::Thread::getCurrentThread();
+
+    while (running && thread != nullptr && ! thread->threadShouldExit())
+    {
+        syncWake.wait (5);
+        const auto now = juce::Time::getMillisecondCounter();
+
+        for (int i = 0; i < maxSlots; ++i)
+        {
+            net::TapeSync ts;
+            auto& prev = sent[(size_t) i];
+            if (! getTapeSync (i, ts))
+            {
+                prev.any = false;
+                continue;
+            }
+
+            bool due = ! prev.any || now - prev.when >= 20;
+            if (! due)
+            {
+                const auto& p = prev.last;
+                const double predicted = p.tapePos + (ts.senderFrame - p.senderFrame) * p.tapePerFrame;
+                due = ts.flags != p.flags || ts.tempoRev != p.tempoRev || ts.session != p.session
+                   || std::abs (predicted - ts.tapePos) > 1.0;
+            }
+            if (! due)
+                continue;
+
+            juce::String address;
+            int port = 0;
+            {
+                const juce::ScopedLock sl (lock);
+                for (auto& info : senders)
+                    if (info.senderId == ts.senderId) { address = info.address; port = info.controlPort; }
+            }
+            if (address.isEmpty() || port <= 0)
+                continue;
+
+            const auto msg = net::makePos (ts);
+            syncSocket->write (address, port, msg.toRawUTF8(), (int) msg.getNumBytesAsUTF8());
+            prev = { true, ts, now };
+            slots[(size_t) i]->lastSyncSentMs.store (now);
+        }
     }
 }
 

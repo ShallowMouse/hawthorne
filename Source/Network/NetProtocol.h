@@ -121,4 +121,96 @@ inline juce::String makeSubscribe (uint32_t senderId, uint32_t receiverId) { ret
 inline juce::String makeBye (uint32_t senderId)         { return "HWNA1 BYE " + hex (senderId); }
 inline juce::String makeQuery()                         { return "HWNA1 QRY"; }
 
+//==============================================================================
+/**
+    Hawthorne Sync: tape position and tempo, so a sender (a drum machine) can play
+    in time with the tape. Senders that don't know these messages just ignore them.
+
+    POS   receiver -> sender's control port, ~50 times a second while the sender's
+          audio is live in Hawthorne, and at once when the transport changes:
+            "HWNA1 POS <senderId> <session> <senderFrame> <tapePos> <tapePerFrame> <flags>
+                       <bpm> <beatsPerBar> <barOne> <tempoRev>\n<reel name>"
+          The sender's frame <senderFrame> (its own sample clock, in <session>) lands on
+          tape at <tapePos> (reel samples) - exactly where it is recorded, with
+          Hawthorne's latency compensation included - and each further sender frame
+          is <tapePerFrame> further along the tape (tape speed / clock drift; 0 when
+          stopped). Because the sender's frames are stamped, network delay doesn't
+          matter: a sender that renders frame F for tape position
+              tapePos + (F - senderFrame) * tapePerFrame
+          is recorded sample-exact.
+          flags: bit 0 rolling, bit 1 recording, bit 2 a reel is loaded.
+          Tempo is stored with the reel: <bpm> 0 = the reel has no tempo yet.
+          <barOne> is the tape position (reel samples) of the downbeat of bar 1.
+          <tempoRev> goes up every time the reel's tempo changes.
+
+    TMP   sender -> receiver: "HWNA1 TMP <senderId> <bpm> <beatsPerBar> <barOne>"
+          sets the reel's tempo (resend until POS shows it).
+*/
+struct TapeSync
+{
+    uint32_t senderId = 0, session = 0;
+    double senderFrame = 0.0, tapePos = 0.0, tapePerFrame = 0.0;
+    int flags = 0;
+    double bpm = 0.0;
+    int beatsPerBar = 4;
+    double barOne = 0.0;
+    int tempoRev = 0;
+    juce::String reelName;
+
+    enum { rolling = 1, recording = 2, reelLoaded = 4 };
+    bool isRolling() const noexcept   { return (flags & rolling) != 0; }
+    bool isRecording() const noexcept { return (flags & recording) != 0; }
+    bool hasReel() const noexcept     { return (flags & reelLoaded) != 0; }
+};
+
+inline juce::String makePos (const TapeSync& s)
+{
+    return "HWNA1 POS " + hex (s.senderId) + " " + hex (s.session) + " "
+         + juce::String (s.senderFrame, 4) + " " + juce::String (s.tapePos, 4) + " "
+         + juce::String (s.tapePerFrame, 12) + " " + juce::String (s.flags) + " "
+         + juce::String (s.bpm, 4) + " " + juce::String (s.beatsPerBar) + " "
+         + juce::String (s.barOne, 4) + " " + juce::String (s.tempoRev) + "\n" + s.reelName;
+}
+
+inline bool parsePos (const juce::String& msg, TapeSync& s)
+{
+    if (! msg.startsWith ("HWNA1 POS "))
+        return false;
+    auto t = juce::StringArray::fromTokens (msg.upToFirstOccurrenceOf ("\n", false, false), " ", {});
+    if (t.size() < 12) return false;
+    s.senderId     = fromHex (t[2]);
+    s.session      = fromHex (t[3]);
+    s.senderFrame  = t[4].getDoubleValue();
+    s.tapePos      = t[5].getDoubleValue();
+    s.tapePerFrame = t[6].getDoubleValue();
+    s.flags        = t[7].getIntValue();
+    s.bpm          = t[8].getDoubleValue();
+    s.beatsPerBar  = juce::jlimit (1, 32, t[9].getIntValue());
+    s.barOne       = t[10].getDoubleValue();
+    s.tempoRev     = t[11].getIntValue();
+    s.reelName     = msg.fromFirstOccurrenceOf ("\n", false, false).trim();
+    return s.senderId != 0;
+}
+
+struct TempoRequest { uint32_t senderId = 0; double bpm = 0.0; int beatsPerBar = 4; double barOne = 0.0; };
+
+inline juce::String makeTempo (const TempoRequest& r)
+{
+    return "HWNA1 TMP " + hex (r.senderId) + " " + juce::String (r.bpm, 4) + " "
+         + juce::String (r.beatsPerBar) + " " + juce::String (r.barOne, 4);
+}
+
+inline bool parseTempo (const juce::String& msg, TempoRequest& r)
+{
+    if (! msg.startsWith ("HWNA1 TMP "))
+        return false;
+    auto t = juce::StringArray::fromTokens (msg.trim(), " ", {});
+    if (t.size() < 6) return false;
+    r.senderId    = fromHex (t[2]);
+    r.bpm         = t[3].getDoubleValue();
+    r.beatsPerBar = t[4].getIntValue();
+    r.barOne      = t[5].getDoubleValue();
+    return r.senderId != 0 && r.bpm >= 20.0 && r.bpm <= 400.0 && r.beatsPerBar >= 1 && r.beatsPerBar <= 32;
+}
+
 } // namespace hawthorne::net

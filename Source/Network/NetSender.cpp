@@ -191,6 +191,52 @@ void NetSender::push (const float* const* in, int numChannels, int n) noexcept
 }
 
 //==============================================================================
+bool NetSender::getTapeClock (TapeClock& c) const noexcept
+{
+    for (int attempt = 0; attempt < 8; ++attempt)
+    {
+        const auto seq0 = clkSeq.load (std::memory_order_acquire);
+        if (seq0 == 0) return false;
+        if ((seq0 & 1) != 0) continue;
+        c.session      = clkSession.load (std::memory_order_relaxed);
+        c.senderFrame  = clkFrame.load (std::memory_order_relaxed);
+        c.tapePos      = clkTape.load (std::memory_order_relaxed);
+        c.tapePerFrame = clkPer.load (std::memory_order_relaxed);
+        c.flags        = clkFlags.load (std::memory_order_relaxed);
+        c.bpm          = clkBpm.load (std::memory_order_relaxed);
+        c.beatsPerBar  = clkBpb.load (std::memory_order_relaxed);
+        c.barOne       = clkBarOne.load (std::memory_order_relaxed);
+        c.tempoRev     = clkRev.load (std::memory_order_relaxed);
+        c.receivedMs   = clkMs.load (std::memory_order_relaxed);
+        c.count        = clkCount.load (std::memory_order_relaxed);
+        std::atomic_thread_fence (std::memory_order_acquire);
+        if (clkSeq.load (std::memory_order_relaxed) == seq0)
+            return true;
+    }
+    return false;
+}
+
+juce::String NetSender::getReelName() const
+{
+    const juce::ScopedLock sl (lock);
+    return reelName;
+}
+
+void NetSender::sendTempo (double bpm, int beatsPerBar, double barOne)
+{
+    net::TempoRequest r;
+    r.senderId = senderId;
+    r.bpm = bpm;
+    r.beatsPerBar = beatsPerBar;
+    r.barOne = barOne;
+    {
+        const juce::ScopedLock sl (lock);
+        pendingTempo = net::makeTempo (r);
+    }
+    wake.signal();
+}
+
+//==============================================================================
 void NetSender::announce (const juce::String& address, int port)
 {
     net::Announce a;
@@ -213,6 +259,32 @@ void NetSender::handleControl (const juce::String& msg, const juce::String& from
     if (t[1] == "QRY")
     {
         announce (from, port);
+        return;
+    }
+
+    if (t[1] == "POS")
+    {
+        net::TapeSync ts;
+        if (! net::parsePos (msg, ts) || ts.senderId != senderId)
+            return;
+        const auto seq = clkSeq.load (std::memory_order_relaxed);
+        clkSeq.store (seq + 1, std::memory_order_relaxed);
+        std::atomic_thread_fence (std::memory_order_release);
+        clkSession.store (ts.session, std::memory_order_relaxed);
+        clkFrame.store (ts.senderFrame, std::memory_order_relaxed);
+        clkTape.store (ts.tapePos, std::memory_order_relaxed);
+        clkPer.store (ts.tapePerFrame, std::memory_order_relaxed);
+        clkFlags.store (ts.flags, std::memory_order_relaxed);
+        clkBpm.store (ts.bpm, std::memory_order_relaxed);
+        clkBpb.store (ts.beatsPerBar, std::memory_order_relaxed);
+        clkBarOne.store (ts.barOne, std::memory_order_relaxed);
+        clkRev.store (ts.tempoRev, std::memory_order_relaxed);
+        clkMs.store (juce::Time::getMillisecondCounter(), std::memory_order_relaxed);
+        clkCount.store (clkCount.load (std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+        clkSeq.store (seq + 2, std::memory_order_release);
+
+        const juce::ScopedLock sl (lock);
+        reelName = ts.hasReel() ? ts.reelName : juce::String();
         return;
     }
 
@@ -277,10 +349,16 @@ void NetSender::run()
                                subscribers.end());
         }
 
+        juce::String tempoMsg;
         {
             const juce::ScopedLock sl (lock);
             targets = subscribers;
+            tempoMsg.swapWith (pendingTempo);
         }
+
+        if (tempoMsg.isNotEmpty())
+            for (auto& t : targets)
+                socket->write (t.address, t.port, tempoMsg.toRawUTF8(), (int) tempoMsg.getNumBytesAsUTF8());
 
         // Audio
         for (;;)

@@ -328,7 +328,17 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
 
     auto* net = netRx.load (std::memory_order_relaxed);
     if (net != nullptr)
+    {
         net->process (n);
+
+        // Hawthorne Sync: where an input sample at the start of this block is recorded on
+        // tape (latency compensation included: input sample u lands at P0 + rate * (u - RT)).
+        const double rate = isRolling ? (rp != nullptr ? rp->rate : 0.5 * (r0 + r1)) : 0.0;
+        const double tapeAtStart = (double) pos + posFrac - (isRolling ? r0 * (double) getRoundTrip() : 0.0);
+        const int flags = (isRolling ? hawthorne::net::TapeSync::rolling : 0) | (isRec ? hawthorne::net::TapeSync::recording : 0)
+                        | (g != nullptr ? hawthorne::net::TapeSync::reelLoaded : 0);
+        net->publishTape (tapeAtStart, rate, flags);
+    }
 
     auto inputFor = [&] (int absCh) -> const float*
     {
