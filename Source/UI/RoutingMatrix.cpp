@@ -39,14 +39,14 @@ void RoutingMatrix::layout()
 {
     const int netW = netInputs.empty() ? 0 : colGap + (int) netInputs.size() * cell;
     const int w = labelW + juce::jmax (1, numIn) * cell + netW + colGap + cell + 4 + juce::jmax (1, numOut) * cell + 12;
-    const int h = titleH + numbersH + tracks() * cell + rowGap + 2 * cell + 12;
+    const int h = titleH + numbersH + tracks() * cell + 2 * rowGap + 4 * cell + 12;
     setSize (w, h);
 }
 
 //==============================================================================
 int RoutingMatrix::rowY (int row) const
 {
-    return titleH + numbersH + row * cell + (row >= tracks() ? rowGap : 0);
+    return titleH + numbersH + row * cell + (row >= tracks() ? rowGap : 0) + (row >= tracks() + 2 ? rowGap : 0);
 }
 
 int RoutingMatrix::colX (const Col& c) const
@@ -131,6 +131,9 @@ bool RoutingMatrix::isOn (int row, const Col& c) const
         return false;
     }
 
+    if (isOutputOnly (row))
+        return c.kind == ColKind::output && bit (row == tracks() + 2 ? s->clickOutputs : s->ltcOutputs);
+
     const int side = row - tracks();
     switch (c.kind)
     {
@@ -146,7 +149,7 @@ bool RoutingMatrix::isOn (int row, const Col& c) const
 juce::String RoutingMatrix::rowName (int row) const
 {
     if (row >= tracks())
-        return row == tracks() ? "MASTER L" : "MASTER R";
+        return row == tracks() ? "MASTER L" : row == tracks() + 1 ? "MASTER R" : row == tracks() + 2 ? "CLICK" : "LTC OUT";
 
     auto* s = getReel();
     return juce::String (row + 1).paddedLeft ('0', 2) + "  "
@@ -233,6 +236,8 @@ void RoutingMatrix::paint (juce::Graphics& g)
         {
             if (isMaster && c.kind == ColKind::mix)
                 return;   // the master doesn't feed itself
+            if (isOutputOnly (r) && c.kind != ColKind::output)
+                return;   // click / timecode only go out
 
             auto rc = juce::Rectangle<float> ((float) colX (c), (float) y, (float) cell, (float) cell).reduced (1.5f);
             const bool hot = hotRow || (hoverCol.kind == c.kind && hoverCol.channel == c.channel);
@@ -264,6 +269,7 @@ void RoutingMatrix::paint (juce::Graphics& g)
     // Divider above the master rows
     g.setColour (Colours::mustardDim);
     g.drawHorizontalLine (rowY (tracks()) - rowGap / 2, 8.0f, (float) getWidth() - 8.0f);
+    g.drawHorizontalLine (rowY (tracks() + 2) - rowGap / 2, 8.0f, (float) getWidth() - 8.0f);
 }
 
 //==============================================================================
@@ -297,6 +303,8 @@ juce::String RoutingMatrix::getTooltip()
 
     const bool isMaster = hoverRow >= tracks();
     if (isMaster && hoverCol.kind == ColKind::mix)
+        return {};
+    if (isOutputOnly (hoverRow) && hoverCol.kind != ColKind::output)
         return {};
 
     const auto who = isMaster ? rowName (hoverRow) : "Track " + juce::String (hoverRow + 1);
@@ -337,6 +345,12 @@ void RoutingMatrix::mouseDown (const juce::MouseEvent& e)
             case ColKind::output: engine.setTrackOutputs (r, flip (tr.outputs)); break;
             case ColKind::none:   break;
         }
+    }
+    else if (isOutputOnly (r))
+    {
+        if (c.kind != ColKind::output) return;
+        if (r == tracks() + 2) engine.setClickOutputs (flip (s->clickOutputs));
+        else                   engine.setLtcOutputs (flip (s->ltcOutputs), s->ltcLevelDb);
     }
     else
     {

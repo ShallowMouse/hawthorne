@@ -10,6 +10,8 @@
 #include "SessionSheet.h"
 #include "LibraryView.h"
 #include "NetworkWindow.h"
+#include "SyncWindow.h"
+#include "../Engine/Mtc.h"
 #include "../Updater.h"
 
 namespace hawthorne
@@ -115,6 +117,12 @@ private:
 
     void toggleFullScreen();
 
+    // Tempo, click, timecode
+    void showSync();
+    void tempoEdited();
+    void loadSyncSettings();
+    void applySyncSettings (const SyncPanel::Settings&);
+
     // Network (Hawthorne Link)
     void showNetwork();
     void loadNetworkSettings();
@@ -149,12 +157,15 @@ private:
 
     NetReceiver netRx;                   // outlives the engine (which reads it on the audio thread)
     TapeEngine engine;
+    MtcOutput mtcOutput { engine };
+    MtcInput mtcInput { engine };
+    SyncPanel::Settings syncSettings;
     juce::AudioDeviceManager deviceManager;
     std::unique_ptr<Reel> reel;          // the tape on the deck
     std::unique_ptr<Session> session;    // the session it belongs to
 
     juce::TextButton libraryButton { "LIBRARY" }, sheetButton { "SESSION SHEET" },
-                     routingButton { "ROUTING" }, networkButton { "NETWORK" }, audioButton { "AUDIO SETTINGS" }, updateButton;
+                     routingButton { "ROUTING" }, networkButton { "NETWORK" }, syncButton { "SYNC" }, audioButton { "AUDIO SETTINGS" }, updateButton;
     Updater updater;
 
     TransportKey rtzKey  { "RTZ",  "Return to zero (Enter)",          Colours::mustard },
@@ -163,7 +174,8 @@ private:
                  stopKey { "STOP", "Stop (Space)",                    Colours::mustard },
                  playKey { "PLAY", "Play (Space)",                    Colours::mustard },
                  recKey  { "REC",  "Record / punch in-out (R)",       Colours::red },
-                 markKey { "MARK", "Drop a marker here (M)",          Colours::mustard };
+                 markKey { "MARK", "Drop a marker here (M)",          Colours::mustard },
+                 clickKey { "CLICK", "Click on / off (needs a tempo - SYNC)", Colours::mustard };
 
     juce::Viewport bridgeView;
     MeterBridge bridge;
@@ -187,6 +199,7 @@ private:
 
     std::unique_ptr<RoutingWindow> routingWindow;
     std::unique_ptr<NetworkWindow> networkWindow;
+    std::unique_ptr<SyncWindow> syncWindow;
     juce::String netInputsKey;
     std::unique_ptr<SessionSheetWindow> sheetWindow;
     std::unique_ptr<juce::FileChooser> chooser;

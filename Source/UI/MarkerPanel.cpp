@@ -21,6 +21,7 @@ public:
     {
         index = i;
         time = formatTime (m.position, sr);
+        bbt = owner.reel != nullptr ? owner.reel->bbtString (m.position) : juce::String();
         isCurrent = current;
         if (! name.isBeingEdited())
             name.setText (m.name, juce::dontSendNotification);
@@ -36,9 +37,15 @@ public:
         g.setColour (isCurrent ? Colours::mustard : Colours::textDim);
         g.setFont (monoFont (13.0f, true));
         g.drawText (time, r.removeFromLeft (timeWidth).reduced (8, 0), juce::Justification::centredLeft);
+        if (bbt.isNotEmpty())
+        {
+            g.setFont (monoFont (12.0f, true));
+            g.setColour (isCurrent ? Colours::mustard : Colours::mustardDim.brighter (0.4f));
+            g.drawText (bbt, r.removeFromRight (bbtWidth).reduced (6, 0), juce::Justification::centredRight);
+        }
     }
 
-    void resized() override { name.setBounds (getLocalBounds().withTrimmedLeft (timeWidth)); }
+    void resized() override { name.setBounds (getLocalBounds().withTrimmedLeft (timeWidth).withTrimmedRight (bbtWidth)); }
 
     void mouseDown (const juce::MouseEvent& e) override
     {
@@ -54,10 +61,10 @@ public:
 private:
     MarkerPanel& owner;
     juce::Label name;
-    juce::String time;
+    juce::String time, bbt;
     int index = -1;
     bool isCurrent = false;
-    static constexpr int timeWidth = 118;
+    static constexpr int timeWidth = 118, bbtWidth = 72;
 };
 
 //==============================================================================

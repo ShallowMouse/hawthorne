@@ -6,6 +6,7 @@
 #include "../Source/Engine/TapeEngine.h"
 #include "../Source/Engine/Library.h"
 #include "../Source/Network/NetSender.h"
+#include "../Source/Engine/Mtc.h"
 #include <deque>
 #include <thread>
 #include <cstdio>
@@ -1379,6 +1380,165 @@ static void testTapeSync()
     }
 }
 
+//==============================================================================
+static void testTempoClickTimecode()
+{
+    std::printf ("[17] tempo, click, timecode (LTC / MTC) and chase\n");
+    using namespace timecode;
+
+    // Drop-frame numbering
+    CHECK (fromFrames (1800, Rate::fps2997drop).toString (true) == "00:01:00;02", "DF 1800 -> %s", fromFrames (1800, Rate::fps2997drop).toString (true).toRawUTF8());
+    CHECK (fromFrames (17982, Rate::fps2997drop).toString (true) == "00:10:00;00", "DF 17982");
+    int bad = 0;
+    for (juce::int64 f = 0; f < 2000000; f += 37)    // under 24 h at every rate
+        for (auto r : { Rate::fps24, Rate::fps25, Rate::fps2997drop, Rate::fps2997, Rate::fps30 })
+            if (toFrames (fromFrames (f, r), r) != f) ++bad;
+    CHECK (bad == 0, "%d timecode round trips wrong", bad);
+
+    // LTC: encode -> decode, at normal speed and 10 % fast, 25 and 29.97 drop
+    for (auto r : { Rate::fps25, Rate::fps2997drop })
+        for (double speed : { 1.0, 1.1 })
+        {
+            LtcEncoder enc; enc.prepare (kSR);
+            LtcDecoder dec; dec.prepare (kSR);
+            const double startFrames = (double) toFrames ({ 1, 0, 59, 20 }, r);
+            std::vector<float> buf (kSR * 3);
+            for (size_t i = 0; i < buf.size(); ++i)
+                buf[i] = enc.sample (startFrames + (double) i * speed * fps (r) / kSR, r, 0.3f);
+            int frames = 0, wrongSeq = 0;
+            juce::int64 prev = -1;
+            double worstTiming = 0;
+            dec.process (buf.data(), (int) buf.size(), [&] (const LtcDecoder::Frame& f)
+            {
+                const auto n = toFrames (f.time, f.drop ? Rate::fps2997drop : r);
+                if (prev >= 0 && n != prev + 1) ++wrongSeq;
+                prev = n;
+                ++frames;
+                // the frame ended at sample where frame n+1 starts
+                const double expectEnd = ((double) (n + 1) - startFrames) * kSR / (speed * fps (r));
+                worstTiming = juce::jmax (worstTiming, std::abs ((double) f.endSample - expectEnd));
+            });
+            const int expected = (int) (3.0 * speed * fps (r)) - 2;
+            CHECK (frames >= expected && wrongSeq == 0 && worstTiming < 3.0,
+                   "LTC %s x%.1f: %d frames (want %d), %d out of order, timing off %.1f samples",
+                   name (r).toRawUTF8(), speed, frames, expected, wrongSeq, worstTiming);
+            std::printf ("    LTC %-10s x%.1f: %d frames decoded in order, timing within %.1f samples\n", name (r).toRawUTF8(), speed, frames, worstTiming);
+        }
+
+    // MTC: a full-frame message and a quarter-frame run come back as the right time
+    {
+        juce::String err;
+        auto reel = Reel::create (makeTempDir ("mtc"), "MTC", kSR, 8, err);
+        TapeEngine e;
+        e.setReel (reel.get());
+        e.setTimecodeFormat (Rate::fps25, 0.0);
+        e.setChase (TapeEngine::ChaseSource::mtc);
+        MtcInput in (e);
+        const Time t { 1, 2, 3, 4 };
+        in.handle (MtcOutput::fullFrame (t, Rate::fps25), 0.0);
+        const double want = (double) toFrames (t, Rate::fps25) / 25.0;
+        CHECK (std::abs (e.getChaseStatus().tcSeconds - want) < 1.0e-6, "MTC full frame %.4f want %.4f", e.getChaseStatus().tcSeconds, want);
+        for (int piece = 0; piece < 8; ++piece)
+            in.handle (MtcOutput::quarterFrame (piece, { 1, 2, 3, 6 }, Rate::fps25), 0.0);
+        const double wantQ = ((double) toFrames ({ 1, 2, 3, 6 }, Rate::fps25) + 1.75) / 25.0;
+        CHECK (std::abs (e.getChaseStatus().tcSeconds - wantQ) < 1.0e-6, "MTC quarter frames %.4f want %.4f", e.getChaseStatus().tcSeconds, wantQ);
+        std::printf ("    MTC full-frame and quarter-frame messages decode exactly\n");
+        e.setReel (nullptr);
+    }
+
+    // Click: sample-accurate on the beat at 120 BPM, accent on the bar
+    {
+        juce::String err;
+        auto reel = Reel::create (makeTempDir ("click"), "Click", kSR, 8, err);
+        TapeEngine e;
+        e.setReel (reel.get());
+        prepareEngine (e, 256, 8);
+        e.setTempo (120.0, 4, 0.0);
+        e.setClickOutputs (ChannelList { 3 });
+        e.setClick (true, -6.0);
+        juce::AudioBuffer<float> in (8, 256), out (4, 256);
+        in.clear();
+        e.locate (0);
+        e.play();
+        std::vector<float> click;
+        for (int b = 0; b < 400; ++b)
+        {
+            e.process (in.getArrayOfReadPointers(), 8, out.getArrayOfWritePointers(), 4, 256);
+            click.insert (click.end(), out.getReadPointer (3), out.getReadPointer (3) + 256);
+        }
+        e.stop();
+        // an onset: the first non-zero sample after at least 100 silent ones
+        std::vector<int64> onsets;
+        int64 zeros = 1000;
+        for (size_t i = 0; i < click.size(); ++i)
+        {
+            if (click[i] == 0.0f) { ++zeros; continue; }
+            if (zeros >= 100) onsets.push_back ((int64) i - 1);   // sin(0) = 0: the click starts one sample earlier
+            zeros = 0;
+        }
+        bool onBeat = onsets.size() >= 4;
+        for (size_t k = 0; k < onsets.size(); ++k) onBeat = onBeat && onsets[k] == (int64) k * 24000;
+        CHECK (onBeat, "click onsets not on the beats (%d onsets, first %lld, second %lld)", (int) onsets.size(),
+               onsets.empty() ? -1LL : (long long) onsets[0], onsets.size() < 2 ? -1LL : (long long) onsets[1]);
+        std::printf ("    click: %d beats, every one on the exact sample\n", (int) onsets.size());
+        e.setReel (nullptr);
+    }
+
+    // Chase: one machine sends LTC, the other chases it and locks
+    {
+        juce::String err;
+        auto reelA = Reel::create (makeTempDir ("chaseA"), "A", kSR, 8, err);
+        auto reelB = Reel::create (makeTempDir ("chaseB"), "B", kSR, 8, err);
+        TapeEngine a, b;
+        a.setReel (reelA.get()); b.setReel (reelB.get());
+        prepareEngine (a, 256, 8); prepareEngine (b, 256, 8);
+        a.setTimecodeFormat (Rate::fps25, 3600.0);       // 01:00:00:00 at tape zero
+        b.setTimecodeFormat (Rate::fps25, 3600.0);
+        a.setLtcOutputs (ChannelList { 2 }, -10.0);
+        b.setChase (TapeEngine::ChaseSource::ltc, 0);
+        a.locate ((int64) (12.5 * kSR));
+        a.play();
+
+        juce::AudioBuffer<float> inA (8, 256), outA (4, 256), inB (8, 256), outB (4, 256);
+        inA.clear();
+        const double t0 = juce::Time::getMillisecondCounterHiRes();
+        int64 rendered = 0;
+        bool locked = false;
+        double lockedAt = 0, worst = 0;
+        while (rendered < (int64) (6.0 * kSR))
+        {
+            a.process (inA.getArrayOfReadPointers(), 8, outA.getArrayOfWritePointers(), 4, 256);
+            inB.clear();
+            inB.copyFrom (0, 0, outA, 2, 0, 256);                     // LTC cable
+            b.process (inB.getArrayOfReadPointers(), 8, outB.getArrayOfWritePointers(), 4, 256);
+            rendered += 256;
+            if (rendered % 1536 == 0) { a.tick(); b.tick(); }
+            const auto st = b.getChaseStatus();
+            if (st.locked && ! locked) { locked = true; lockedAt = (double) rendered / kSR; }
+            if (locked && rendered > (int64) ((lockedAt + 1.0) * kSR))
+                worst = juce::jmax (worst, std::abs ((double) (b.getPosition() - a.getPosition())));
+            const double due = t0 + (double) rendered / kSR * 1000.0;
+            const double now = juce::Time::getMillisecondCounterHiRes();
+            if (due > now) juce::Thread::sleep ((int) (due - now));
+        }
+        CHECK (locked && b.isPlaying(), "chase never locked");
+        CHECK (worst < 0.001 * kSR, "chase off by %.0f samples once locked", worst);
+        std::printf ("    chase: locked to LTC after %.2f s, then within %.2f ms\n", lockedAt, worst / kSR * 1000.0);
+
+        a.stop();
+        for (int i = 0; i < 200; ++i)
+        {
+            a.process (inA.getArrayOfReadPointers(), 8, outA.getArrayOfWritePointers(), 4, 256);
+            inB.copyFrom (0, 0, outA, 2, 0, 256);
+            b.process (inB.getArrayOfReadPointers(), 8, outB.getArrayOfWritePointers(), 4, 256);
+            if (i % 6 == 0) b.tick();
+            juce::Thread::sleep (5);
+        }
+        CHECK (! b.isPlaying(), "chasing machine didn't stop with the timecode");
+        a.setReel (nullptr); b.setReel (nullptr);
+    }
+}
+
 static void benchVarispeed()
 {
     // HAWTHORNE_BENCH=1: CPU cost of varispeed playback with every track full.
@@ -1427,6 +1587,7 @@ int main()
     testMasters();
     testVarispeed();
     testNetworkLink();
+    testTempoClickTimecode();
     testTapeSync();
    #if JUCE_LINUX || JUCE_MAC
     testCrashRecovery();

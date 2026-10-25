@@ -88,7 +88,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     juce::LookAndFeel::setDefaultLookAndFeel (&lnf);
     setWantsKeyboardFocus (true);
 
-    for (auto* b : { &libraryButton, &sheetButton, &routingButton, &networkButton, &audioButton })
+    for (auto* b : { &libraryButton, &sheetButton, &routingButton, &networkButton, &syncButton, &audioButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (b);
@@ -97,6 +97,8 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     sheetButton.onClick   = [this] { showSheet(); };
     routingButton.onClick = [this] { showRouting(); };
     networkButton.onClick = [this] { showNetwork(); };
+    syncButton.onClick = [this] { showSync(); };
+    syncButton.setTooltip ("Tempo, click, timecode out (LTC / MTC) and chase");
     fullScreenButton.onClick = [this] { toggleFullScreen(); };
     fullScreenButton.setTooltip ("Full screen (F11)");
     fullScreenButton.setWantsKeyboardFocus (false);
@@ -104,7 +106,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     networkButton.setTooltip ("Hawthorne Link: record audio sent from other PCs");
     audioButton.onClick   = [this] { showAudioSettings(); };
 
-    for (auto* k : { &rtzKey, &rewKey, &ffwKey, &stopKey, &playKey, &recKey, &markKey })
+    for (auto* k : { &rtzKey, &rewKey, &ffwKey, &stopKey, &playKey, &recKey, &markKey, &clickKey })
         addAndMakeVisible (k);
     rtzKey.onClick  = [this] { locate (0); };
     rewKey.onClick  = [this] { nudge (-5.0); };
@@ -113,6 +115,13 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     playKey.onClick = [this] { doPlay(); };
     recKey.onClick  = [this] { doRecord(); };
     markKey.onClick = [this] { addMarker(); };
+    clickKey.onClick = [this]
+    {
+        if (reel == nullptr) return;
+        if (reel->tempoBpm <= 0.0) { showSync(); return; }      // needs a tempo first
+        engine.setClick (! reel->clickOn, reel->clickLevelDb);
+        if (syncWindow != nullptr) syncWindow->getPanel().refresh();
+    };
 
     bridgeView.setViewedComponent (&bridge, false);
     bridgeView.setWantsKeyboardFocus (false);
@@ -248,6 +257,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     }
 
     initialiseAudio();
+    loadSyncSettings();
     showLibrary (true);   // the tape library is the first thing you see
 
     setSize (1600, 900);
@@ -259,6 +269,7 @@ MainComponent::~MainComponent()
     shutdown();
     sheetWindow = nullptr;
     routingWindow = nullptr;
+    syncWindow = nullptr;
     networkWindow = nullptr;
     juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
     setLookAndFeel (nullptr);
@@ -271,6 +282,8 @@ void MainComponent::shutdown()
     deviceManager.removeAudioCallback (&engine);
     deviceManager.removeChangeListener (this);
     deviceManager.closeAudioDevice();
+    mtcOutput.close();
+    mtcInput.close();
     saveNetworkSettings();
     netRx.stop();
     juce::Desktop::setScreenSaverEnabled (true);
@@ -435,6 +448,7 @@ void MainComponent::setReel (std::unique_ptr<Reel> r, std::unique_ptr<Session> s
     rebuildModules();
     refreshMasterSection();
     refreshSpeedSection();
+    if (syncWindow != nullptr) syncWindow->getPanel().refresh();
 
     if (routingWindow != nullptr) { routingWindow->getMatrix().tracksChanged(); routingWindow->getLatencyPanel().refresh(); }
     if (sheetWindow != nullptr)   sheetWindow->getSheet().refresh();
@@ -478,6 +492,9 @@ void MainComponent::handleTempoRequests()
 
     if (changed)
     {
+        engine.setTempo (reel->tempoBpm, reel->beatsPerBar, reel->barOne);
+        if (syncWindow != nullptr) syncWindow->getPanel().refresh();
+        markers.refresh();
         pushReelSync();
         tempoSaveDueMs = juce::Time::getMillisecondCounterHiRes() + 1500.0;   // a knob may still be turning
         repaint (reelInfoArea);
@@ -886,6 +903,67 @@ void MainComponent::toggleFullScreen()
 }
 
 //==============================================================================
+// Tempo, click, timecode
+
+void MainComponent::showSync()
+{
+    if (syncWindow == nullptr)
+    {
+        syncWindow = std::make_unique<SyncWindow> (engine, [this] { return reel.get(); }, [this] { return syncSettings; });
+        syncWindow->getPanel().onTempoChanged = [this] { tempoEdited(); };
+        syncWindow->getPanel().onSettingsChanged = [this] (const SyncPanel::Settings& s) { applySyncSettings (s); };
+        if (auto* dev = deviceManager.getCurrentAudioDevice())
+            syncWindow->getPanel().setInputNames (dev->getInputChannelNames(), dev->getActiveInputChannels());
+    }
+    syncWindow->getPanel().refresh();
+    syncWindow->setVisible (true);
+    syncWindow->toFront (true);
+}
+
+void MainComponent::tempoEdited()
+{
+    if (reel == nullptr) return;
+    engine.setTempo (reel->tempoBpm, reel->beatsPerBar, reel->barOne);
+    pushReelSync();          // a synced drum machine follows
+    saveReel();
+    markers.refresh();
+    repaint();
+}
+
+void MainComponent::loadSyncSettings()
+{
+    auto* p = props.getUserSettings();
+    SyncPanel::Settings s;
+    s.mtcOut = p->getValue ("mtcOut");
+    s.chase = (TapeEngine::ChaseSource) juce::jlimit (0, 2, p->getIntValue ("chase", 0));
+    s.ltcIn = p->getIntValue ("ltcIn", -1);
+    s.mtcIn = p->getValue ("mtcIn");
+    applySyncSettings (s);
+}
+
+void MainComponent::applySyncSettings (const SyncPanel::Settings& s)
+{
+    syncSettings = s;
+    auto* p = props.getUserSettings();
+    p->setValue ("mtcOut", s.mtcOut);
+    p->setValue ("chase", (int) s.chase);
+    p->setValue ("ltcIn", s.ltcIn);
+    p->setValue ("mtcIn", s.mtcIn);
+    props.saveIfNeeded();
+
+    if (s.mtcOut.isNotEmpty()) { if (! mtcOutput.open (s.mtcOut)) showAlert ("MTC out", "Couldn't open that MIDI output."); }
+    else                       mtcOutput.close();
+
+    engine.setChase (s.chase, s.ltcIn);
+    if (s.chase == TapeEngine::ChaseSource::mtc && s.mtcIn.isNotEmpty())
+    {
+        if (! mtcInput.open (s.mtcIn)) showAlert ("MTC in", "Couldn't open that MIDI input.");
+    }
+    else
+        mtcInput.close();
+}
+
+//==============================================================================
 // Network (Hawthorne Link)
 
 void MainComponent::showNetwork()
@@ -977,6 +1055,12 @@ void MainComponent::showRouting()
 
 void MainComponent::updateRoutingDevice()
 {
+    if (syncWindow != nullptr)
+    {
+        if (auto* dev = deviceManager.getCurrentAudioDevice())
+            syncWindow->getPanel().setInputNames (dev->getInputChannelNames(), dev->getActiveInputChannels());
+    }
+
     if (routingWindow == nullptr)
         return;
 
@@ -1157,6 +1241,7 @@ void MainComponent::timerCallback()
     }
 
     playKey.setLit (rolling);
+    clickKey.setLit (reel != nullptr && reel->clickOn && reel->tempoBpm > 0.0);
     recKey.setLit (rec);
     stopKey.setLit (! rolling);
 
@@ -1278,18 +1363,44 @@ void MainComponent::paint (juce::Graphics& g)
 
     const bool rec = engine.isRecording();
     g.setColour (rec ? Colours::red : Colours::mustard);
-    g.setFont (monoFont (juce::jmin ((float) counterArea.getHeight() * 0.58f, (float) counterArea.getWidth() / 7.6f), true));
-    g.drawText (formatTime (engine.getPosition(), sessionRate()), counterArea.withTrimmedLeft (12), juce::Justification::centred);
-
-    g.setFont (monoFont (10.0f, true));
-    g.setColour (rec ? Colours::red : (engine.isPlaying() ? Colours::mustard : Colours::textDim));
-    g.drawText (rec ? "REC" : (engine.isPlaying() ? "PLAY" : "STOP"), counterArea.reduced (7, 4), juce::Justification::topLeft);
-
-    const auto tempo = tempoText();       // reel has a tempo (from a synced drum machine)
-    if (tempo.isNotEmpty())
     {
-        g.setColour (Colours::textDim);
-        g.drawText (tempo, counterArea.reduced (7, 4), juce::Justification::topRight);
+        // top: state, chase, tempo.  middle: minutes / seconds.  bottom: bars / beats and timecode.
+        auto c = counterArea.reduced (8, 3);
+        auto top = c.removeFromTop (13), bottom = c.removeFromBottom (15);
+        const auto pos = engine.getPosition();
+
+        g.setFont (monoFont (juce::jmin ((float) c.getHeight() * 0.95f, (float) c.getWidth() / 7.6f), true));
+        g.drawText (formatTime (pos, sessionRate()), c, juce::Justification::centred);
+
+        g.setFont (monoFont (10.0f, true));
+        g.setColour (rec ? Colours::red : (engine.isPlaying() ? Colours::mustard : Colours::textDim));
+        g.drawText (rec ? "REC" : (engine.isPlaying() ? "PLAY" : "STOP"), top, juce::Justification::centredLeft);
+
+        if (engine.getChase() != TapeEngine::ChaseSource::off)
+        {
+            const auto cs = engine.getChaseStatus();
+            g.setColour (cs.locked ? Colours::mustard : (cs.receiving ? Colours::text : Colours::red));
+            g.drawText (cs.locked ? "CHASE LOCKED" : (cs.receiving ? "CHASE" : "CHASE - NO TC"), top.withTrimmedLeft (44),
+                        juce::Justification::centredLeft);
+        }
+
+        if (reel != nullptr && reel->tempoBpm > 0.0)
+        {
+            g.setColour (Colours::textDim);
+            g.drawText (juce::String (reel->tempoBpm, 1) + " BPM  " + juce::String (reel->beatsPerBar) + "/4", top, juce::Justification::centredRight);
+        }
+
+        g.setFont (monoFont (13.0f, true));
+        if (reel != nullptr)
+        {
+            const auto bbt = reel->bbtString (pos);
+            g.setColour (Colours::mustardDim.brighter (0.5f));
+            g.drawText (bbt.isNotEmpty() ? "BAR " + bbt : juce::String ("NO TEMPO"), bottom, juce::Justification::centredLeft);
+            const auto rate = engine.getTimecodeRate();
+            const auto tc = timecode::fromFrames ((juce::int64) std::floor (engine.timecodeFramesAt ((double) pos) + 1.0e-9), rate);
+            g.setColour (Colours::textDim);
+            g.drawText ("TC " + tc.toString (timecode::isDrop (rate)), bottom, juce::Justification::centredRight);
+        }
     }
 
     if (reel != nullptr)
@@ -1336,6 +1447,8 @@ void MainComponent::resized()
         h.removeFromRight (8);
         audioButton.setBounds (h.removeFromRight (140));
         h.removeFromRight (8);
+        syncButton.setBounds (h.removeFromRight (70));
+        h.removeFromRight (8);
         networkButton.setBounds (h.removeFromRight (100));
         h.removeFromRight (8);
         routingButton.setBounds (h.removeFromRight (96));
@@ -1354,12 +1467,12 @@ void MainComponent::resized()
     statusArea = r.removeFromBottom (24);
 
     // Compact transport deck
-    deckArea = r.removeFromBottom (84);
+    deckArea = r.removeFromBottom (96);
     {
         auto d = deckArea.reduced (14, 9);
 
         const bool compact = getWidth() < 1700;
-        counterArea = d.removeFromLeft (compact ? 180 : 250).reduced (0, 4);
+        counterArea = d.removeFromLeft (compact ? 250 : 300).reduced (0, 2);
         d.removeFromLeft (compact ? 12 : 18);
 
         const int kw = compact ? 56 : 64, kwBig = compact ? 62 : 72, gap = compact ? 10 : 14;
@@ -1373,6 +1486,7 @@ void MainComponent::resized()
         key (stopKey, kwBig); key (playKey, kwBig); key (recKey, kwBig);
         d.removeFromLeft (gap);
         key (markKey, kw);
+        key (clickKey, kw);
         d.removeFromLeft (gap);
 
         // Speed: IPS switch, VARI, varispeed knob and readout

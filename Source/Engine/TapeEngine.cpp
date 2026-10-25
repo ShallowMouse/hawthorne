@@ -68,6 +68,20 @@ void TapeEngine::setReel (Reel* s)
         s->activeMaster = s->masters.empty() ? -1 : 0;
     masterArmedFlag   = s != nullptr && s->masterArmed && s->activeMaster >= 0;
     targetRate = currentRate = s != nullptr ? s->getSpeedRatio() : 1.0;
+    if (s != nullptr)
+    {
+        setTempo (s->tempoBpm, s->beatsPerBar, s->barOne);
+        clickOn = s->clickOn;
+        clickGain = (double) juce::Decibels::decibelsToGain (s->clickLevelDb);
+        tcRate = s->tcRate;
+        tcStart = s->tcStartSeconds;
+        ltcGain = (double) juce::Decibels::decibelsToGain (s->ltcLevelDb);
+    }
+    else
+    {
+        setTempo (0.0, 4, 0.0);
+        clickOn = false;
+    }
     monitorMasterFlag = s != nullptr && s->monitorMaster;
 
     rebuildRouting();
@@ -98,6 +112,12 @@ void TapeEngine::prepare (double sampleRate, int maxBlockSize,
     vsWeights.calloc ((size_t) vsChunk * (size_t) (2 * vsMaxHalfSpan));
     vsSpan.calloc ((size_t) std::ceil (vsChunk * maxSpeedRatio) + (size_t) (2 * vsMaxHalfSpan) + 16);
     vsOffset.calloc ((size_t) vsChunk);
+    tapePosBuf.calloc ((size_t) vsChunk);
+    clickBuf.setSize (2, maxBlock);
+    clickBuf.clear();
+    ltcEncoder.prepare (sampleRate);
+    ltcDecoder.prepare (sampleRate);
+    ltcDecoderCount = 0;
     static_assert (vsChunk <= NetReceiver::maxBlock, "network blocks");
     if (auto* net = netRx.load())
         net->prepare (sampleRate);
@@ -227,6 +247,13 @@ bool TapeEngine::readTapeSpan (const std::vector<Segment>& segs, juce::int64 sta
 void TapeEngine::processBlock (const float* const* inputs, int numInputs,
                                float* const* outputs, int numOutputs, int n) noexcept
 {
+    // Chase: a roll scheduled for an exact device sample (the timecode will be here then)
+    if (const auto ps = pendingStart.load (std::memory_order_relaxed); ps >= 0 && ! playing.load() && deviceClock + n > ps)
+    {
+        pendingStart = -1;
+        playing = true;
+    }
+
     const bool isRolling = playing.load();
     const bool isRec     = isRolling && recording.load();
     auto* g  = graph.load();
@@ -236,7 +263,27 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     //--------------------------------------------------------------------------
     // Tape speed. The motor glides to a new speed (~80 ms) while playing;
     // while recording it is held exactly where the pass began.
-    const double target = targetRate.load (std::memory_order_relaxed);
+    // Chasing timecode: the speed follows the timecode (held steady while recording).
+    const bool chasing = chaseSource.load (std::memory_order_relaxed) != 0 && chaseRolling.load (std::memory_order_relaxed);
+    if (chasing && isRolling && obsDev.load (std::memory_order_relaxed) >= 0)
+    {
+        const double sr = juce::jmax (1000.0, deviceSampleRate.load (std::memory_order_relaxed));
+        const double err = chaseTarget (deviceClock) - ((double) pos + posFrac);
+        chaseErrMs.store (err / sr * 1000.0, std::memory_order_relaxed);
+        if (pass.load() == nullptr)
+        {
+            // gentle: closes the gap over ~4 s, never more than 1 %
+            if (std::abs (err) > 0.0005 * sr)      chaseRate = 1.0 + juce::jlimit (-0.01, 0.01, err / (4.0 * sr));
+            else if (std::abs (err) < 0.0001 * sr) chaseRate = 1.0;
+        }
+        chaseLocked.store (std::abs (err) < 0.001 * sr, std::memory_order_relaxed);
+    }
+    else
+    {
+        chaseRate = 1.0;
+    }
+
+    const double target = chasing ? chaseRate : targetRate.load (std::memory_order_relaxed);
     double r0 = currentRate.load (std::memory_order_relaxed), r1 = target;
 
     if (! isRolling)
@@ -319,6 +366,24 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
             dest[k] = dotProduct (vsWeights + (size_t) k * (size_t) vsTaps, vsSpan + vsOffset[k], vsTaps);
         return true;
     };
+
+    // Tape position of every sample in this block (for the click and LTC)
+    if (isRolling)
+    {
+        double f = posFrac;
+        for (int k = 0; k < n; ++k)
+        {
+            tapePosBuf[k] = (double) pos + f;
+            f += r0 + (r1 - r0) * ((double) k + 0.5) / (double) n;
+        }
+    }
+
+    // Published for MTC out and for chase timing
+    pubClock.store (deviceClock, std::memory_order_relaxed);
+    pubMs.store (juce::Time::getMillisecondCounterHiRes(), std::memory_order_relaxed);
+    pubTapePos.store ((double) pos + posFrac, std::memory_order_relaxed);
+    pubRate.store (isRolling ? r0 : 0.0, std::memory_order_relaxed);
+    pubRolling.store (isRolling, std::memory_order_relaxed);
 
     //--------------------------------------------------------------------------
     float* mixL = mixBus.getWritePointer (0);
@@ -466,6 +531,92 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
                 rp->masterStreams[(size_t) side]->push (rp->masterRs.output (side), count);
     }
 
+    // --- Click: on every beat of the reel's tempo, following the tape (and its speed)
+    const double spb = tempoSpb.load (std::memory_order_relaxed);
+    if (rt != nullptr && ! rt->clickOut.empty() && clickOn.load (std::memory_order_relaxed) && spb > 0.0)
+    {
+        float* cb = clickBuf.getWritePointer (0);
+        juce::FloatVectorOperations::clear (cb, n);
+        const double sr = juce::jmax (1000.0, deviceSampleRate.load (std::memory_order_relaxed));
+        const double barOne = tempoBarOne.load (std::memory_order_relaxed);
+        const int bpb = juce::jmax (1, tempoBpb.load (std::memory_order_relaxed));
+        const float gain = (float) clickGain.load (std::memory_order_relaxed);
+        const double decay = std::exp (-1.0 / (0.012 * sr));
+
+        for (int k = 0; k < n; ++k)
+        {
+            if (isRolling)
+            {
+                const double beats = (tapePosBuf[k] - barOne) / spb;
+                const auto b = (juce::int64) std::floor (beats);
+                if (! clickWasRolling)
+                {
+                    clickLastBeat = (juce::int64) std::ceil (beats - 1.0e-9) - 1;   // a start exactly on a beat clicks
+                    clickWasRolling = true;
+                }
+                if (b > clickLastBeat)
+                {
+                    const bool accent = ((b % bpb) + bpb) % bpb == 0;
+                    clickFreq = accent ? 1760.0 : 1175.0;
+                    clickPhase = 0.0;
+                    clickEnv = accent ? 1.0 : 0.7;
+                }
+                clickLastBeat = b;
+            }
+
+            if (clickEnv > 1.0e-4)
+            {
+                cb[k] = gain * (float) (clickEnv * std::sin (clickPhase));
+                clickPhase += juce::MathConstants<double>::twoPi * clickFreq / sr;
+                clickEnv *= decay;
+            }
+        }
+        if (! isRolling) clickWasRolling = false;
+        sendToOutputs (cb, rt->clickOut);
+    }
+    else
+    {
+        clickWasRolling = false;
+        clickEnv = 0.0;
+    }
+
+    // --- LTC out: timecode of the tape position, while it rolls
+    if (rt != nullptr && ! rt->ltcOut.empty())
+    {
+        float* lb = clickBuf.getWritePointer (1);
+        if (isRolling)
+        {
+            const auto rate = (timecode::Rate) tcRate.load (std::memory_order_relaxed);
+            const float gain = (float) ltcGain.load (std::memory_order_relaxed);
+            for (int k = 0; k < n; ++k)
+                lb[k] = ltcEncoder.sample (timecodeFramesAt (tapePosBuf[k]), rate, gain);
+        }
+        else
+        {
+            juce::FloatVectorOperations::clear (lb, n);
+            ltcEncoder.reset();
+        }
+        sendToOutputs (lb, rt->ltcOut);
+    }
+
+    // --- LTC in (chase)
+    if (chaseSource.load (std::memory_order_relaxed) == (int) ChaseSource::ltc)
+    {
+        if (auto* in = inputFor (ltcInput.load (std::memory_order_relaxed)))
+        {
+            const auto base = ltcDecoderCount;
+            const auto rate = (timecode::Rate) tcRate.load (std::memory_order_relaxed);
+            ltcDecoder.process (in, n, [&] (const timecode::LtcDecoder::Frame& f)
+            {
+                const auto r = f.drop ? timecode::Rate::fps2997drop
+                                      : (rate == timecode::Rate::fps2997drop ? timecode::Rate::fps2997 : rate);
+                const double tcSec = (double) (timecode::toFrames (f.time, r) + 1) / timecode::fps (r);
+                observe (tcSec, deviceClock + (f.endSample - base));
+            });
+            ltcDecoderCount += n;
+        }
+    }
+
     // --- Latency ping: one click out, time it coming back
     if (pingState.load (std::memory_order_relaxed) == PingState::running)
     {
@@ -509,6 +660,172 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         else
             posFrac = 0.0;
     }
+}
+
+//==============================================================================
+// Tempo, click, timecode
+
+void TapeEngine::setTempo (double bpm, int beatsPerBar, double barOne) noexcept
+{
+    const double sr = reel != nullptr ? reel->sampleRate : 48000.0;
+    tempoSpb = bpm > 0.0 ? sr * 60.0 / bpm : 0.0;
+    tempoBpb = juce::jmax (1, beatsPerBar);
+    tempoBarOne = barOne;
+}
+
+void TapeEngine::setClick (bool on, double levelDb)
+{
+    clickOn = on;
+    clickGain = (double) juce::Decibels::decibelsToGain (levelDb);
+    if (reel != nullptr) { reel->clickOn = on; reel->clickLevelDb = levelDb; saveReel(); }
+}
+
+void TapeEngine::setClickOutputs (const ChannelList& outs)
+{
+    if (reel == nullptr) return;
+    reel->clickOutputs = outs;
+    rebuildRouting();
+    saveReel();
+}
+
+void TapeEngine::setTimecodeFormat (timecode::Rate r, double startSeconds)
+{
+    tcRate = (int) r;
+    tcStart = juce::jmax (0.0, startSeconds);
+    if (reel != nullptr) { reel->tcRate = (int) r; reel->tcStartSeconds = tcStart; saveReel(); }
+}
+
+void TapeEngine::setLtcOutputs (const ChannelList& outs, double levelDb)
+{
+    ltcGain = (double) juce::Decibels::decibelsToGain (levelDb);
+    if (reel == nullptr) return;
+    reel->ltcOutputs = outs;
+    reel->ltcLevelDb = levelDb;
+    rebuildRouting();
+    saveReel();
+}
+
+double TapeEngine::timecodeFramesAt (double tapePos) const noexcept
+{
+    const double sr = reel != nullptr ? reel->sampleRate : juce::jmax (1000.0, deviceSampleRate.load());
+    return (tapePos / sr + tcStart.load (std::memory_order_relaxed)) * timecode::fps ((timecode::Rate) tcRate.load (std::memory_order_relaxed));
+}
+
+void TapeEngine::setChase (ChaseSource src, int ltcInputChannel)
+{
+    ltcInput = ltcInputChannel;
+    chaseSource = (int) src;
+    obsDev = -1;
+    obsPrevDev = -1;
+    pendingStart = -1;
+    chaseRolling = false;
+}
+
+void TapeEngine::observe (double tcSeconds, juce::int64 devSample) noexcept
+{
+    obsPrevTc.store (obsTc.load (std::memory_order_relaxed), std::memory_order_relaxed);
+    obsPrevDev.store (obsDev.load (std::memory_order_relaxed), std::memory_order_relaxed);
+    obsTc.store (tcSeconds, std::memory_order_relaxed);
+    obsDev.store (devSample, std::memory_order_release);
+}
+
+void TapeEngine::pushTimecode (double tcSeconds, double atMs) noexcept
+{
+    const double sr = juce::jmax (1000.0, deviceSampleRate.load());
+    const auto dev = pubClock.load() + (juce::int64) std::llround ((atMs - pubMs.load()) * sr / 1000.0);
+    observe (tcSeconds, dev);
+}
+
+double TapeEngine::chaseTarget (juce::int64 devSample) const noexcept
+{
+    const double sr = juce::jmax (1000.0, deviceSampleRate.load (std::memory_order_relaxed));
+    const double tc = obsTc.load (std::memory_order_relaxed) + (double) (devSample - obsDev.load (std::memory_order_relaxed)) / sr;
+    return (tc - tcStart.load (std::memory_order_relaxed)) * sr;
+}
+
+TapeEngine::ChaseStatus TapeEngine::getChaseStatus() const noexcept
+{
+    ChaseStatus st;
+    const auto dev = obsDev.load();
+    if (chaseSource.load() == 0 || dev < 0)
+        return st;
+    const double sr = juce::jmax (1000.0, deviceSampleRate.load());
+    const auto devNow = pubClock.load() + (juce::int64) ((juce::Time::getMillisecondCounterHiRes() - pubMs.load()) * sr / 1000.0);
+    st.receiving = devNow - dev < (juce::int64) (0.4 * sr);
+    st.running = st.receiving && obsTc.load() > obsPrevTc.load() && dev - obsPrevDev.load() < (juce::int64) (0.5 * sr);
+    st.tcSeconds = obsTc.load() + (st.running ? (double) (devNow - dev) / sr : 0.0);
+    st.locked = st.running && chaseRolling.load() && chaseLocked.load();
+    st.errorMs = chaseErrMs.load();
+    return st;
+}
+
+TapeEngine::TapeSnapshot TapeEngine::getTapeSnapshot() const noexcept
+{
+    TapeSnapshot s;
+    s.tapePos = pubTapePos.load();
+    s.rate = pubRate.load();
+    s.atMs = pubMs.load();
+    s.rolling = pubRolling.load();
+    s.sampleRate = reel != nullptr ? reel->sampleRate : juce::jmax (1000.0, deviceSampleRate.load());
+    return s;
+}
+
+void TapeEngine::chaseTick()
+{
+    // Message thread: the transport side of chasing (locate, roll, stop).
+    static double lastObsTc = -1.0;
+    if (chaseSource.load() == 0 || reel == nullptr)
+    {
+        chaseRolling = false;
+        pendingStart = -1;
+        return;
+    }
+
+    const auto st = getChaseStatus();
+    const double sr = juce::jmax (1000.0, deviceSampleRate.load());
+    const auto devNow = pubClock.load() + (juce::int64) ((juce::Time::getMillisecondCounterHiRes() - pubMs.load()) * sr / 1000.0);
+
+    if (st.running)
+    {
+        if (! playing && pendingStart.load() < 0 && checkCanRoll().isEmpty())
+        {
+            // park a little ahead of the timecode and roll the moment it gets there
+            const auto startDev = devNow + (juce::int64) (0.3 * sr);
+            const double target = chaseTarget (startDev);
+            if (target >= 0.0)
+            {
+                locate ((juce::int64) std::llround (target));
+                pendingStart = startDev;
+                chaseRolling = true;
+            }
+        }
+        else if (playing && ! recording && std::abs (chaseTarget (devNow) - (double) position.load()) > 0.5 * sr)
+        {
+            playing = false;     // too far out: re-park and roll again
+            chaseRolling = false;
+        }
+        else if (playing)
+        {
+            chaseRolling = true;
+        }
+    }
+    else
+    {
+        if (chaseRolling.load() || pendingStart.load() >= 0)
+        {
+            pendingStart = -1;
+            if (playing) stop();
+            chaseRolling = false;
+        }
+
+        // A parked master (e.g. a locate in Reaper sends a full-frame message): follow it.
+        if (st.receiving && ! playing && obsTc.load() != lastObsTc)
+        {
+            const double target = chaseTarget (obsDev.load());
+            if (target >= 0.0) locate ((juce::int64) std::llround (target));
+        }
+    }
+    lastObsTc = obsTc.load();
 }
 
 //==============================================================================
@@ -765,6 +1082,12 @@ void TapeEngine::rebuildRouting()
         }
     }
 
+
+    if (reel != nullptr)
+    {
+        r->clickOut.assign (reel->clickOutputs.begin(), reel->clickOutputs.end());
+        r->ltcOut.assign (reel->ltcOutputs.begin(), reel->ltcOutputs.end());
+    }
 
     auto old = std::move (ownedRouting);
     ownedRouting = std::move (r);
@@ -1206,6 +1529,8 @@ bool TapeEngine::saveReel()
 
 void TapeEngine::tick()
 {
+    chaseTick();
+
     if (deviceLost.exchange (false))
     {
         const bool wasRecording = recording.load() || ownedPass != nullptr;

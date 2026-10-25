@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(Hawthorne VERSION 1.10.1)
+project(Hawthorne VERSION 1.11.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,6 +20,7 @@ set(ENGINE_SOURCES
     Source/Engine/RecordingStream.h
     Source/Engine/RecordingStream.cpp
     Source/Engine/Varispeed.cpp
+    Source/Engine/Mtc.cpp
     Source/Network/NetReceiver.cpp
     Source/Network/NetSender.cpp
     Source/Engine/TapeEngine.h
@@ -69,6 +70,8 @@ if(HAWTHORNE_BUILD_APP)
         Source/UI/RoutingMatrix.cpp
         Source/UI/NetworkWindow.h
         Source/UI/NetworkWindow.cpp
+        Source/UI/SyncWindow.h
+        Source/UI/SyncWindow.cpp
         Source/UI/MainComponent.h
         Source/UI/MainComponent.cpp
     )

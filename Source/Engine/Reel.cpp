@@ -334,6 +334,15 @@ std::unique_ptr<juce::XmlElement> Reel::toXml() const
     me->setAttribute ("outL", channelsToString (master.outputs[0]));
     me->setAttribute ("outR", channelsToString (master.outputs[1]));
 
+    auto* sy = root->createNewChildElement ("Sync");
+    sy->setAttribute ("click", clickOn);
+    sy->setAttribute ("clickLevel", clickLevelDb);
+    sy->setAttribute ("clickOut", channelsToString (clickOutputs));
+    sy->setAttribute ("ltcOut", channelsToString (ltcOutputs));
+    sy->setAttribute ("ltcLevel", ltcLevelDb);
+    sy->setAttribute ("tcRate", tcRate);
+    sy->setAttribute ("tcStart", tcStartSeconds);
+
     auto* ms = root->createNewChildElement ("Masters");
     ms->setAttribute ("active", activeMaster);
     ms->setAttribute ("armed", masterArmed);
@@ -446,6 +455,17 @@ bool Reel::fromXml (const juce::XmlElement& root, juce::String& error)
         master.inputs[1]  = channelsFromString (me->getStringAttribute ("inR"));
         master.outputs[0] = channelsFromString (me->getStringAttribute ("outL", "1"));
         master.outputs[1] = channelsFromString (me->getStringAttribute ("outR", "2"));
+    }
+
+    if (auto* sy = root.getChildByName ("Sync"))
+    {
+        clickOn        = sy->getBoolAttribute ("click", false);
+        clickLevelDb   = juce::jlimit (-60.0, 0.0, sy->getDoubleAttribute ("clickLevel", -12.0));
+        clickOutputs   = channelsFromString (sy->getStringAttribute ("clickOut"));
+        ltcOutputs     = channelsFromString (sy->getStringAttribute ("ltcOut"));
+        ltcLevelDb     = juce::jlimit (-60.0, 0.0, sy->getDoubleAttribute ("ltcLevel", -10.0));
+        tcRate         = juce::jlimit (0, 4, sy->getIntAttribute ("tcRate", 1));
+        tcStartSeconds = juce::jmax (0.0, sy->getDoubleAttribute ("tcStart", 0.0));
     }
 
     if (auto* ms = root.getChildByName ("Masters"))

@@ -42,7 +42,8 @@ private:
 
     static constexpr int cell = 22, labelW = 150, titleH = 22, numbersH = 30, rowGap = 10, colGap = 12;
     int tracks() const { auto* s = getReel(); return s != nullptr ? s->numTracks : kDefaultTracks; }
-    int numRows() const { return tracks() + 2; }
+    int numRows() const { return tracks() + 4; }     // tracks, master L/R, click, LTC out
+    bool isOutputOnly (int row) const { return row >= tracks() + 2; }
 
 public:
     /** Call when the track count changes. */

@@ -146,6 +146,15 @@ public:
         return (deckIps / ips) * (variOn ? 1.0 + variPercent / 100.0 : 1.0);
     }
     static juce::String formatIps (double v) { return v == 7.5 ? juce::String (juce::CharPointer_UTF8 ("7\xc2\xbd")) : juce::String ((int) v); }
+    // Click and timecode (kept with the reel)
+    bool   clickOn = false;
+    double clickLevelDb = -12.0;
+    ChannelList clickOutputs;          // device outputs for the click
+    ChannelList ltcOutputs;            // device outputs for LTC timecode
+    double ltcLevelDb = -10.0;
+    int    tcRate = 1;                 // timecode::Rate (default 25)
+    double tcStartSeconds = 0.0;       // timecode at the start of the tape (e.g. 01:00:00:00 = 3600)
+
     // Tempo (Hawthorne Sync). Set by a synced drum machine and kept with the reel,
     // so the drums land in the same place next time. bpm 0 = no tempo.
     double tempoBpm = 0.0;
@@ -163,6 +172,16 @@ public:
         beat = (int) (b - barIdx * bpb) + 1;
         return true;
     }
+    /** "bar.beat.hundredths" (e.g. "12.3.50") at a tape position, or empty if the reel has no tempo. */
+    juce::String bbtString (juce::int64 pos) const
+    {
+        int bar = 0, beat = 0;
+        if (! barBeatAt (pos, bar, beat)) return {};
+        const double beats = ((double) pos - barOne) / (sampleRate * 60.0 / tempoBpm);
+        const int hundredths = juce::jlimit (0, 99, (int) std::floor ((beats - std::floor (beats + 1.0e-9)) * 100.0 + 1.0e-6));
+        return juce::String (bar) + "." + juce::String (beat) + "." + juce::String (hundredths).paddedLeft ('0', 2);
+    }
+
     std::vector<Marker> markers;
     juce::StringPairArray info;
     std::vector<TakeEntry> takeLog;

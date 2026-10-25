@@ -5,6 +5,7 @@
 #include "Reel.h"
 #include "RecordingStream.h"
 #include "Varispeed.h"
+#include "Timecode.h"
 #include "../Network/NetReceiver.h"
 #include <map>
 
@@ -69,6 +70,35 @@ public:
     void setTrackOutputs (int track, const ChannelList& deviceOutputs);
     void setMasterInputs (int side, const ChannelList& deviceInputs);    // side 0 = L, 1 = R
     void setMasterOutputs (int side, const ChannelList& deviceOutputs);
+
+    //==========================================================================
+    // Tempo, click and timecode
+    /** The reel's tempo (bpm <= 0 = none). Message thread; read by the audio thread. */
+    void setTempo (double bpm, int beatsPerBar, double barOne) noexcept;
+    /** Click on/off and level; it plays on the reel's click outputs (routing) while the tape rolls. */
+    void setClick (bool on, double levelDb);
+    void setClickOutputs (const ChannelList& deviceOutputs);
+    /** Timecode format: rate and the timecode at tape zero. */
+    void setTimecodeFormat (timecode::Rate, double startSeconds);
+    void setLtcOutputs (const ChannelList& deviceOutputs, double levelDb);
+    /** Timecode at a tape position (reel samples), in frames since 00:00:00:00 (fractional). */
+    double timecodeFramesAt (double tapePos) const noexcept;
+    timecode::Rate getTimecodeRate() const noexcept { return (timecode::Rate) tcRate.load(); }
+    double getTimecodeStart() const noexcept        { return tcStart.load(); }
+
+    /** Chase: follow incoming timecode (locate, roll, hold sync, stop). */
+    enum class ChaseSource { off = 0, ltc, mtc };
+    void setChase (ChaseSource, int ltcInputChannel = -1);
+    ChaseSource getChase() const noexcept { return (ChaseSource) chaseSource.load(); }
+    /** MTC (or anything else) came in: tcSeconds of real time since 00:00:00:00, at a
+        Time::getMillisecondCounterHiRes() moment. Any thread. */
+    void pushTimecode (double tcSeconds, double atMs) noexcept;
+    struct ChaseStatus { bool receiving = false, running = false, locked = false; double tcSeconds = 0.0, errorMs = 0.0; };
+    ChaseStatus getChaseStatus() const noexcept;
+
+    /** For MTC out: where the tape is, at a moment on the hi-res clock. Any thread. */
+    struct TapeSnapshot { double tapePos = 0.0, rate = 0.0, atMs = 0.0, sampleRate = 48000.0; bool rolling = false; };
+    TapeSnapshot getTapeSnapshot() const noexcept;
 
     /** Hawthorne Link: network inputs (ids NetReceiver::inputBase + ...) become available
         anywhere a device input can be patched. Set before the audio starts. */
@@ -187,6 +217,7 @@ private:
         std::array<std::vector<int>, kMaxTracks> outputs;   // absolute device outputs
         std::array<std::vector<int>, 2>          masterIn, masterOut;
         bool hasReturns = false;  // inputs patched to the master: internal mix is delayed to meet them
+        std::vector<int> clickOut, ltcOut;
     };
 
     /** Simple ring-buffer delay (audio thread only after prepare). */
@@ -262,6 +293,41 @@ private:
     double posFrac = 0.0;                                  // audio thread: sub-sample tape position
     std::atomic<double> targetRate { 1.0 }, currentRate { 1.0 };
     std::atomic<NetReceiver*> netRx { nullptr };
+
+    // Tempo / click (audio thread reads)
+    std::atomic<double> tempoSpb { 0.0 }, tempoBarOne { 0.0 }, clickGain { 0.25 };
+    std::atomic<int> tempoBpb { 4 };
+    std::atomic<bool> clickOn { false };
+    juce::int64 clickLastBeat = 0;
+    bool clickWasRolling = false;
+    double clickPhase = 0.0, clickEnv = 0.0, clickFreq = 1000.0;
+
+    // Timecode out
+    std::atomic<int> tcRate { 1 };
+    std::atomic<double> tcStart { 0.0 }, ltcGain { 0.3 };
+    timecode::LtcEncoder ltcEncoder;
+
+    // Chase
+    std::atomic<int> chaseSource { 0 }, ltcInput { -1 };
+    timecode::LtcDecoder ltcDecoder;
+    juce::int64 ltcDecoderCount = 0;
+    std::atomic<double> obsTc { 0.0 }, obsPrevTc { 0.0 };
+    std::atomic<juce::int64> obsDev { -1 }, obsPrevDev { -1 };
+    std::atomic<juce::int64> pendingStart { -1 };       // device sample at which a chase roll begins
+    std::atomic<bool> chaseRolling { false }, chaseLocked { false };
+    std::atomic<double> chaseErrMs { 0.0 };
+    double chaseRate = 1.0;
+    void chaseTick();
+    void observe (double tcSeconds, juce::int64 devSample) noexcept;
+    double chaseTarget (juce::int64 devSample) const noexcept;    // tape position the timecode says, at a device sample
+
+    // Published each callback (for MTC timing and chase)
+    std::atomic<juce::int64> pubClock { 0 };
+    std::atomic<double> pubMs { 0.0 }, pubTapePos { 0.0 }, pubRate { 0.0 };
+    std::atomic<bool> pubRolling { false };
+
+    juce::HeapBlock<double> tapePosBuf;                 // tape position of every sample in a block
+    juce::AudioBuffer<float> clickBuf;
     static constexpr int vsChunk = 256;                    // varispeed processes at most this many samples at once
     int vsMaxHalfSpan = 0;
     juce::HeapBlock<float> vsWeights, vsSpan;
