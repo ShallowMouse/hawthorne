@@ -26,6 +26,8 @@ public:
     std::function<void()> onBackToDeck;
     std::function<juce::File()> getLoadedReel;    // reel currently on the deck (may be none)
     std::function<double()> getSampleRate;        // for new reels
+    /** A reel's or session's box colour changed (file = .reel or session file) - keep the loaded copy in step. */
+    std::function<void (const juce::File&, juce::Colour)> onColourChanged;
 
     juce::File getLibraryFolder() const;
 
@@ -44,6 +46,8 @@ private:
     void archiveSelected();
     void deleteSelected();
     void revealSelected();
+    void chooseColour();
+    void applyColour (const juce::File& file, juce::Colour);
     void changeFolder();
     void showError (const juce::String& title, const juce::String& message);
 
@@ -59,7 +63,7 @@ private:
     juce::ToggleButton showArchived { "Show archived" };
     juce::TextButton newSessionButton { "NEW SESSION" }, backButton { "BACK TO DECK" }, folderButton { "CHANGE..." };
     juce::TextButton loadButton { "LOAD REEL" }, newReelButton { "NEW REEL" }, revealButton { "SHOW IN EXPLORER" },
-                     archiveButton { "ARCHIVE" }, deleteButton { "DELETE" };
+                     archiveButton { "ARCHIVE" }, deleteButton { "DELETE" }, colourButton { "COLOUR" };
 
     std::unique_ptr<Shelves> shelves;
     juce::Viewport shelfView;

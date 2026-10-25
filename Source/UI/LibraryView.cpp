@@ -1,4 +1,5 @@
 #include "LibraryView.h"
+#include <juce_gui_extra/juce_gui_extra.h>
 #include "SessionSheet.h"   // Paper colours
 #include "UIHelpers.h"
 
@@ -7,14 +8,87 @@ namespace hawthorne
 
 namespace
 {
-    /** Tape box colours - plain stock boxes, picked per session so a session's reels match. */
-    juce::Colour boxColour (const juce::String& sessionName)
+    /** Tape box colours: plain stock boxes. */
+    const juce::Colour boxPalette[] = {
+        juce::Colour (0xffa63a2e), juce::Colour (0xffc8692a), juce::Colour (0xffd9a521), juce::Colour (0xffb38b5d),
+        juce::Colour (0xffe1d3b0), juce::Colour (0xffeeeae0), juce::Colour (0xff4d6650), juce::Colour (0xff2f6f6a),
+        juce::Colour (0xff3f6d8c), juce::Colour (0xff4e5d6c), juce::Colour (0xff7a5c8a), juce::Colour (0xff2e2d2a) };
+
+    /** A session's colour: the one chosen for it, else picked from its name. */
+    juce::Colour boxColour (const SessionSummary& s)
     {
-        static const juce::Colour palette[] = { juce::Colour (0xffb38b5d), juce::Colour (0xffa63a2e), juce::Colour (0xff4e5d6c),
-                                                juce::Colour (0xff4d6650), juce::Colour (0xffe1d3b0), juce::Colour (0xff2e2d2a),
-                                                juce::Colour (0xff7a5c8a), juce::Colour (0xff3f6d8c) };
-        return palette[(size_t) (sessionName.hashCode() & 0x7fffffff) % std::size (palette)];
+        static const juce::Colour automatic[] = { juce::Colour (0xffb38b5d), juce::Colour (0xffa63a2e), juce::Colour (0xff4e5d6c),
+                                                  juce::Colour (0xff4d6650), juce::Colour (0xffe1d3b0), juce::Colour (0xff2e2d2a),
+                                                  juce::Colour (0xff7a5c8a), juce::Colour (0xff3f6d8c) };
+        if (s.colour != 0) return juce::Colour (s.colour);
+        return automatic[(size_t) (s.name.hashCode() & 0x7fffffff) % std::size (automatic)];
     }
+
+    /** A reel's colour: its own, else its session's. */
+    juce::Colour boxColour (const SessionSummary& s, const ReelSummary* r)
+    {
+        return r != nullptr && r->colour != 0 ? juce::Colour (r->colour) : boxColour (s);
+    }
+
+    /** Swatches in a call-out: pick a colour, a custom one, or go back to the default. */
+    struct SwatchPanel : juce::Component
+    {
+        SwatchPanel (juce::Colour current, const juce::String& defaultLabel, std::function<void (juce::Colour)> pick)
+            : onPick (std::move (pick)), currentColour (current)
+        {
+            for (auto c : boxPalette)
+            {
+                auto* b = swatches.add (new juce::TextButton());
+                b->setColour (juce::TextButton::buttonColourId, c);
+                b->setWantsKeyboardFocus (false);
+                b->onClick = [this, c] { choose (c); };
+                addAndMakeVisible (b);
+            }
+            defaultButton.setButtonText (defaultLabel);
+            defaultButton.onClick = [this] { choose ({}); };
+            customButton.onClick = [this]
+            {
+                // applied once, when the picker is closed (not on every drag)
+                struct Picker : juce::ColourSelector
+                {
+                    Picker() : juce::ColourSelector (juce::ColourSelector::showColourspace | juce::ColourSelector::showSliders) {}
+                    ~Picker() override { if (fn) fn (getCurrentColour().withAlpha (1.0f)); }
+                    std::function<void (juce::Colour)> fn;
+                };
+                auto* sel = new Picker();
+                sel->setCurrentColour (currentColour.isTransparent() ? boxPalette[0] : currentColour);
+                sel->setSize (300, 300);
+                sel->fn = onPick;
+                juce::CallOutBox::launchAsynchronously (std::unique_ptr<juce::Component> (sel), getScreenBounds(), nullptr);
+                if (auto* box = findParentComponentOfClass<juce::CallOutBox>()) box->dismiss();
+            };
+            for (auto* b : { &defaultButton, &customButton }) { b->setWantsKeyboardFocus (false); addAndMakeVisible (b); }
+            setSize (6 * 40 + 20, 2 * 40 + 20 + 34);
+        }
+
+        void choose (juce::Colour c)
+        {
+            onPick (c);
+            if (auto* box = findParentComponentOfClass<juce::CallOutBox>())
+                box->dismiss();
+        }
+
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced (10);
+            for (int i = 0; i < swatches.size(); ++i)
+                swatches[i]->setBounds (r.getX() + (i % 6) * 40, r.getY() + (i / 6) * 40, 36, 36);
+            auto row = r.removeFromBottom (28);
+            defaultButton.setBounds (row.removeFromLeft (row.getWidth() / 2 - 3));
+            row.removeFromLeft (6);
+            customButton.setBounds (row);
+        }
+
+        std::function<void (juce::Colour)> onPick;
+        juce::Colour currentColour;
+        juce::OwnedArray<juce::TextButton> swatches;
+        juce::TextButton defaultButton, customButton { "CUSTOM..." };
+    };
 
     juce::Colour inkOn (juce::Colour box) { return box.getPerceivedBrightness() > 0.55f ? Paper::ink : Paper::paper; }
 
@@ -158,7 +232,7 @@ public:
         const bool deck = owner.isOnDeck (r.file);
 
         auto b = sp.bounds.toFloat().translated (0.0f, sel ? -16.0f : 0.0f);
-        const auto colour = boxColour (s.name);
+        const auto colour = boxColour (s, &r);
 
         // box spine with a little shading
         juce::ColourGradient shade (colour.brighter (0.15f), b.getX(), 0, colour.darker (0.35f), b.getRight(), 0, false);
@@ -283,7 +357,7 @@ public:
         }
 
         // the box front
-        const auto colour = boxColour (s->name);
+        const auto colour = boxColour (*s, reel);
         auto boxRect = r.toFloat();
         g.setColour (juce::Colour (0x50000000));
         g.fillRoundedRectangle (boxRect.translated (4.0f, 5.0f), 3.0f);
@@ -429,8 +503,10 @@ LibraryView::LibraryView (juce::ApplicationProperties& p) : props (p)
     revealButton.onClick     = [this] { revealSelected(); };
     archiveButton.onClick    = [this] { archiveSelected(); };
     deleteButton.onClick     = [this] { deleteSelected(); };
+    colourButton.onClick     = [this] { chooseColour(); };
+    colourButton.setTooltip ("Box colour for this reel, or for the whole session (its reels follow it unless given their own)");
 
-    for (auto* b : { &newSessionButton, &backButton, &folderButton, &loadButton, &newReelButton, &revealButton, &archiveButton, &deleteButton })
+    for (auto* b : { &newSessionButton, &backButton, &folderButton, &loadButton, &newReelButton, &revealButton, &archiveButton, &deleteButton, &colourButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (b);
@@ -445,6 +521,49 @@ juce::File LibraryView::getLibraryFolder() const
 {
     const auto saved = props.getUserSettings()->getValue ("libraryFolder");
     return saved.isNotEmpty() ? juce::File (saved) : Library::defaultFolder();
+}
+
+void LibraryView::chooseColour()
+{
+    const auto* s = selectedSession();
+    if (s == nullptr) return;
+    const auto* r = selectedReel();
+
+    auto openSwatches = [this] (juce::File file, juce::Colour current, juce::String defaultLabel)
+    {
+        auto panel = std::make_unique<SwatchPanel> (current, defaultLabel, [this, file] (juce::Colour c) { applyColour (file, c); });
+        juce::CallOutBox::launchAsynchronously (std::move (panel), colourButton.getScreenBounds(), nullptr);
+    };
+
+    if (r == nullptr)
+    {
+        openSwatches (s->file, juce::Colour (s->colour), "AUTOMATIC");
+        return;
+    }
+
+    juce::PopupMenu m;
+    m.addItem (1, "This reel (" + r->name + ")");
+    m.addItem (2, "Whole session - its reels follow unless they have their own");
+    const auto reelFile = r->file, sessionFile = s->file;
+    const auto reelColour = juce::Colour (r->colour), sessionColour = juce::Colour (s->colour);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (colourButton),
+                     [openSwatches, reelFile, sessionFile, reelColour, sessionColour] (int result)
+    {
+        if (result == 1) openSwatches (reelFile, reelColour, "SESSION'S");
+        if (result == 2) openSwatches (sessionFile, sessionColour, "AUTOMATIC");
+    });
+}
+
+void LibraryView::applyColour (const juce::File& file, juce::Colour c)
+{
+    juce::String err;
+    if (! Library::setColour (file, c.isTransparent() ? 0u : c.getARGB(), err))
+    {
+        showError ("Colour", err);
+        return;
+    }
+    if (onColourChanged) onColourChanged (file, c);
+    refresh();
 }
 
 void LibraryView::refresh()
@@ -515,6 +634,7 @@ void LibraryView::updateSelection()
     loadButton.setButtonText (r != nullptr && isOnDeck (r->file) ? "BACK TO DECK" : "LOAD REEL");
     newReelButton.setEnabled (s != nullptr);
     revealButton.setEnabled (s != nullptr);
+    colourButton.setEnabled (s != nullptr);
     archiveButton.setEnabled (r != nullptr && ! isOnDeck (r->file));
     archiveButton.setButtonText (r != nullptr && r->archived ? "UNARCHIVE" : "ARCHIVE");
     deleteButton.setEnabled (s != nullptr && (r != nullptr ? ! isOnDeck (r->file) : s->reels.empty()));
@@ -760,8 +880,10 @@ void LibraryView::resized()
         row1.removeFromLeft (10);
         newReelButton.setBounds (row1);
         buttons.removeFromTop (8);
-        const int w = (buttons.getWidth() - 20) / 3;
+        const int w = (buttons.getWidth() - 30) / 4;
         revealButton.setBounds (buttons.removeFromLeft (w));
+        buttons.removeFromLeft (10);
+        colourButton.setBounds (buttons.removeFromLeft (w));
         buttons.removeFromLeft (10);
         archiveButton.setBounds (buttons.removeFromLeft (w));
         buttons.removeFromLeft (10);

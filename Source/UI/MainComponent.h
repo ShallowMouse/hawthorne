@@ -98,6 +98,7 @@ private:
     // Speed
     void changeSpeed (double deckIps, bool variOn, double variPercent, bool save = true);
     void refreshSpeedSection();
+    void stepSemitone (int direction);
     juce::String speedText() const;
 
     // Masters
@@ -178,7 +179,8 @@ private:
                  ips30Key { "30",   "Deck speed 30 ips",  Colours::mustard },
                  variKey  { "VARI", "Varispeed on / off (keeps the setting)", Colours::mustard };
     juce::Slider variKnob { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
-    juce::Label variLabel;
+    juce::Label variPctLabel, variStLabel;
+    juce::TextButton stDownButton { "- ST" }, stUpButton { "+ ST" }, variResetButton { "0" };
     juce::Rectangle<int> speedLabelArea;
     MarkerPanel markers;
     LibraryView library { props };

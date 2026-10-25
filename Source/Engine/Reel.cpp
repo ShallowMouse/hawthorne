@@ -294,6 +294,8 @@ std::unique_ptr<juce::XmlElement> Reel::toXml() const
     auto root = std::make_unique<juce::XmlElement> ("HawthorneReel");
     root->setAttribute ("formatVersion", 4);
     root->setAttribute ("archived", archived);
+    if (colour != 0)
+        root->setAttribute ("colour", juce::String::toHexString ((juce::int64) colour));
     root->setAttribute ("sampleRate", sampleRate);
     root->setAttribute ("bitDepth", bitDepth);
     root->setAttribute ("numTracks", numTracks);
@@ -378,6 +380,7 @@ bool Reel::fromXml (const juce::XmlElement& root, juce::String& error)
     bitDepth   = 24;
     numTracks  = juce::jlimit (1, kMaxTracks, root.getIntAttribute ("numTracks", kDefaultTracks));
     archived   = root.getBoolAttribute ("archived", false);
+    colour     = (juce::uint32) root.getStringAttribute ("colour").getHexValue64();
     nextTake   = juce::jmax (1, root.getIntAttribute ("nextTake", 1));
 
     auto validIps = [] (double v) { return v == 7.5 || v == 15.0 || v == 30.0; };

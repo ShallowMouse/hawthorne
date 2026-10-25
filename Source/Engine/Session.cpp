@@ -113,6 +113,9 @@ std::unique_ptr<Session> Session::load (const juce::File& file, juce::String& er
         for (auto* f : ie->getChildWithTagNameIterator ("Field"))
             s->info.set (f->getStringAttribute ("name"), f->getStringAttribute ("value"));
 
+    if (xml->hasAttribute ("colour"))
+        s->colour = (juce::uint32) xml->getStringAttribute ("colour").getHexValue64();
+
     return s;
 }
 
@@ -146,6 +149,8 @@ bool Session::save (juce::String& error)
 {
     juce::XmlElement root ("HawthorneProject");
     root.setAttribute ("formatVersion", 1);
+    if (colour != 0)
+        root.setAttribute ("colour", juce::String::toHexString ((juce::int64) colour));
 
     auto* ie = root.createNewChildElement ("Info");
     for (auto& key : info.getAllKeys())

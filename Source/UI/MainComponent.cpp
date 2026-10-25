@@ -152,28 +152,50 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     variKnob.setMouseDragSensitivity (800);              // 0.125 % per pixel; type a value for exact
     variKnob.setVelocityModeParameters (0.4, 1, 0.0, true, juce::ModifierKeys::shiftModifier);   // shift = fine
     variKnob.setWantsKeyboardFocus (false);
-    variKnob.setTooltip ("Varispeed -50 % .. +50 %. Drag (shift = fine), double-click for 0, or type a value below.");
+    variKnob.setTooltip ("Varispeed -50 % .. +50 %. Drag (shift = fine), double-click for 0.");
     variKnob.onValueChange = [this] { if (reel != nullptr) changeSpeed (reel->deckIps, true, variKnob.getValue(), false); };
     variKnob.onDragEnd = [this] { saveReel(); };
     addAndMakeVisible (variKnob);
 
-    variLabel.setEditable (false, true, false);
-    variLabel.setJustificationType (juce::Justification::centred);
-    variLabel.setFont (monoFont (12.0f, true));
-    variLabel.setColour (juce::Label::backgroundColourId, Colours::black);
-    variLabel.setColour (juce::Label::outlineColourId, Colours::edge);
-    variLabel.setTooltip ("Double-click to type: a percentage (-5.5) or semitones (-1 st)");
-    variLabel.setWantsKeyboardFocus (false);
-    variLabel.onTextChange = [this]
+    // Readouts: % and semitones (each can still be double-clicked to type an exact value)
+    for (auto* l : { &variPctLabel, &variStLabel })
+    {
+        l->setEditable (false, true, false);
+        l->setJustificationType (juce::Justification::centred);
+        l->setFont (monoFont (13.0f, true));
+        l->setColour (juce::Label::backgroundColourId, Colours::black);
+        l->setColour (juce::Label::outlineColourId, Colours::edge);
+        l->setWantsKeyboardFocus (false);
+        addAndMakeVisible (l);
+    }
+    variPctLabel.setTooltip ("Varispeed in percent (double-click to type one)");
+    variStLabel.setTooltip ("Varispeed in semitones (double-click to type one)");
+    variPctLabel.onTextChange = [this]
     {
         if (reel == nullptr) return;
-        auto t = variLabel.getText().trim().toLowerCase();
-        const bool semis = t.contains ("st") || t.contains ("semi");
-        const double v = t.retainCharacters ("+-0123456789.").getDoubleValue();
-        const double pct = semis ? (std::pow (2.0, v / 12.0) - 1.0) * 100.0 : v;
-        changeSpeed (reel->deckIps, true, juce::jlimit (-TapeEngine::maxVarispeedPercent, TapeEngine::maxVarispeedPercent, pct));
+        const double v = variPctLabel.getText().retainCharacters ("+-0123456789.").getDoubleValue();
+        changeSpeed (reel->deckIps, true, juce::jlimit (-TapeEngine::maxVarispeedPercent, TapeEngine::maxVarispeedPercent, v));
     };
-    addAndMakeVisible (variLabel);
+    variStLabel.onTextChange = [this]
+    {
+        if (reel == nullptr) return;
+        const double st = variStLabel.getText().retainCharacters ("+-0123456789.").getDoubleValue();
+        changeSpeed (reel->deckIps, true, juce::jlimit (-TapeEngine::maxVarispeedPercent, TapeEngine::maxVarispeedPercent,
+                                                        (std::pow (2.0, st / 12.0) - 1.0) * 100.0));
+    };
+
+    // Semitone steps and reset
+    for (auto* b : { &stDownButton, &stUpButton, &variResetButton })
+    {
+        b->setWantsKeyboardFocus (false);
+        addAndMakeVisible (b);
+    }
+    stDownButton.setTooltip ("Down to the next whole semitone");
+    stUpButton.setTooltip ("Up to the next whole semitone");
+    variResetButton.setTooltip ("Back to 0 (normal speed)");
+    stDownButton.onClick    = [this] { stepSemitone (-1); };
+    stUpButton.onClick      = [this] { stepSemitone (+1); };
+    variResetButton.onClick = [this] { if (reel != nullptr) changeSpeed (reel->deckIps, reel->variOn, 0.0); };
 
     markers.onLocate    = [this] (juce::int64 pos) { locate (pos); };
     markers.onAddMarker = [this] { addMarker(); };
@@ -202,6 +224,13 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
 
     library.onLoadReel    = [this] (const juce::File& f) { loadReel (f); };
     library.onBackToDeck  = [this] { showLibrary (false); };
+    library.onColourChanged = [this] (const juce::File& f, juce::Colour c)
+    {
+        // the loaded reel / session must not save its old colour back
+        const auto argb = c.isTransparent() ? 0u : c.getARGB();
+        if (reel != nullptr && reel->getFile() == f)          reel->colour = argb;
+        if (session != nullptr && session->getFile() == f)    session->colour = argb;
+    };
     library.getLoadedReel = [this] { return reel != nullptr ? reel->getFile() : juce::File(); };
     library.getSampleRate = [this]
     {
@@ -608,10 +637,25 @@ void MainComponent::refreshSpeedSection()
 
     const double st = 12.0 * std::log2 (1.0 + pct / 100.0);
     auto signedFixed = [] (double v) { return (v >= 0.0 ? "+" : "") + juce::String (v, 2); };
-    if (! variLabel.isBeingEdited())
-        variLabel.setText (signedFixed (pct) + " %   " + signedFixed (st) + " st", juce::dontSendNotification);
-    variLabel.setColour (juce::Label::textColourId, has && reel->variOn ? Colours::mustard : Colours::textDim);
+    if (! variPctLabel.isBeingEdited()) variPctLabel.setText (signedFixed (pct) + " %", juce::dontSendNotification);
+    if (! variStLabel.isBeingEdited())  variStLabel.setText (signedFixed (st) + " st", juce::dontSendNotification);
+    for (auto* l : { &variPctLabel, &variStLabel })
+        l->setColour (juce::Label::textColourId, has && reel->variOn ? Colours::mustard : Colours::textDim);
     repaint (reelInfoArea);
+}
+
+void MainComponent::stepSemitone (int direction)
+{
+    if (reel == nullptr)
+        return;
+
+    // From wherever it is now to the next whole semitone up / down.
+    const double cur = reel->variOn ? 12.0 * std::log2 (1.0 + reel->variPercent / 100.0) : 0.0;
+    double target = direction > 0 ? std::floor (cur + 1.0e-6) + 1.0 : std::ceil (cur - 1.0e-6) - 1.0;
+    const double maxSt = 12.0 * std::log2 (1.0 + TapeEngine::maxVarispeedPercent / 100.0);
+    const double minSt = 12.0 * std::log2 (1.0 - TapeEngine::maxVarispeedPercent / 100.0);
+    target = juce::jlimit (std::ceil (minSt - 1.0e-6), std::floor (maxSt + 1.0e-6), target);
+    changeSpeed (reel->deckIps, true, (std::pow (2.0, target / 12.0) - 1.0) * 100.0);
 }
 
 juce::String MainComponent::speedText() const
@@ -1125,7 +1169,9 @@ void MainComponent::timerCallback()
 
     masterArmKey.setLit (engine.isMasterArmed() && (! rec || flash));
     for (juce::Component* c : { (juce::Component*) &ips7Key, (juce::Component*) &ips15Key, (juce::Component*) &ips30Key,
-                                (juce::Component*) &variKey, (juce::Component*) &variKnob, (juce::Component*) &variLabel })
+                                (juce::Component*) &variKey, (juce::Component*) &variKnob, (juce::Component*) &variPctLabel,
+                                (juce::Component*) &variStLabel, (juce::Component*) &stDownButton, (juce::Component*) &stUpButton,
+                                (juce::Component*) &variResetButton })
         c->setEnabled (reel != nullptr && ! rec);       // speed is held while recording
     monitorKey.setLit (engine.isMonitoringMaster());
     masterL.update (engine.popMasterRms (0), engine.popMasterPeak (0), dt);
@@ -1330,7 +1376,7 @@ void MainComponent::resized()
         d.removeFromLeft (gap);
 
         // Speed: IPS switch, VARI, varispeed knob and readout
-        auto sp = d.removeFromLeft (compact ? 250 : 290);
+        auto sp = d.removeFromLeft (compact ? 320 : 370);
         speedLabelArea = sp.removeFromTop (14);
         variKnob.setBounds (sp.removeFromRight (52).withSizeKeepingCentre (52, 52));
         sp.removeFromRight (6);
@@ -1342,7 +1388,15 @@ void MainComponent::resized()
             k->setBounds (row1.removeFromLeft (iw));
             row1.removeFromLeft (4);
         }
-        variLabel.setBounds (sp.removeFromTop (24));
+        // [- ST] [ % ] [ st ] [+ ST] [0]
+        auto row2 = sp.removeFromTop (24);
+        const int g2 = 4, w2 = row2.getWidth() - 4 * g2;
+        const int wb = w2 * 17 / 100, wr = w2 * 13 / 100, wl = (w2 - 2 * wb - wr) / 2;
+        stDownButton.setBounds (row2.removeFromLeft (wb));   row2.removeFromLeft (g2);
+        variPctLabel.setBounds (row2.removeFromLeft (wl));   row2.removeFromLeft (g2);
+        variStLabel.setBounds (row2.removeFromLeft (wl));    row2.removeFromLeft (g2);
+        stUpButton.setBounds (row2.removeFromLeft (wb));     row2.removeFromLeft (g2);
+        variResetButton.setBounds (row2);
         d.removeFromLeft (gap);
         reelInfoArea = d;
     }

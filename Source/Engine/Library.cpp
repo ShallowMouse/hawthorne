@@ -16,6 +16,8 @@ ReelSummary Library::summarise (const juce::File& reelFile)
 
     r.numTracks  = xml->getIntAttribute ("numTracks", kDefaultTracks);
     r.sampleRate = xml->getDoubleAttribute ("sampleRate", 48000.0);
+    if (xml->hasAttribute ("colour"))
+        r.colour = (juce::uint32) xml->getStringAttribute ("colour").getHexValue64();
     r.archived   = xml->getBoolAttribute ("archived", false);
 
     if (auto* ie = xml->getChildByName ("Info"))
@@ -95,6 +97,7 @@ std::vector<SessionSummary> Library::scan (const juce::File& folder, juce::Strin
         sum.file = s->getFile();
         sum.name = s->getName();
         sum.info = s->info;
+        sum.colour = s->colour;
         for (auto& rf : s->getReelFiles())
             sum.reels.push_back (summarise (rf));
 
@@ -126,6 +129,27 @@ bool Library::setArchived (const juce::File& reelFile, bool archived, juce::Stri
     if (! xml->writeTo (temp.getFile()) || ! temp.overwriteTargetFileWithTemporary())
     {
         error = "Could not update " + reelFile.getFileName();
+        return false;
+    }
+    return true;
+}
+
+bool Library::setColour (const juce::File& file, juce::uint32 colour, juce::String& error)
+{
+    auto xml = juce::XmlDocument::parse (file);
+    if (xml == nullptr)
+    {
+        error = "Could not read " + file.getFileName();
+        return false;
+    }
+
+    if (colour == 0) xml->removeAttribute ("colour");
+    else             xml->setAttribute ("colour", juce::String::toHexString ((juce::int64) colour));
+
+    juce::TemporaryFile temp (file);
+    if (! xml->writeTo (temp.getFile()) || ! temp.overwriteTargetFileWithTemporary())
+    {
+        error = "Could not update " + file.getFileName();
         return false;
     }
     return true;

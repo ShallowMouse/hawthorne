@@ -42,6 +42,7 @@ public:
 
     static const juce::StringArray& infoFields();
     juce::StringPairArray info;
+    juce::uint32 colour = 0;       // tape box colour (ARGB) for this session's reels, 0 = automatic
 
     /** Notes on anything converted or repaired when opening. */
     juce::StringArray log;

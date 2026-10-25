@@ -122,6 +122,7 @@ public:
     static const juce::StringArray& legacySessionFields();
 
     bool archived = false;     // hidden from the library shelves
+    juce::uint32 colour = 0;   // tape box colour (ARGB), 0 = the session's
 
     double sampleRate = 48000.0;
     int    bitDepth   = 24;
