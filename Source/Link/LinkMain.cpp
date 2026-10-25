@@ -73,7 +73,9 @@ public:
         g.fillRect (header);
         g.setColour (Colours::mustard);
         g.setFont (monoFont (20.0f, true));
-        g.drawText ("H A W T H O R N E   L I N K", header.withTrimmedLeft (18), juce::Justification::centredLeft);
+        drawLogoMark (g, header.toFloat().withTrimmedLeft (12).withWidth (52).reduced (0, 4));
+        g.setColour (Colours::mustard);
+        g.drawText ("H A W T H O R N E   L I N K", header.withTrimmedLeft (70), juce::Justification::centredLeft);
         g.setColour (Colours::textDim);
         g.setFont (monoFont (11.0f));
         g.drawText ("v" HAWTHORNE_VERSION, header.withTrimmedRight (18), juce::Justification::centredRight);

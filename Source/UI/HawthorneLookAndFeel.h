@@ -25,6 +25,9 @@ inline juce::Font monoFont (float size, bool bold = false)
     return juce::Font (juce::FontOptions ("Courier New", size, bold ? juce::Font::bold : juce::Font::plain));
 }
 
+/** The Hawthorne mark (two reels as an infinity loop), drawn into a square. Defined in UIHelpers / apps. */
+void drawLogoMark (juce::Graphics&, juce::Rectangle<float> area);
+
 inline juce::Font uiFont (float size, bool bold = false)
 {
     return juce::Font (juce::FontOptions (size, bold ? juce::Font::bold : juce::Font::plain));

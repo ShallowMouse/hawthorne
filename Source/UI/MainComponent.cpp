@@ -1203,10 +1203,12 @@ void MainComponent::paint (juce::Graphics& g)
     g.fillRect (headerArea);
     g.setColour (Colours::mustard);
     g.setFont (monoFont (22.0f, true));
-    g.drawText ("H A W T H O R N E", headerArea.withTrimmedLeft (18).withWidth (280), juce::Justification::centredLeft);
+    drawLogoMark (g, headerArea.toFloat().withTrimmedLeft (12).withWidth (52).reduced (0, 4));
+    g.setColour (Colours::mustard);
+    g.drawText ("H A W T H O R N E", headerArea.withTrimmedLeft (70).withWidth (280), juce::Justification::centredLeft);
 
     const int firstButtonX = updateButton.isVisible() ? updateButton.getX() : libraryButton.getX();
-    auto sessionArea = headerArea.withTrimmedLeft (310).withRight (firstButtonX - 16);
+    auto sessionArea = headerArea.withTrimmedLeft (360).withRight (firstButtonX - 16);
     g.setFont (monoFont (14.0f, true));
     g.setColour (Colours::text);
     g.drawText (reel != nullptr ? (session != nullptr ? session->getName() + "  -  " : juce::String()) + reel->getName()

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(Hawthorne VERSION 1.10.0)
+project(Hawthorne VERSION 1.10.1)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -36,7 +36,11 @@ set(COMMON_DEFS
 
 #------------------------------------------------------------------------------
 if(HAWTHORNE_BUILD_APP)
+    # Logo (header mark) for the apps
+    juce_add_binary_data(HawthorneBinaryData SOURCES Resources/hawthorne-mark.svg)
+
     juce_add_gui_app(Hawthorne
+        ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/hawthorne-logo.png"
         PRODUCT_NAME "Hawthorne"
         COMPANY_NAME "Hawthorne"
         BUNDLE_ID "com.hawthorne.recorder"
@@ -49,6 +53,7 @@ if(HAWTHORNE_BUILD_APP)
         Source/Updater.h
         Source/Updater.cpp
         Source/UI/HawthorneLookAndFeel.h
+        Source/UI/Logo.cpp
         Source/UI/UIHelpers.h
         Source/UI/ChannelModule.h
         Source/UI/ChannelModule.cpp
@@ -82,6 +87,7 @@ if(HAWTHORNE_BUILD_APP)
     endif()
 
     target_link_libraries(Hawthorne PRIVATE
+        HawthorneBinaryData
         juce::juce_audio_basics
         juce::juce_audio_devices
         juce::juce_audio_formats
@@ -97,6 +103,7 @@ if(HAWTHORNE_BUILD_APP)
     #--------------------------------------------------------------------------
     # Hawthorne Link: runs on the other PC and streams its inputs to Hawthorne.
     juce_add_gui_app(HawthorneLink
+        ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/hawthorne-logo.png"
         PRODUCT_NAME "Hawthorne Link"
         COMPANY_NAME "Hawthorne"
         BUNDLE_ID "com.hawthorne.link"
@@ -104,6 +111,7 @@ if(HAWTHORNE_BUILD_APP)
     )
     target_sources(HawthorneLink PRIVATE
         Source/Link/LinkMain.cpp
+        Source/UI/Logo.cpp
         Source/Network/NetProtocol.h
         Source/Network/NetSender.h
         Source/Network/NetSender.cpp
@@ -114,6 +122,7 @@ if(HAWTHORNE_BUILD_APP)
         target_compile_definitions(HawthorneLink PRIVATE JUCE_ASIO=1)
     endif()
     target_link_libraries(HawthorneLink PRIVATE
+        HawthorneBinaryData
         juce::juce_audio_basics
         juce::juce_audio_devices
         juce::juce_audio_utils

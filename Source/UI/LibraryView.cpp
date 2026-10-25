@@ -717,10 +717,12 @@ void LibraryView::paint (juce::Graphics& g)
 
     g.setColour (Colours::mustard);
     g.setFont (monoFont (22.0f, true));
-    g.drawText ("H A W T H O R N E", topBar.withTrimmedLeft (18).withWidth (280), juce::Justification::centredLeft);
+    drawLogoMark (g, topBar.toFloat().withTrimmedLeft (12).withWidth (52).reduced (0, 6));
+    g.setColour (Colours::mustard);
+    g.drawText ("H A W T H O R N E", topBar.withTrimmedLeft (70).withWidth (280), juce::Justification::centredLeft);
     g.setColour (Colours::text);
     g.setFont (monoFont (15.0f, true));
-    g.drawText ("TAPE LIBRARY", topBar.withTrimmedLeft (310).withWidth (200), juce::Justification::centredLeft);
+    g.drawText ("TAPE LIBRARY", topBar.withTrimmedLeft (360).withWidth (200), juce::Justification::centredLeft);
 
     g.setColour (Colours::textDim);
     g.setFont (monoFont (11.0f));

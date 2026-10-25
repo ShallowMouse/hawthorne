@@ -27,6 +27,7 @@ OutputBaseFilename=Hawthorne-Setup-{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\Resources\hawthorne.ico
 CloseApplications=yes
 ; (Hawthorne Link is closed too while updating)
 RestartApplications=no
