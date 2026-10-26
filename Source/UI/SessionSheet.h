@@ -44,6 +44,10 @@ public:
     class InfoPage;
     class TrackSheetPage;
     class TakeLogPage;
+    class PhotosPage;
+
+    /** Writes the paperwork as a printable page and opens it in the browser (prints itself). */
+    void printSheets();
 
 private:
     void markDirty();
@@ -56,6 +60,8 @@ private:
     InfoPage* reelPage = nullptr;
     TrackSheetPage* trackPage = nullptr;
     TakeLogPage* takePage = nullptr;
+    PhotosPage* photosPage = nullptr;
+    juce::TextButton printButton { "PRINT" };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SessionSheet)
 };

@@ -126,7 +126,7 @@ std::unique_ptr<Reel> Reel::load (const juce::File& file, juce::String& error)
 const juce::StringArray& Reel::infoFields()
 {
     static const juce::StringArray fields { "Reel No.", "Date", "EQ",
-                                            "Alignment", "Noise Reduction", "Tones", "Reel Notes" };
+                                            "Alignment", "Noise Reduction", "Tones", "Time In", "Time Out", "Reel Notes" };
     return fields;
 }
 
@@ -240,6 +240,40 @@ juce::String Reel::uniqueMasterName (const juce::String& wanted) const
     return name;
 }
 
+void Reel::flipMetadata (juce::int64 length, bool swapTracks)
+{
+    auto mirror = [length] (juce::int64 p) { return juce::jlimit ((juce::int64) 0, length, length - p); };
+    for (auto& m : markers) m.position = mirror (m.position);
+    sortMarkers();
+    for (auto& t : takeLog)
+    {
+        const auto s = mirror (t.end), e = mirror (t.start);
+        t.start = s; t.end = e;
+    }
+    if (punchIn >= 0 && punchOut > punchIn)
+    {
+        const auto i = mirror (punchOut), o = mirror (punchIn);
+        punchIn = i; punchOut = o;
+    }
+    if (swapTracks)
+        for (int a = 0, b = numTracks - 1; a < b; ++a, --b)
+        {
+            // the sheet follows the tape; the electronics (inputs, outputs, arming) stay put
+            auto& x = tracks[(size_t) a];
+            auto& y = tracks[(size_t) b];
+            std::swap (x.name, y.name);
+            std::swap (x.instrument, y.instrument);
+            std::swap (x.mic, y.mic);
+            std::swap (x.notes, y.notes);
+            std::swap (x.micPos, y.micPos);
+            std::swap (x.preamp, y.preamp);
+            std::swap (x.eq, y.eq);
+            std::swap (x.dynamics, y.dynamics);
+            std::swap (x.outboard, y.outboard);
+        }
+    flipped = ! flipped;
+}
+
 int Reel::addMaster (const juce::String& name, int stock)
 {
     masters.push_back ({ uniqueMasterName (name), juce::jlimit (0, 7, stock) });
@@ -305,6 +339,7 @@ std::unique_ptr<juce::XmlElement> Reel::toXml() const
     root->setAttribute ("stock", tapeStock);
     root->setAttribute ("machine", machine);
     root->setAttribute ("masterMachine", masterMachine);
+    root->setAttribute ("flipped", flipped);
     auto* deck = root->createNewChildElement ("Deck");
     deck->setAttribute ("ips", deckIps);
     deck->setAttribute ("vari", variOn);
@@ -330,6 +365,11 @@ std::unique_ptr<juce::XmlElement> Reel::toXml() const
         if (tr.instrument.isNotEmpty()) te->setAttribute ("instrument", tr.instrument);
         if (tr.mic.isNotEmpty())        te->setAttribute ("mic", tr.mic);
         if (tr.notes.isNotEmpty())      te->setAttribute ("notes", tr.notes);
+        if (tr.micPos.isNotEmpty())     te->setAttribute ("micPos", tr.micPos);
+        if (tr.preamp.isNotEmpty())     te->setAttribute ("preamp", tr.preamp);
+        if (tr.eq.isNotEmpty())         te->setAttribute ("eq", tr.eq);
+        if (tr.dynamics.isNotEmpty())   te->setAttribute ("dynamics", tr.dynamics);
+        if (tr.outboard.isNotEmpty())   te->setAttribute ("outboard", tr.outboard);
     }
 
     auto* me = root->createNewChildElement ("Master");
@@ -337,6 +377,15 @@ std::unique_ptr<juce::XmlElement> Reel::toXml() const
     me->setAttribute ("inR",  channelsToString (master.inputs[1]));
     me->setAttribute ("outL", channelsToString (master.outputs[0]));
     me->setAttribute ("outR", channelsToString (master.outputs[1]));
+
+    auto* lo = root->createNewChildElement ("Locate");
+    lo->setAttribute ("in", juce::String (punchIn));
+    lo->setAttribute ("out", juce::String (punchOut));
+    lo->setAttribute ("auto", autoPunch);
+    lo->setAttribute ("rehearse", rehearse);
+    lo->setAttribute ("cycle", cycle);
+    lo->setAttribute ("pre", preRoll);
+    lo->setAttribute ("post", postRoll);
 
     auto* sy = root->createNewChildElement ("Sync");
     sy->setAttribute ("click", clickOn);
@@ -404,6 +453,7 @@ bool Reel::fromXml (const juce::XmlElement& root, juce::String& error)
     auto validIps = [] (double v) { return v == 7.5 || v == 15.0 || v == 30.0; };
     tapeStock = juce::jlimit (0, 7, root.getIntAttribute ("stock", 0));   // older reels: clean
     machine = juce::jlimit (0, 5, root.getIntAttribute ("machine", 0));
+    flipped = root.getBoolAttribute ("flipped", false);
     masterMachine = juce::jlimit (0, 4, root.getIntAttribute ("masterMachine", 0));
     ips = root.getDoubleAttribute ("ips", 0.0);
     if (! validIps (ips))
@@ -459,6 +509,11 @@ bool Reel::fromXml (const juce::XmlElement& root, juce::String& error)
         tr.instrument = te->getStringAttribute ("instrument");
         tr.mic        = te->getStringAttribute ("mic");
         tr.notes      = te->getStringAttribute ("notes");
+        tr.micPos     = te->getStringAttribute ("micPos");
+        tr.preamp     = te->getStringAttribute ("preamp");
+        tr.eq         = te->getStringAttribute ("eq");
+        tr.dynamics   = te->getStringAttribute ("dynamics");
+        tr.outboard   = te->getStringAttribute ("outboard");
     }
 
     if (auto* me = root.getChildByName ("Master"))
@@ -467,6 +522,17 @@ bool Reel::fromXml (const juce::XmlElement& root, juce::String& error)
         master.inputs[1]  = channelsFromString (me->getStringAttribute ("inR"));
         master.outputs[0] = channelsFromString (me->getStringAttribute ("outL", "1"));
         master.outputs[1] = channelsFromString (me->getStringAttribute ("outR", "2"));
+    }
+
+    if (auto* lo = root.getChildByName ("Locate"))
+    {
+        punchIn   = lo->getStringAttribute ("in", "-1").getLargeIntValue();
+        punchOut  = lo->getStringAttribute ("out", "-1").getLargeIntValue();
+        autoPunch = lo->getBoolAttribute ("auto", false);
+        rehearse  = lo->getBoolAttribute ("rehearse", false);
+        cycle     = lo->getBoolAttribute ("cycle", false);
+        preRoll   = juce::jlimit (0.0, 30.0, lo->getDoubleAttribute ("pre", 2.0));
+        postRoll  = juce::jlimit (0.0, 30.0, lo->getDoubleAttribute ("post", 1.0));
     }
 
     if (auto* sy = root.getChildByName ("Sync"))

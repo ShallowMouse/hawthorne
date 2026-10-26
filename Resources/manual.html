@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hawthorne Manual</title>
+<style>
+:root { --ink:#221f19; --dim:#6b6455; --paper:#f6f0e0; --rule:#d8ccb0; --accent:#b8860b; --red:#b03a2e; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--paper); color:var(--ink); font:16px/1.6 Georgia, "Times New Roman", serif; }
+header { background:#1d1b17; color:#f1e8cf; padding:28px 32px; }
+header h1 { margin:0; font:700 30px/1.1 "Courier New", monospace; letter-spacing:2px; }
+header p { margin:6px 0 0; color:#c9bd9c; }
+.wrap { display:flex; max-width:1200px; margin:0 auto; }
+nav { width:260px; flex:none; padding:24px 16px; position:sticky; top:0; align-self:flex-start; max-height:100vh; overflow:auto; font:14px/1.5 "Courier New", monospace; }
+nav a { display:block; color:var(--ink); text-decoration:none; padding:2px 0; }
+nav a:hover { color:var(--accent); }
+nav .h { margin-top:12px; color:var(--dim); font-weight:bold; }
+main { flex:1; padding:24px 32px 80px; max-width:820px; }
+h2 { font:700 20px "Courier New", monospace; border-bottom:2px solid var(--ink); padding-bottom:4px; margin-top:44px; }
+h3 { font:700 16px "Courier New", monospace; margin:24px 0 6px; }
+code, kbd, .key { font:600 13px "Courier New", monospace; background:#e9dfc4; border:1px solid var(--rule); border-radius:3px; padding:1px 5px; }
+.key { background:#2a2721; color:#f1e8cf; border-color:#2a2721; }
+table { border-collapse:collapse; width:100%; margin:8px 0 16px; font-size:15px; }
+td, th { border:1px solid var(--rule); padding:5px 8px; text-align:left; vertical-align:top; }
+th { background:#ece2c8; font:700 13px "Courier New", monospace; }
+.tip { border-left:4px solid var(--accent); background:#efe5ca; padding:8px 12px; margin:12px 0; }
+.warn { border-left:4px solid var(--red); background:#f1dcd4; padding:8px 12px; margin:12px 0; }
+@media (max-width:800px) { .wrap { display:block; } nav { position:static; width:auto; max-height:none; } main { padding:16px; } }
+@media print { nav { display:none; } header { background:none; color:var(--ink); } }
+</style>
+</head>
+<body>
+<header>
+  <h1>HAWTHORNE</h1>
+  <p>A multitrack tape machine for Windows &mdash; user manual</p>
+</header>
+<div class="wrap">
+<nav>
+  <div class="h">GETTING STARTED</div>
+  <a href="#idea">The idea</a>
+  <a href="#setup">First setup</a>
+  <a href="#library">Sessions and reels</a>
+  <div class="h">THE MACHINE</div>
+  <a href="#screen">The screen</a>
+  <a href="#transport">Transport</a>
+  <a href="#recording">Recording and punching</a>
+  <a href="#autolocator">Autolocator, auto punch, cycle</a>
+  <a href="#markers">Markers</a>
+  <a href="#speed">Speed and varispeed</a>
+  <a href="#wind">Spooling and CUE</a>
+  <div class="h">TAPE</div>
+  <a href="#stock">Tape stock</a>
+  <a href="#machines">Machines</a>
+  <a href="#masters">Masters</a>
+  <a href="#flip">Reverse tape (flip)</a>
+  <a href="#importexport">Import and export</a>
+  <div class="h">STUDIO</div>
+  <a href="#routing">Routing</a>
+  <a href="#latency">Latency and outboard</a>
+  <a href="#tempo">Tempo and click</a>
+  <a href="#timecode">Timecode and sync</a>
+  <a href="#link">Hawthorne Link (network)</a>
+  <a href="#sheets">Session sheets and printing</a>
+  <div class="h">REFERENCE</div>
+  <a href="#keys">Keyboard shortcuts</a>
+  <a href="#safety">Safety and recovery</a>
+  <a href="#updates">Updates</a>
+</nav>
+<main>
+
+<h2 id="idea">The idea</h2>
+<p>Hawthorne works like a studio tape machine, not a DAW. There is one reel on the machine at a time. Every track runs in step on that reel from start to end. Recording goes onto the tape at the playhead and replaces what was there, exactly as on real tape. There are no clips, no playlists and no undo &mdash; you commit, as you would on a 24-track.</p>
+<p>What you get in return is speed and focus: arm, roll, play. Around that core Hawthorne adds what a real studio has &mdash; tape stocks and machine models, varispeed, an autolocator, a master 2-track, timecode, a click, paperwork &mdash; and modern conveniences such as latency compensation and network audio.</p>
+
+<h2 id="setup">First setup</h2>
+<ol>
+  <li>Open <b>SETTINGS</b> (top right). Choose your audio interface (ASIO for low latency), the sample rate, and turn on the inputs and outputs you'll use.</li>
+  <li>Open <b>LIBRARY</b> and click <b>NEW SESSION</b>. Give it a name, choose the number of tracks, tape speed, tape stock and machine. A first reel is made for you.</li>
+  <li>Open <b>ROUTING</b>. Patch an input to each track you'll record, and pick which tracks feed the master mix and which outputs they go to.</li>
+  <li>For overdubs that line up perfectly, measure the round trip in ROUTING (see <a href="#latency">Latency</a>).</li>
+</ol>
+<div class="tip">The device's sample rate follows the reel: loading a 96 kHz reel switches the interface to 96 kHz.</div>
+
+<h2 id="library">Sessions and reels</h2>
+<p>A <b>session</b> holds the reels for one job (an album, a single, a client). A <b>reel</b> is one tape: its track count, speed, sample rate and tape stock are fixed when it's made, like a real reel. The library shows each session's reels on a shelf as tape boxes.</p>
+<ul>
+  <li><b>NEW REEL</b> adds a reel to the selected session (defaults follow its last reel).</li>
+  <li><b>COLOUR</b> sets a session's box colour; a reel can have its own.</li>
+  <li>The tape box shows the reel's details: speed, machine, tape, length, masters and what's on it.</li>
+</ul>
+
+<h2 id="screen">The screen</h2>
+<table>
+  <tr><th>Area</th><th>What it is</th></tr>
+  <tr><td>Header</td><td>Library, session sheet, routing, network, tempo, timecode, machine, settings, full screen, help, and the update button when a new version is out.</td></tr>
+  <tr><td>Meter bridge</td><td>One module per track: a VU meter (double-click its name plate to rename the track, right-click for import / export), the ARM button and the track number.</td></tr>
+  <tr><td>Sidebar</td><td>The master: L/R meters, master ARM and TAPE monitor, the master menu. Under it the autolocator, then the markers.</td></tr>
+  <tr><td>Transport deck</td><td>The counter (click it to switch min:sec / bars.beats / timecode), tempo and sync, transport keys, tape speed and varispeed.</td></tr>
+  <tr><td>Status bar</td><td>Device, sample rate, latency, disk space and warnings.</td></tr>
+</table>
+
+<h2 id="transport">Transport</h2>
+<table>
+  <tr><th>Key</th><th>Does</th></tr>
+  <tr><td><span class="key">RTZ</span></td><td>Return to zero.</td></tr>
+  <tr><td><span class="key">&lt;&lt;</span> <span class="key">&gt;&gt;</span></td><td>Back / forward 5 seconds.</td></tr>
+  <tr><td><span class="key">CUE</span></td><td>Lifter defeat: hear the tape while it spools (see <a href="#wind">Spooling</a>).</td></tr>
+  <tr><td><span class="key">STOP</span> <span class="key">PLAY</span> <span class="key">REC</span></td><td>As on any machine. REC from stop rolls and records; REC while playing punches in; REC while recording punches out.</td></tr>
+  <tr><td><span class="key">MARK</span></td><td>Drops a marker at the playhead.</td></tr>
+  <tr><td><span class="key">CLICK</span></td><td>Click on / off (needs a tempo).</td></tr>
+</table>
+<p>The counter shows minutes:seconds, bars.beats or timecode &mdash; click it to choose. The state (PLAY, REC, REW, F FWD, STOP) shows above it.</p>
+
+<h2 id="recording">Recording and punching</h2>
+<ol>
+  <li>Arm the tracks with their <b>ARM</b> buttons. Armed tracks hear their input when stopped or recording and the tape when playing back &mdash; tape-machine "auto input".</li>
+  <li>Press <span class="key">REC</span> (or <kbd>R</kbd>). Every armed track records from the playhead. The take is logged on the session sheet automatically.</li>
+  <li>To punch in on a part, play and press <span class="key">REC</span> at the spot; press it again to punch out. Punches crossfade with what was on the tape over 10 ms, so there are no clicks.</li>
+</ol>
+<div class="warn">Recording replaces what was on the tape. That's tape. Use a fresh reel or another track when you want to keep a take.</div>
+<p>Each pass is recorded sample-aligned with what's already on the tape: Hawthorne takes the interface's round trip (and any tape processing) off automatically.</p>
+
+<h2 id="autolocator">Autolocator, auto punch and cycle</h2>
+<p>The autolocator (in the sidebar) holds two points, <b>IN</b> and <b>OUT</b>.</p>
+<table>
+  <tr><th>Key</th><th>Does</th></tr>
+  <tr><td><span class="key">IN</span> / <span class="key">OUT</span></td><td>Click to set the point at the playhead. <kbd>Shift</kbd>-click to go there.</td></tr>
+  <tr><td><span class="key">AUTO</span></td><td>Auto punch. With AUTO lit, <span class="key">REC</span> spools back to the pre-roll, plays, and punches in at IN and out at OUT &mdash; on the exact sample, with crossfades &mdash; then stops after the post-roll. Press REC again to cancel. AUTO flashes while a punch is running.</td></tr>
+  <tr><td><span class="key">REH</span></td><td>Rehearse. With AUTO, the armed tracks switch to their input between IN and OUT so the player can practise the punch, but nothing is recorded.</td></tr>
+  <tr><td><span class="key">LOOP</span></td><td>Cycle. Plain playback loops from IN to OUT. With AUTO, the whole punch &mdash; pre-roll, punch, post-roll &mdash; repeats; each time round records over the last try (keep going until it's right, then stop).</td></tr>
+</table>
+<p>Pre-roll and post-roll are set per reel in <b>SETTINGS &rarr; Transport</b>.</p>
+<div class="tip">Punches are sample-accurate at normal speed. At varispeed they land within a block and cut without a crossfade.</div>
+
+<h2 id="markers">Markers</h2>
+<p>Drop markers with <span class="key">MARK</span> or <kbd>M</kbd>. The marker list in the sidebar shows each one in min:sec (and bars.beats when the reel has a tempo). Click to go there; double-click to rename. <kbd>,</kbd> and <kbd>.</kbd> jump to the previous / next marker. Markers also set export ranges for masters.</p>
+
+<h2 id="speed">Speed and varispeed</h2>
+<p>The deck runs at <b>7&frac12;, 15 or 30 ips</b>. A reel recorded at 15 ips played at 30 runs twice as fast and an octave up, exactly like tape. <span class="key">VARI</span> switches varispeed on; drag the knob (shift = fine) for &plusmn;50 %, or use <b>&minus;ST / +ST</b> to step in semitones and <b>0</b> to reset. Percent and semitones show separately &mdash; double-click either to type an exact value.</p>
+<p>Speed changes glide like a real motor. Recording at varispeed works: everything is resampled onto the tape so it plays back in tune at normal speed. Varispeed is locked while recording.</p>
+
+<h2 id="wind">Spooling (wind) and CUE</h2>
+<p>With <b>tape wind physics</b> on (SETTINGS &rarr; Transport), locating to a marker, RTZ or the autolocator spools the tape like a real transport: it speeds up to fast wind (360 ips), brakes, overshoots a touch and creeps back onto the exact spot. STOP while spooling brakes; PLAY brakes and plays from where it stops. Turn it off for instant locates.</p>
+<p><span class="key">CUE</span> is <b>lifter defeat</b>: the tape is held against the heads while it spools, so you hear the "chatter" &mdash; the music sped up into chirps &mdash; and can find a song by ear. It's monitor only and never recorded.</p>
+
+<h2 id="stock">Tape stock</h2>
+<p>Each reel is made on a tape stock, chosen when the reel is created and fixed for its life. The tape is <b>printed</b>: what you record goes through the tape's record side (EQ, saturation, modulation noise) into the files, so it's part of the recording, just like real tape. Playback adds the tape's head bump, high-frequency loss and hiss live.</p>
+<table>
+  <tr><th>Stock</th><th>Sound</th></tr>
+  <tr><td>US mastering (456-type)</td><td>Warm, fat, punchy; strong low bump; saturates musically. The 70s / 80s rock sound.</td></tr>
+  <tr><td>High output (GP9-type)</td><td>Clean, tight, most headroom; glue without obvious distortion.</td></tr>
+  <tr><td>Vintage 60s (250-type)</td><td>Breaks up first, darkest top, most hiss: the 60s / garage sound.</td></tr>
+  <tr><td>European (911-type)</td><td>Smooth, polished, quietest; CCIR EQ.</td></tr>
+  <tr><td>EMI 60s (Emitape-type)</td><td>The Beatles' Abbey Road tape: sweet early break-up, soft top, audible hiss.</td></tr>
+  <tr><td>Clean</td><td>No tape sound at all: bit-for-bit.</td></tr>
+</table>
+<p>Slower tape speeds give a bigger low bump, a darker top and more hiss. Hit the tape harder (more level) for more saturation.</p>
+
+<h2 id="machines">Machines</h2>
+<p><b>MACHINE &rarr; Machines</b> chooses the multitrack and the 2-track the reel plays on. Unlike the tape, you can change them any time: the record side is printed when you record, the playback side follows the machine, so switching changes how existing tape sounds back. Each also has its own wow and flutter.</p>
+<table>
+  <tr><th>Multitrack</th><th>Character</th></tr>
+  <tr><td>Studer A800 / A827</td><td>Clean, punchy, tight; the modern standard.</td></tr>
+  <tr><td>MCI JH-24</td><td>Bright and aggressive, forward mids.</td></tr>
+  <tr><td>Ampex MM1200</td><td>Big and warm, fattest low end, soft top.</td></tr>
+  <tr><td>Otari MTR-90</td><td>Neutral, honest, quiet.</td></tr>
+  <tr><td>Studer J37 (EMI, valve 4-track)</td><td>The Beatles 1965&ndash;67: thick, warm valve grit, gentle top, more wobble.</td></tr>
+  <tr><td>3M M23 (8-track)</td><td>The Beatles 1968&ndash;69: punchy, solid, a little darker and grainier.</td></tr>
+</table>
+<table>
+  <tr><th>2-track (master)</th><th>Character</th></tr>
+  <tr><td>Ampex ATR-102</td><td>The classic mastering deck: huge low end, open top.</td></tr>
+  <tr><td>Studer A80 / A820</td><td>Smooth and detailed.</td></tr>
+  <tr><td>Otari MTR-12</td><td>Clean and neutral.</td></tr>
+  <tr><td>Ampex 351 (valve)</td><td>Vintage valve warmth, softer top.</td></tr>
+  <tr><td>EMI BTR2 (valve)</td><td>The Beatles' mono and stereo masters: warm and round.</td></tr>
+</table>
+
+<h2 id="masters">Masters</h2>
+<p>A master is a stereo mix recorded onto the reel, sample-aligned with its tracks &mdash; the 2-track. In the sidebar:</p>
+<ul>
+  <li><b>Master menu</b>: choose, create, rename and delete masters, pick the 2-track machine, and export stereo WAVs (the whole reel or marker to marker).</li>
+  <li><b>New master</b> asks for its tape: mastering stocks (480/499-type, SM900-type) are only for the 2-track; Emitape and Clean work too.</li>
+  <li><span class="key">ARM</span> (master) records the mix along with the tracks; <span class="key">TAPE</span> lets you hear the master tape instead of the live mix.</li>
+</ul>
+
+<h2 id="flip">Reverse tape (flip the reel)</h2>
+<p><b>MACHINE &rarr; Flip the reel over</b> turns the tape over: everything on it plays backwards. Record onto it (a guitar solo, cymbals, a vocal) and turn it back &mdash; the new part plays backwards against the song, the classic reverse-tape effect. Markers, takes and the autolocator flip with it. Optionally swap the track order too, as on a real machine where track 1 then plays on the last track. The deck header shows FLIPPED while it's over.</p>
+
+<h2 id="importexport">Import and export</h2>
+<ul>
+  <li><b>Import</b> (right-click a track's meter, or MACHINE menu): put a WAV, AIFF, FLAC, OGG or MP3 onto a track from the start or the playhead. Stereo files go onto two tracks or mix to mono. It's converted to the reel's sample rate and can be printed through the tape and machine. It records over that track, like any recording, and is logged.</li>
+  <li><b>Export</b>: one track or all tracks (stems) as 24-bit WAVs the length of the reel, either as printed on the tape or with the machine's playback sound.</li>
+  <li><b>Masters</b> export from the master menu.</li>
+</ul>
+
+<h2 id="routing">Routing</h2>
+<p>The routing matrix patches the studio: for each track its input (one dot per row), whether it feeds the master mix, and its direct outputs; for the master its outputs and returns. Extra rows send the <b>CLICK</b> and <b>LTC</b> timecode to outputs. Network senders appear as extra input columns (NET 1, NET 2 ...).</p>
+
+<h2 id="latency">Latency and outboard</h2>
+<p>Overdubs line up when Hawthorne knows the round trip &mdash; the time from the tape to your ears and back in through the interface. The driver reports a figure; for perfection, <b>measure</b> it in ROUTING: patch a cable from an output to an input, choose them, and click MEASURE. Hawthorne sends a click and times it. That figure is then taken off every recording.</p>
+<p>Outboard on a track works the same: whatever comes back in on the track's input lands in time as long as the round trip is measured through the same converters.</p>
+
+<h2 id="tempo">Tempo and click</h2>
+<p>The <b>tempo box</b> in the deck: drag the BPM, double-click to type, click the time signature to change it, TAP to tap it in. <b>TEMPO</b> in the header has the details: bar 1 position, the click on/off and level. With a tempo, the counter and markers can show bars.beats.</p>
+<p>The click is monitor only &mdash; it is never written to tape. Send it to outputs with ROUTING &rarr; CLICK, and/or tick <b>In master outs</b>. It follows the tape, so varispeed changes its tempo and pitch.</p>
+
+<h2 id="timecode">Timecode and sync</h2>
+<p><b>TIMECODE</b> sets the frame rate and the timecode at the start of the tape.</p>
+<ul>
+  <li><b>Out</b>: LTC on any output (ROUTING &rarr; LTC OUT) and MTC to a MIDI port &mdash; e.g. for Reaper to follow Hawthorne.</li>
+  <li><b>In / chase</b>: click <b>SYNC</b> by the counter to choose INTERNAL or EXTERNAL. External chases LTC on an input or MTC from a MIDI port: Hawthorne locates, rolls when the timecode does, and stays in sync to well under a millisecond (it holds steady while recording).</li>
+</ul>
+<p>THOREAU, the drum machine, syncs to Hawthorne over the network with tempo and position.</p>
+
+<h2 id="link">Hawthorne Link (network audio)</h2>
+<p>Record audio sent from other PCs on your network. Run <b>Hawthorne Link</b> (the sender app) on the other PC and choose what to send; it appears in <b>NETWORK</b> in Hawthorne. Connect it, and its channels appear as NET inputs in the routing. Hawthorne sizes the network buffer itself to avoid dropouts; set MIN BUFFER for lower latency on a good network. Senders on other subnets can be added by IP address.</p>
+<div class="tip">For no drift at all over long takes, clock both interfaces from the same word clock.</div>
+
+<h2 id="sheets">Session sheets and printing</h2>
+<p><b>SHEET</b> opens the paperwork, typed on paper:</p>
+<ul>
+  <li><b>SESSION</b>: artist, title, producer, engineer, tape op, assistant, studio, room, console, monitoring, job number and notes.</li>
+  <li><b>REEL</b>: the tape box label &mdash; reel number, date, EQ, alignment, noise reduction, tones, times and notes.</li>
+  <li><b>TRACK SHEET</b>: for every track its name, source, mic, mic position, preamp / gain, EQ, dynamics, outboard / FX and notes &mdash; a full recall.</li>
+  <li><b>TAKE LOG</b>: every take, filled in automatically; add the song, status and comments.</li>
+  <li><b>PHOTOS</b>: add photos of the setup (mic positions, desk, outboard settings); they're kept with the reel.</li>
+</ul>
+<p><b>PRINT</b> makes a printable page of everything (with the photos) and opens it in your browser, ready to print or save as PDF.</p>
+
+<h2 id="keys">Keyboard shortcuts</h2>
+<table>
+  <tr><th>Key</th><th>Does</th></tr>
+  <tr><td><kbd>Space</kbd></td><td>Play / stop</td></tr>
+  <tr><td><kbd>R</kbd> or numpad <kbd>*</kbd></td><td>Record / punch in / punch out (auto punch when AUTO is lit)</td></tr>
+  <tr><td><kbd>Enter</kbd> or <kbd>Home</kbd></td><td>Return to zero</td></tr>
+  <tr><td><kbd>&larr;</kbd> <kbd>&rarr;</kbd></td><td>Back / forward 5 seconds</td></tr>
+  <tr><td><kbd>M</kbd></td><td>Marker</td></tr>
+  <tr><td><kbd>,</kbd> <kbd>.</kbd></td><td>Previous / next marker</td></tr>
+  <tr><td><kbd>F1</kbd></td><td>This manual</td></tr>
+  <tr><td><kbd>F11</kbd></td><td>Full screen</td></tr>
+</table>
+
+<h2 id="safety">Safety and recovery</h2>
+<ul>
+  <li>Recording streams to disk continuously; if the disk falls behind, timing is kept and the gap recorded as silence, and you're told.</li>
+  <li>If the PC crashes or loses power mid-take, the next time the reel opens Hawthorne repairs the files and keeps everything recorded up to that moment.</li>
+  <li>If the audio device disappears while recording, the take is stopped and kept.</li>
+  <li>Hawthorne won't record with less than 500 MB of free disk space.</li>
+  <li>Deleted masters and photos go to the Recycle Bin.</li>
+</ul>
+
+<h2 id="updates">Updates</h2>
+<p>When a new version is out, an <b>UPDATE</b> button appears in the header. Click it: Hawthorne downloads the installer, closes, installs and restarts. It won't update while recording.</p>
+
+</main>
+</div>
+</body>
+</html>

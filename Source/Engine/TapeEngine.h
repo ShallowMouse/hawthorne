@@ -47,7 +47,7 @@ public:
     /** Locate like a real machine: spool there in fast wind (accelerate, brake,
         a little overshoot, creep back). Instant if wind physics is off, or while
         chasing. If the tape was playing, it plays again on arrival. */
-    void windTo (juce::int64 samplePos);
+    void windTo (juce::int64 samplePos, bool rollAfter = false);
     void setWindPhysics (bool on) noexcept { windPhysics = on; }
     /** Lifter defeat: hear the tape (the "chatter") while it spools. Monitor only. */
     void setLifterDefeat (bool on);
@@ -179,6 +179,29 @@ public:
         bookkeeping, device loss, disk errors and low disk space. */
     void tick();
 
+    //==========================================================================
+    // Autolocator: punch IN / OUT points, auto punch (with pre / post roll),
+    // rehearse (monitor switches, nothing recorded) and cycle (loop).
+    // Punches are sample-accurate at normal speed, with a 10 ms crossfade
+    // against what was on the tape.
+    void setPunchPoints (juce::int64 in, juce::int64 out);   // -1 = not set
+    juce::int64 getPunchIn() const noexcept  { return reel != nullptr ? reel->punchIn : -1; }
+    juce::int64 getPunchOut() const noexcept { return reel != nullptr ? reel->punchOut : -1; }
+    void setAutoPunch (bool on);
+    bool getAutoPunch() const noexcept       { return reel != nullptr && reel->autoPunch; }
+    void setRehearse (bool on);
+    bool getRehearse() const noexcept        { return reel != nullptr && reel->rehearse; }
+    void setCycle (bool on);
+    bool getCycle() const noexcept           { return reel != nullptr && reel->cycle; }
+    void setRolls (double preSeconds, double postSeconds);
+    double getPreRoll() const noexcept       { return reel != nullptr ? reel->preRoll : 2.0; }
+    double getPostRoll() const noexcept      { return reel != nullptr ? reel->postRoll : 1.0; }
+    /** REC with AUTO on: spool to the pre-roll, play, punch in and out at the points. */
+    juce::String autoRecord();
+    bool isAutoPunching() const noexcept     { return apSession.load(); }
+    /** Punch out while rolling, with the crossfade (REC pressed again). */
+    void punchOutSmooth();
+
     /** Called on the message thread with anything the user must know about. */
     std::function<void (const juce::String& title, const juce::String& message)> onAlert;
 
@@ -266,6 +289,7 @@ private:
         int masterLatency = 0;
         int latency = 0;
         double rate = 1.0;                                   // constant for the whole pass
+        bool crossfade = false;                              // punched in on a rolling tape: fade in over the old
         std::atomic<int> mode { 0 };                         // 0 not started, 1 straight to tape, 2 resampled (varispeed)
         std::atomic<juce::int64> trackStart { RecordingStream::notStarted }, masterStart { RecordingStream::notStarted };   // first tape sample written
         RecordResampler trackRs, masterRs;
@@ -277,7 +301,7 @@ private:
                        float* const* outputs, int numOutputs, int numSamples) noexcept;
 
     juce::String checkCanRoll() const;
-    juce::String beginRecordPass();
+    juce::String beginRecordPass (bool pendingStart = false);
     void endRecordPass();
     void rebuildPlaybackGraph();
     void rebuildRouting();
@@ -306,6 +330,25 @@ private:
     std::vector<std::shared_ptr<void>> graveyard; // things we could not prove were released
 
     std::atomic<bool> playing { false }, recording { false };
+
+    // Autolocator
+    std::atomic<bool> apSession { false }, cycleOn { false }, rehearseOn { false }, passEnded { false }, fadeOutReq { false };
+    std::atomic<juce::int64> apInB { -1 }, apOutB { -1 }, loopS { -1 }, loopE { -1 };
+    std::atomic<RecordPass*> pendingPass { nullptr };
+    std::atomic<PlaybackGraph*> standbyGraph { nullptr };   // cycle: primed at the loop start, swapped in at the jump
+    std::unique_ptr<PlaybackGraph> ownedGraphB;
+    juce::SpinLock graphSwapLock;
+    std::atomic<int> loopJumps { 0 };
+    int loopJumpsSeen = 0;
+    juce::int64 apPostStop = -1;
+    void updateLoopRegion();
+    std::unique_ptr<PlaybackGraph> makeGraph (const juce::String& keySuffix, juce::int64 primeAt);
+    // punch crossfades (audio thread)
+    static constexpr int ringLen = 32768;
+    juce::HeapBlock<float> rawRing;               // the tape just read, per track (for crossfading punches)
+    int ringWrite = 0, fadeLen = 480, fadeInLeft = 0, fadeOutLeft = 0;
+    bool fadeOutActive = false;
+    juce::int64 ringValid = 0, ringNextPos = -1;
     std::atomic<juce::int64> position { 0 };
     double posFrac = 0.0;                                  // audio thread: sub-sample tape position
     std::atomic<double> targetRate { 1.0 }, currentRate { 1.0 };

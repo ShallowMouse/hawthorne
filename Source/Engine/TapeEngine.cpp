@@ -42,8 +42,11 @@ TapeEngine::~TapeEngine()
 {
     stop();
     auto old = std::move (ownedGraph);
+    auto oldB = std::move (ownedGraphB);
     graph.store (nullptr);
+    standbyGraph.store (nullptr);
     retire (std::move (old));
+    retire (std::move (oldB));
     auto oldRouting = std::move (ownedRouting);
     routing.store (nullptr);
     retire (std::move (oldRouting));
@@ -73,6 +76,9 @@ void TapeEngine::setReel (Reel* s)
     windCancel();
     tapeStock = s != nullptr ? s->tapeStock : 0;
     machineA = s != nullptr ? s->machine : 0;
+    apSession = false;
+    cycleOn = s != nullptr && s->cycle;
+    rehearseOn = s != nullptr && s->rehearse;
     masterMachineA = s != nullptr ? s->masterMachine : 0;
     reelIps = s != nullptr ? s->ips : 15.0;
     tapeReset = true;
@@ -124,6 +130,9 @@ void TapeEngine::prepare (double sampleRate, int maxBlockSize,
     tapePosBuf.calloc ((size_t) vsChunk);
     tapeRecBuf.calloc ((size_t) juce::jmax (vsChunk, maxBlock));
     spoolBuf.calloc ((size_t) juce::jmax (vsChunk, maxBlock));
+    rawRing.calloc ((size_t) kMaxTracks * (size_t) ringLen);
+    ringValid = 0;
+    fadeLen = juce::jmax (16, (int) (sampleRate * 0.010));
     tapeReset = true;
     clickBuf.setSize (2, maxBlock);
     clickBuf.clear();
@@ -217,7 +226,28 @@ void TapeEngine::process (const float* const* inputs, int numInputs,
 
         for (int done = 0; done < numSamples;)
         {
-            const int n = juce::jmin (maxBlock, vsChunk, numSamples - done);
+            int n = juce::jmin (maxBlock, vsChunk, numSamples - done);
+
+            // Autolocator events (punch in / out, the loop jump) land on a block edge.
+            if (playing.load (std::memory_order_relaxed))
+            {
+                const auto p = position.load (std::memory_order_relaxed);
+                const double rate = juce::jmax (0.01, currentRate.load (std::memory_order_relaxed));
+                auto clip = [&] (juce::int64 b)
+                {
+                    if (b > p)
+                    {
+                        const auto d = (juce::int64) std::ceil (((double) (b - p) - posFrac) / rate);
+                        if (d > 0 && d < n) n = (int) d;
+                    }
+                };
+                if (apSession.load (std::memory_order_relaxed))
+                {
+                    if (pendingPass.load (std::memory_order_relaxed) != nullptr) clip (apInB.load (std::memory_order_relaxed));
+                    if (recording.load (std::memory_order_relaxed))              clip (apOutB.load (std::memory_order_relaxed));
+                }
+                if (cycleOn.load (std::memory_order_relaxed)) clip (loopE.load (std::memory_order_relaxed));
+            }
 
             for (int i = 0; i < numInputs; ++i)  in[(size_t) i]  = inputs[i]  != nullptr ? inputs[i]  + done : nullptr;
             for (int o = 0; o < numOutputs; ++o) out[(size_t) o] = outputs[o] != nullptr ? outputs[o] + done : nullptr;
@@ -264,6 +294,36 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     {
         pendingStart = -1;
         playing = true;
+    }
+
+    // Autolocator: punch in / out exactly at the points (transport time = tape + latency)
+    if (playing.load() && apSession.load (std::memory_order_relaxed))
+    {
+        const auto p = position.load();
+        if (pendingPass.load() != nullptr && p >= apInB.load() && p < apOutB.load())
+            if (auto* pp = pendingPass.exchange (nullptr))
+            {
+                pass.store (pp);
+                recording = true;
+                fadeOutLeft = 0;
+                fadeOutActive = false;
+            }
+        if (recording.load() && ! fadeOutActive && p >= apOutB.load())
+            fadeOutReq = true;
+    }
+    if (fadeOutReq.exchange (false) && recording.load() && ! fadeOutActive)
+    {
+        auto* cp = pass.load();
+        if (cp != nullptr && cp->mode.load() == 1 && playing.load())
+        {
+            fadeOutActive = true;
+            fadeOutLeft = fadeLen;
+        }
+        else
+        {
+            recording = false;          // varispeed pass: a straight cut
+            passEnded = true;
+        }
     }
 
     const bool isRolling = playing.load();
@@ -386,6 +446,8 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
             rp->trackStart.store (pos - rp->latency);
             rp->masterStart.store (pos - rp->masterLatency);
             rp->mode.store (1);
+            fadeInLeft = rp->crossfade ? fadeLen : 0;      // punch in on a rolling tape: crossfade from what's on it
+            fadeOutActive = false;
         }
         else
         {
@@ -502,10 +564,30 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     auto* rt = routing.load();
     const int nt = numTracks.load();
 
+    // Punch crossfades: what's on the tape under a punch, from the raw tape just
+    // read (a ring, one per track), mixed with the new recording for 10 ms.
+    const bool ringOk = isRolling && ! vs;
+    if (! ringOk || pos != ringNextPos) ringValid = 0;
+    const bool fading = rp != nullptr && ! resampledRec && (fadeInLeft > 0 || fadeOutActive);
+    if (resampledRec) { fadeInLeft = 0; }
+    const int pushCount = (rp != nullptr && fadeOutActive && ! resampledRec) ? juce::jlimit (0, n, fadeOutLeft) : n;
+    const bool rehearsing = isRolling && apSession.load (std::memory_order_relaxed) && rehearseOn.load (std::memory_order_relaxed)
+                            && pos >= apInB.load (std::memory_order_relaxed) && pos < apOutB.load (std::memory_order_relaxed);
+
     for (int t = 0; t < nt; ++t)
     {
         const float* src = rt != nullptr ? inputFor (rt->input[(size_t) t]) : nullptr;
         const bool isArmed = armed[(size_t) t].load (std::memory_order_relaxed);
+
+        // --- Playback from tape (read first: a punch crossfades against it)
+        // (Tape is read even under a recording track so its reader stays warm
+        //  for a seamless punch-out.)
+        float* tb = trackBuffers.getWritePointer (t);
+        const bool hasTape = isRolling && g != nullptr && readTape (g->tracks[(size_t) t], tb);
+        float* ring = rawRing != nullptr ? rawRing.get() + (size_t) t * (size_t) ringLen : nullptr;
+        if (ringOk && ring != nullptr)
+            for (int k = 0; k < n; ++k)
+                ring[(ringWrite + k) & (ringLen - 1)] = hasTape ? tb[k] : 0.0f;
 
         // --- Record: push every armed track, silence if its input vanished,
         //     so every take stays exactly the length of the pass.
@@ -519,21 +601,35 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
                     (*tapeRec)[(size_t) t].process (tapeShared, src, tapeRecBuf.get(), n);
                     toTape = tapeRecBuf.get();
                 }
+                if (fading && ring != nullptr)
+                {
+                    float* x = tapeRecBuf.get();
+                    if (toTape != x) juce::FloatVectorOperations::copy (x, toTape, n);
+                    const int lat = rp->latency;
+                    for (int k = 0; k < pushCount; ++k)
+                    {
+                        // progress of the new recording: 0 -> 1 (in), 1 -> 0 (out)
+                        double w = 1.0;
+                        if (fadeInLeft > 0)  w = juce::jlimit (0.0, 1.0, (double) (fadeLen - fadeInLeft + k) / fadeLen);
+                        if (fadeOutActive)   w = juce::jlimit (0.0, 1.0, (double) (fadeOutLeft - k) / fadeLen);
+                        w = std::sin (0.5 * juce::MathConstants<double>::pi * w);
+                        w *= w;
+                        const bool oldOk = ringValid + k >= (juce::int64) lat && lat < ringLen - n;
+                        const float old = oldOk ? ring[(ringWrite + k - lat) & (ringLen - 1)] : 0.0f;
+                        x[k] = (float) (w * x[k] + (1.0 - w) * old);
+                    }
+                    toTape = x;
+                }
                 if (resampledRec) rp->trackRs.push (rp->rsChannel[(size_t) t], toTape, n);
-                else              stream->push (toTape, n);
+                else if (pushCount > 0) stream->push (toTape, pushCount);
             }
 
-        // --- Playback from tape
-        // (Tape is read even under a recording track so its reader stays warm
-        //  for a seamless punch-out.)
-        float* tb = trackBuffers.getWritePointer (t);
-        const bool hasTape = isRolling && g != nullptr && readTape (g->tracks[(size_t) t], tb);
         if (hasTape && tapeOn)
             (*tapePlay)[(size_t) t].process (tapeShared, tb, n);      // repro head: bump, top, hiss
 
         // --- Tape-style auto input: armed tracks hear the input when stopped or
-        //     recording, and hear tape when just playing back.
-        const float* mon = (isArmed && (! isRolling || isRec)) ? src : (hasTape ? tb : nullptr);
+        //     recording (or rehearsing a punch), and hear tape when just playing back.
+        const float* mon = (isArmed && (! isRolling || isRec || rehearsing)) ? src : (hasTape ? tb : nullptr);
 
         trackEnergy[(size_t) t].add (mon, n);
 
@@ -551,6 +647,14 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
                 sendToOutputs (mon, rt->outputs[(size_t) t]);
         }
     }
+
+    if (ringOk)
+    {
+        ringWrite = (ringWrite + n) & (ringLen - 1);
+        ringValid = juce::jmin ((juce::int64) ringLen, ringValid + n);
+    }
+    if (rp != nullptr && ! resampledRec)
+        fadeInLeft = juce::jmax (0, fadeInLeft - n);
 
     if (resampledRec)
     {
@@ -593,8 +697,8 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
                 masterRec[(size_t) side].process (masterShared, bus, tapeRecBuf.get(), n);
                 toTape = tapeRecBuf.get();
             }
-            if (resampledRec) rp->masterRs.push (side, toTape, n);
-            else              rp->masterStreams[(size_t) side]->push (toTape, n);
+            if (resampledRec)       rp->masterRs.push (side, toTape, n);
+            else if (pushCount > 0) rp->masterStreams[(size_t) side]->push (toTape, pushCount);
         }
 
         // Master tape playback
@@ -762,6 +866,18 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
 
     deviceClock += n;
 
+    // Punch-out crossfade finished: the pass ends exactly here.
+    if (rp != nullptr && fadeOutActive)
+    {
+        fadeOutLeft -= pushCount;
+        if (fadeOutLeft <= 0)
+        {
+            fadeOutActive = false;
+            recording = false;
+            passEnded = true;
+        }
+    }
+
     // Advance the tape - only if nobody located us mid-block.
     if (isRolling)
     {
@@ -770,6 +886,35 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
             posFrac = endFrac - whole;
         else
             posFrac = 0.0;
+        ringNextPos = position.load();
+
+        // Cycle: back to the loop start (the standby readers are already there).
+        const auto ls = loopS.load (std::memory_order_relaxed), le = loopE.load (std::memory_order_relaxed);
+        if (cycleOn.load (std::memory_order_relaxed) && ls >= 0 && le > ls)
+        {
+            auto p = position.load();
+            if (p >= le)
+            {
+                if (recording.load())
+                {
+                    recording = false;
+                    fadeOutActive = false;
+                    passEnded = true;
+                }
+                if (position.compare_exchange_strong (p, ls))
+                {
+                    posFrac = 0.0;
+                    const juce::SpinLock::ScopedTryLockType sl (graphSwapLock);
+                    if (sl.isLocked())
+                        if (auto* sb = standbyGraph.load())
+                        {
+                            standbyGraph.store (graph.load());
+                            graph.store (sb);
+                        }
+                    loopJumps.fetch_add (1);
+                }
+            }
+        }
     }
 }
 
@@ -1014,6 +1159,7 @@ void TapeEngine::punchOut()
 
 void TapeEngine::stop()
 {
+    apSession = false;
     punchOut();
     playing = false;
 
@@ -1051,7 +1197,7 @@ namespace windModel
     constexpr double creepAccel = 0.25;    // s to reach creep speed
 }
 
-void TapeEngine::windTo (juce::int64 target)
+void TapeEngine::windTo (juce::int64 target, bool rollAfter)
 {
     if (recording)
         return;
@@ -1061,6 +1207,7 @@ void TapeEngine::windTo (juce::int64 target)
     if (! windPhysics || reel == nullptr || getChase() != ChaseSource::off)
     {
         locate (target);
+        if (rollAfter && ! playing) play();
         return;
     }
 
@@ -1068,7 +1215,7 @@ void TapeEngine::windTo (juce::int64 target)
     {
         wind = {};
         wind.pos = (double) position.load();
-        wind.rollAfter = playing.load();
+        wind.rollAfter = playing.load() || rollAfter;
         if (playing)
             playing = false;          // lifters out, spool, then play again
     }
@@ -1187,6 +1334,111 @@ void TapeEngine::windStep()
     windPosA.store (wind.pos);
     windVelA.store (wind.vel);
     windActiveA.store (true);
+}
+
+//==============================================================================
+// Autolocator
+
+void TapeEngine::setPunchPoints (juce::int64 in, juce::int64 out)
+{
+    if (reel == nullptr) return;
+    reel->punchIn = in;
+    reel->punchOut = out;
+    updateLoopRegion();
+    saveReel();
+}
+
+void TapeEngine::setAutoPunch (bool on)  { if (reel != nullptr && ! recording) { reel->autoPunch = on; updateLoopRegion(); saveReel(); } }
+void TapeEngine::setRehearse (bool on)   { if (reel != nullptr && ! recording) { reel->rehearse = on; rehearseOn = on; saveReel(); } }
+
+void TapeEngine::setCycle (bool on)
+{
+    if (reel == nullptr) return;
+    reel->cycle = on;
+    cycleOn = on;
+    updateLoopRegion();
+    saveReel();
+    rebuildPlaybackGraph();      // the standby readers for the loop start
+}
+
+void TapeEngine::setRolls (double pre, double post)
+{
+    if (reel == nullptr) return;
+    reel->preRoll = juce::jlimit (0.0, 30.0, pre);
+    reel->postRoll = juce::jlimit (0.0, 30.0, post);
+    updateLoopRegion();
+    saveReel();
+}
+
+void TapeEngine::updateLoopRegion()
+{
+    if (reel == nullptr || reel->punchIn < 0 || reel->punchOut <= reel->punchIn)
+    {
+        loopS = -1; loopE = -1;
+        return;
+    }
+    const double sr = reel->sampleRate;
+    if (reel->autoPunch)
+    {
+        // a punch over and over: pre-roll, punch, post-roll, round again
+        const int lat = getRoundTrip() + getTapeLatency();
+        loopS = juce::jmax ((juce::int64) 0, reel->punchIn - (juce::int64) (reel->preRoll * sr));
+        loopE = reel->punchOut + lat + fadeLen + (juce::int64) (juce::jmax (0.25, reel->postRoll) * sr);
+    }
+    else
+    {
+        loopS = reel->punchIn;
+        loopE = reel->punchOut;
+    }
+}
+
+juce::String TapeEngine::autoRecord()
+{
+    if (reel == nullptr || recording || apSession) return {};
+    if (reel->punchIn < 0 || reel->punchOut <= reel->punchIn)
+        return "Set the punch IN and OUT points first.";
+    if (auto err = checkCanRoll(); err.isNotEmpty())
+        return err;
+
+    updateLoopRegion();
+    int lat = getRoundTrip() + getTapeLatency();
+    if (! reel->rehearse)
+    {
+        if (ownedPass != nullptr) endRecordPass();
+        if (auto err = beginRecordPass (true); err.isNotEmpty())
+            return err;
+        lat = ownedPass->latency;
+    }
+
+    const double sr = reel->sampleRate;
+    apInB  = reel->punchIn + lat;
+    apOutB = reel->punchOut + lat;
+    apPostStop = reel->punchOut + lat + fadeLen + (juce::int64) (reel->postRoll * sr);
+    apSession = true;
+
+    const auto start = reel->cycle && loopS.load() >= 0 ? loopS.load()
+                                                         : juce::jmax ((juce::int64) 0, reel->punchIn - (juce::int64) (reel->preRoll * sr));
+    if (playing)
+    {
+        // already rolling: carry on if the punch is still ahead, else go back for the pre-roll
+        if (position.load() > apInB.load() - (juce::int64) (0.05 * sr))
+            windTo (start, true);
+    }
+    else
+        windTo (start, true);
+    return {};
+}
+
+void TapeEngine::punchOutSmooth()
+{
+    if (recording && playing && pass.load() != nullptr)
+    {
+        fadeOutReq = true;        // the audio thread crossfades and ends the pass; tick() tidies up
+        apSession = false;
+        return;
+    }
+    apSession = false;
+    punchOut();
 }
 
 void TapeEngine::setMachine (int m)
@@ -1432,7 +1684,7 @@ double TapeEngine::getRecordTimeRemainingSeconds() const
 //==============================================================================
 // Message thread: record passes
 
-juce::String TapeEngine::beginRecordPass()
+juce::String TapeEngine::beginRecordPass (bool pendingStart)
 {
     jassert (ownedPass == nullptr);
 
@@ -1480,6 +1732,7 @@ juce::String TapeEngine::beginRecordPass()
                      + (juce::isPositiveAndBelow (reel->activeMaster, (int) reel->masters.size())
                           && reel->masters[(size_t) reel->activeMaster].stock != 0 ? tape::HalfBand::latency : 0);
     p->rate = targetRate.load();
+    p->crossfade = pendingStart || playing.load();
     p->rsChannel.fill (-1);
     {
         int ch = 0;
@@ -1541,7 +1794,10 @@ juce::String TapeEngine::beginRecordPass()
     diskBufferPeak = 0.0f;
 
     ownedPass = std::move (p);
-    pass.store (ownedPass.get());
+    if (pendingStart)
+        pendingPass.store (ownedPass.get());     // the audio thread starts it at the punch-in point
+    else
+        pass.store (ownedPass.get());
     return {};
 }
 
@@ -1552,8 +1808,11 @@ void TapeEngine::endRecordPass()
     if (ownedPass == nullptr)
         return;
 
+    pendingPass.store (nullptr);
     pass.store (nullptr);
+    fadeOutReq = false;
     const bool released = waitForAudioThread();
+    passEnded = false;
 
     std::unique_ptr<RecordPass> p = std::move (ownedPass);
     juce::StringArray problems;
@@ -1676,7 +1935,7 @@ std::shared_ptr<juce::BufferingAudioReader> TapeEngine::getReader (const juce::F
     return reader;
 }
 
-void TapeEngine::rebuildPlaybackGraph()
+std::unique_ptr<TapeEngine::PlaybackGraph> TapeEngine::makeGraph (const juce::String& keySuffix, juce::int64 primeAt)
 {
     // One reader per tape track. A track's reader is only replaced when its
     // tape has been recorded on (generation bump); others keep playing untouched.
@@ -1685,7 +1944,7 @@ void TapeEngine::rebuildPlaybackGraph()
 
     auto addFile = [&] (const juce::File& file, std::vector<Segment>& dest)
     {
-        const auto key = file.getFullPathName() + "|" + juce::String (tapeGeneration[file.getFullPathName()]);
+        const auto key = file.getFullPathName() + "|" + juce::String (tapeGeneration[file.getFullPathName()]) + keySuffix;
         bool isNew = false;
         auto reader = getReader (file, key, isNew);
 
@@ -1721,15 +1980,35 @@ void TapeEngine::rebuildPlaybackGraph()
     }
 
     // Prime new readers before the audio thread can see them.
-    const auto pos = position.load();
     const auto window = (juce::int64) ((reel != nullptr ? reel->sampleRate : 48000.0) * 0.5);
     for (auto& seg : fresh)
-        primeSegment (seg, pos, seg.end > pos && seg.start < pos + window);
+        primeSegment (seg, primeAt, seg.end > primeAt && seg.start < primeAt + window);
+    return g;
+}
 
-    auto old = std::move (ownedGraph);
-    ownedGraph = std::move (g);
-    graph.store (ownedGraph.get());
+void TapeEngine::rebuildPlaybackGraph()
+{
+    // Keep playing on the reader set in use (after a loop jump that's the "B" set).
+    const bool activeIsB = ownedGraphB != nullptr && graph.load() == ownedGraphB.get();
+    const juce::String activeKey = activeIsB ? "|B" : "", standbyKey = activeIsB ? "" : "|B";
+    auto g = makeGraph (activeKey, position.load());
+    // Cycle: a second set of readers, waiting at the loop start.
+    std::unique_ptr<PlaybackGraph> gb;
+    if (cycleOn.load() && loopS.load() >= 0)
+        gb = makeGraph (standbyKey, loopS.load());
+
+    std::unique_ptr<PlaybackGraph> old, oldB;
+    {
+        const juce::SpinLock::ScopedLockType sl (graphSwapLock);
+        old = std::move (ownedGraph);
+        oldB = std::move (ownedGraphB);
+        ownedGraph = std::move (g);
+        ownedGraphB = std::move (gb);
+        graph.store (ownedGraph.get());
+        standbyGraph.store (ownedGraphB.get());
+    }
     retire (std::move (old));
+    retire (std::move (oldB));
 
     for (auto it = readerCache.begin(); it != readerCache.end();)
         it = it->second.use_count() == 1 ? readerCache.erase (it) : std::next (it);
@@ -1781,15 +2060,16 @@ void TapeEngine::primeSegment (const Segment& seg, juce::int64 pos, bool waitUnt
 void TapeEngine::primeReaders (juce::int64 pos)
 {
     // Only called while stopped, so the audio thread is not reading.
-    if (ownedGraph == nullptr || reel == nullptr)
+    auto* active = graph.load();
+    if (active == nullptr || reel == nullptr)
         return;
 
     const auto window = (juce::int64) (reel->sampleRate * 0.5);
 
-    for (auto& segs : ownedGraph->tracks)
+    for (auto& segs : active->tracks)
         for (auto& seg : segs)
             primeSegment (seg, pos, seg.end > pos && seg.start < pos + window);
-    for (auto& segs : ownedGraph->master)
+    for (auto& segs : active->master)
         for (auto& seg : segs)
             primeSegment (seg, pos, seg.end > pos && seg.start < pos + window);
 }
@@ -1854,6 +2134,29 @@ void TapeEngine::tick()
 {
     chaseTick();
     windStep();
+
+    // Autolocator housekeeping
+    if (passEnded.exchange (false) && ownedPass != nullptr)
+    {
+        endRecordPass();
+        // cycling a punch: the next pass waits for the next time round
+        if (apSession && cycleOn && reel != nullptr && ! reel->rehearse && playing)
+            if (beginRecordPass (true).isNotEmpty())
+                apSession = false;
+    }
+    if (apSession && playing && ! cycleOn && apPostStop >= 0 && position.load() >= apPostStop)
+        stop();
+    if (loopJumps.load() != loopJumpsSeen)
+    {
+        loopJumpsSeen = loopJumps.load();
+        // the readers just left behind now wait at the loop start for next time
+        if (auto* sb = standbyGraph.load())
+        {
+            const auto ls = loopS.load();
+            for (auto& segs : sb->tracks) for (auto& seg : segs) primeSegment (seg, ls, false);
+            for (auto& segs : sb->master) for (auto& seg : segs) primeSegment (seg, ls, false);
+        }
+    }
 
     if (deviceLost.exchange (false))
     {

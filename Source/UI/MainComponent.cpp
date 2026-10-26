@@ -1,6 +1,8 @@
 #include "MainComponent.h"
 #include "UIHelpers.h"
 #include "TapeChoice.h"
+#include "../Engine/TrackTransfer.h"
+#include "BinaryData.h"
 
 #ifndef HAWTHORNE_VERSION
  #define HAWTHORNE_VERSION "dev"
@@ -224,7 +226,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     juce::LookAndFeel::setDefaultLookAndFeel (&lnf);
     setWantsKeyboardFocus (true);
 
-    for (auto* b : { &libraryButton, &sheetButton, &routingButton, &networkButton, &syncButton, &timecodeButton, &audioButton, &machineButton })
+    for (auto* b : { &libraryButton, &sheetButton, &routingButton, &networkButton, &syncButton, &timecodeButton, &audioButton, &machineButton, &helpButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (b);
@@ -236,7 +238,9 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     syncButton.onClick = [this] { showSync (SyncPanel::Page::tempo); };
     syncButton.setTooltip ("Tempo, bars and beats, click");
     timecodeButton.onClick = [this] { showSync (SyncPanel::Page::timecode); };
-    machineButton.onClick = [this] { showMachines(); };
+    machineButton.onClick = [this] { showMachineMenu(); };
+    helpButton.onClick = [this] { showManual(); };
+    helpButton.setTooltip ("The Hawthorne manual (F1)");
     machineButton.setTooltip ("Tape machine models: the multitrack, and the 2-track for the master");
     timecodeButton.setTooltip ("Timecode out (LTC / MTC) and chase");
     fullScreenButton.onClick = [this] { toggleFullScreen(); };
@@ -255,6 +259,15 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     playKey.onClick = [this] { doPlay(); };
     recKey.onClick  = [this] { doRecord(); };
     markKey.onClick = [this] { addMarker(); };
+
+    // Autolocator
+    for (auto* k : { &inKey, &outKey, &autoKey, &rehKey, &loopKey })
+        addAndMakeVisible (k);
+    inKey.onClick   = [this] { setPunchHere (true); };
+    outKey.onClick  = [this] { setPunchHere (false); };
+    autoKey.onClick = [this] { if (! engine.isRecording()) engine.setAutoPunch (! engine.getAutoPunch()); };
+    rehKey.onClick  = [this] { if (! engine.isRecording()) engine.setRehearse (! engine.getRehearse()); };
+    loopKey.onClick = [this] { engine.setCycle (! engine.getCycle()); };
     liftKey.onClick = [this]
     {
         const bool on = ! engine.getLifterDefeat();
@@ -549,23 +562,41 @@ namespace
                 props.saveIfNeeded();
             };
             addAndMakeVisible (windToggle);
-            setSize (560, 620);
+
+            for (auto* sl : { &preRoll, &postRoll })
+            {
+                sl->setRange (0.0, 10.0, 0.5);
+                sl->setTextValueSuffix (" s");
+                sl->setTextBoxStyle (juce::Slider::TextBoxRight, false, 60, 20);
+                sl->onValueChange = [this] { engine.setRolls (preRoll.getValue(), postRoll.getValue()); };
+                addAndMakeVisible (sl);
+            }
+            preRoll.setValue (engine.getPreRoll(), juce::dontSendNotification);
+            postRoll.setValue (engine.getPostRoll(), juce::dontSendNotification);
+            setSize (560, 700);
         }
         void paint (juce::Graphics& g) override
         {
             g.setColour (Colours::textDim);
             g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-            g.drawText ("TRANSPORT", 16, getHeight() - 56, 200, 16, juce::Justification::centredLeft);
+            g.drawText ("TRANSPORT", 16, getHeight() - 118, 200, 16, juce::Justification::centredLeft);
+            g.setFont (juce::FontOptions (13.0f));
+            g.drawText ("Pre-roll (auto punch)", preRoll.getBounds().withX (16).withWidth (170), juce::Justification::centredLeft);
+            g.drawText ("Post-roll", postRoll.getBounds().withX (16).withWidth (170), juce::Justification::centredLeft);
         }
         void resized() override
         {
             auto b = getLocalBounds();
+            postRoll.setBounds (b.removeFromBottom (30).reduced (16, 4).withTrimmedLeft (180));
+            preRoll.setBounds (b.removeFromBottom (30).reduced (16, 4).withTrimmedLeft (180));
             windToggle.setBounds (b.removeFromBottom (36).reduced (16, 4));
             b.removeFromBottom (24);
             selector.setBounds (b);
         }
         juce::AudioDeviceSelectorComponent selector;
         juce::ToggleButton windToggle { "Tape wind physics: spool to locate points (realistic FFWD / REW)" };
+        juce::Slider preRoll { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight },
+                     postRoll { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
         TapeEngine& engine;
         juce::PropertiesFile& props;
     };
@@ -751,6 +782,7 @@ void MainComponent::rebuildModules()
                 engine.setArmed (track, arm);
         };
         m->onRenameRequest = [this] (int track) { renameTrack (track); };
+        m->onMenuRequest   = [this] (int track) { showTrackMenu (track); };
         bridge.addAndMakeVisible (m);
     }
 
@@ -990,6 +1022,284 @@ void MainComponent::newMaster (std::function<void()> then)
         engine.setActiveMaster (idx);
         refreshMasterSection();
         if (then) then();
+    }), true);
+}
+
+//==============================================================================
+// Tape jobs: import, export, flip
+
+void MainComponent::showManual()
+{
+    // The manual ships inside the app; open it in the browser.
+    auto f = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("Hawthorne Manual " HAWTHORNE_VERSION ".html");
+    if (! f.existsAsFile())
+        f.replaceWithData (BinaryData::manual_html, (size_t) BinaryData::manual_htmlSize);
+    f.startAsProcess();
+}
+
+void MainComponent::showMachineMenu()
+{
+    if (reel == nullptr) return;
+    const bool rec = engine.isRecording();
+    juce::PopupMenu m;
+    m.addItem (1, juce::String ("Machines...   (") + tape::multitrackMachine (reel->machine).name + ")", ! rec);
+    m.addSeparator();
+    m.addItem (2, "Import audio onto a track...", ! rec);
+    m.addItem (3, "Export all tracks (stems)...", ! rec);
+    m.addSeparator();
+    m.addItem (4, reel->flipped ? "Turn the reel back over (play forwards)..." : "Flip the reel over (reverse tape)...", ! rec);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (machineButton), [this] (int r)
+    {
+        if (reel == nullptr) return;
+        if (r == 1) showMachines();
+        else if (r == 2) importAudio (0);
+        else if (r == 3) { juce::Array<int> all; for (int t = 0; t < reel->numTracks; ++t) all.add (t); exportTracks (all); }
+        else if (r == 4) flipReel();
+    });
+}
+
+void MainComponent::showTrackMenu (int track)
+{
+    if (reel == nullptr || engine.isRecording()) return;
+    juce::PopupMenu m;
+    const auto name = juce::String (track + 1) + " " + reel->tracks[(size_t) track].name;
+    m.addSectionHeader ("TRACK " + name.toUpperCase());
+    m.addItem (1, "Import audio onto this track...");
+    m.addItem (2, "Export this track...", reel->getTapeFile (track).existsAsFile());
+    m.addItem (3, "Export all tracks (stems)...");
+    m.addSeparator();
+    m.addItem (4, "Rename...");
+    m.showMenuAsync ({}, [this, track] (int r)
+    {
+        if (reel == nullptr) return;
+        if (r == 1) importAudio (track);
+        else if (r == 2) exportTracks ({ track });
+        else if (r == 3) { juce::Array<int> all; for (int t = 0; t < reel->numTracks; ++t) all.add (t); exportTracks (all); }
+        else if (r == 4) renameTrack (track);
+    });
+}
+
+void MainComponent::runTapeJob (const juce::String& title, std::function<juce::String (std::function<bool (double)>)> work,
+                                std::function<void (bool)> after)
+{
+    if (reel == nullptr || engine.isRecording()) return;
+    const auto pos = engine.getPosition();
+    engine.stop();
+    engine.setReel (nullptr);          // let go of the tape files while they change
+
+    struct Job : juce::ThreadWithProgressWindow
+    {
+        Job (const juce::String& t) : juce::ThreadWithProgressWindow (t, true, true) {}
+        void run() override { error = work ([this] (double p) { setProgress (p); return ! threadShouldExit(); }); }
+        void threadComplete (bool cancelled) override { if (done) done (error, cancelled); delete this; }
+        std::function<juce::String (std::function<bool (double)>)> work;
+        std::function<void (const juce::String&, bool)> done;
+        juce::String error;
+    };
+    auto* job = new Job (title);
+    job->work = std::move (work);
+    job->done = [this, pos, title, after] (const juce::String& err, bool cancelled)
+    {
+        if (reel == nullptr) return;
+        if (after) after (err.isEmpty() && ! cancelled);
+        juce::String e2;
+        reel->equaliseTapeLengths (e2);
+        saveReel();
+        engine.setReel (reel.get());
+        engine.locate (juce::jmin (pos, juce::jmax ((juce::int64) 0, engine.getReelLength())));
+        markers.setReel (reel.get());
+        rebuildModules();
+        if (sheetWindow != nullptr) sheetWindow->getSheet().refresh();
+        repaint();
+        if (err.isNotEmpty()) showAlert (title, err);
+    };
+    job->launchThread();
+}
+
+void MainComponent::importAudio (int track)
+{
+    if (reel == nullptr || engine.isRecording()) return;
+    chooser = std::make_unique<juce::FileChooser> ("Import audio onto a track",
+                                                   juce::File::getSpecialLocation (juce::File::userMusicDirectory),
+                                                   "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [this, track] (const juce::FileChooser& fc)
+    {
+        const auto src = fc.getResult();
+        if (src == juce::File() || reel == nullptr) return;
+
+        juce::AudioFormatManager fm;
+        fm.registerBasicFormats();
+        std::unique_ptr<juce::AudioFormatReader> rd (fm.createReaderFor (src));
+        if (rd == nullptr) { showAlert ("Import", "Can't read " + src.getFileName() + " (WAV, AIFF, FLAC, OGG or MP3)."); return; }
+        const bool stereo = rd->numChannels > 1;
+        const double srcRate = rd->sampleRate;
+        const auto srcLen = rd->lengthInSamples;
+        rd.reset();
+
+        auto* w = new ReelDialog ("Import audio", src.getFileName() + "\n" + juce::String ((double) srcLen / srcRate, 1) + " s, "
+                                      + (stereo ? "stereo" : "mono") + ", " + juce::String (srcRate / 1000.0, 1) + " kHz"
+                                      + (std::abs (srcRate - reel->sampleRate) > 0.5 ? "  (converted to " + juce::String (reel->sampleRate / 1000.0, 1) + " kHz)" : juce::String()),
+                                  juce::MessageBoxIconType::NoIcon, this);
+        juce::StringArray tracks;
+        for (int t = 0; t < reel->numTracks; ++t) tracks.add (juce::String (t + 1) + "  " + reel->tracks[(size_t) t].name);
+        w->addComboBox ("track", tracks, "Onto track:");
+        w->getComboBoxComponent ("track")->setSelectedItemIndex (track);
+        if (stereo)
+            w->addComboBox ("stereo", { "Left / right onto this track and the next", "Mixed to mono on this track" }, "Stereo file:");
+        w->addComboBox ("where", { "From the start of the reel", "From the playhead (" + formatShortTime (engine.getPosition(), reel->sampleRate) + ")" }, "Place it:");
+        w->getComboBoxComponent ("where")->setSelectedItemIndex (0);
+        if (reel->tapeStock != 0)
+        {
+            w->addComboBox ("print", { juce::String ("Print it through the tape (") + tape::info ((tape::Stock) reel->tapeStock).label + " on "
+                                           + tape::multitrackMachine (reel->machine).label + ")",
+                                       "Straight onto the tape (no tape sound)" }, "Tape:");
+            w->getComboBoxComponent ("print")->setSelectedItemIndex (0);
+        }
+        w->addTextBlock ("This records over what's on the track from that point on.");
+        w->addButton ("Import", 1, juce::KeyPress (juce::KeyPress::returnKey));
+        w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        const auto here = engine.getPosition();
+        w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, src, stereo, srcLen, srcRate, here] (int result)
+        {
+            if (result != 1 || reel == nullptr) return;
+            const int t0 = w->getComboBoxComponent ("track")->getSelectedItemIndex();
+            const bool two = stereo && w->getComboBoxComponent ("stereo")->getSelectedItemIndex() == 0 && t0 + 1 < reel->numTracks;
+            const juce::int64 at = w->getComboBoxComponent ("where")->getSelectedItemIndex() == 1 ? here : 0;
+            const bool print = reel->tapeStock != 0 && w->getComboBoxComponent ("print")->getSelectedItemIndex() == 0;
+
+            juce::Array<juce::File> files { reel->getTapeFile (t0) };
+            if (two) files.add (reel->getTapeFile (t0 + 1));
+            auto sh = std::make_shared<tape::Shared>();
+            if (print) sh->set ((tape::Stock) reel->tapeStock, reel->ips, reel->sampleRate, tape::multitrackMachine (reel->machine));
+            const double rate = reel->sampleRate;
+            const auto len = (juce::int64) ((double) srcLen * rate / srcRate);
+
+            runTapeJob ("Importing " + src.getFileName() + "...",
+                        [src, files, rate, at, sh, print] (std::function<bool (double)> progress)
+                        { return transfer::importFile (src, files, rate, at, print ? sh.get() : nullptr, progress); },
+                        [this, src, t0, two, at, len] (bool ok)
+                        {
+                            if (! ok || reel == nullptr) return;
+                            TakeEntry e;
+                            e.take = reel->nextTake++;
+                            e.when = juce::Time::getCurrentTime().formatted ("%d %b %Y  %H:%M");
+                            e.start = at;
+                            e.end = at + len;
+                            e.tracks = two ? juce::String (t0 + 1) + "-" + juce::String (t0 + 2) : juce::String (t0 + 1);
+                            e.comments = "Imported: " + src.getFileName();
+                            reel->takeLog.push_back (e);
+                            if (reel->tracks[(size_t) t0].name.startsWith ("Track "))
+                                reel->tracks[(size_t) t0].name = src.getFileNameWithoutExtension().substring (0, 24);
+                        });
+        }), true);
+    });
+}
+
+void MainComponent::exportTracks (juce::Array<int> tracks)
+{
+    if (reel == nullptr || engine.isRecording()) return;
+    juce::Array<int> withTape;
+    for (auto t : tracks) if (reel->getTapeFile (t).existsAsFile()) withTape.add (t);
+    if (withTape.isEmpty()) { showAlert ("Export", "Nothing has been recorded on " + juce::String (tracks.size() == 1 ? "this track" : "these tracks") + " yet."); return; }
+
+    auto go = [this, withTape] (bool repro)
+    {
+        chooser = std::make_unique<juce::FileChooser> ("Export to this folder", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory));
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                              [this, withTape, repro] (const juce::FileChooser& fc)
+        {
+            const auto folder = fc.getResult();
+            if (folder == juce::File() || reel == nullptr) return;
+            const auto length = engine.getReelLength();
+            const double rate = reel->sampleRate;
+            const auto prefix = juce::File::createLegalFileName ((session != nullptr ? session->getName() + " - " : juce::String()) + reel->getName());
+            struct Item { juce::File src, dest; };
+            std::vector<Item> items;
+            for (auto t : withTape)
+                items.push_back ({ reel->getTapeFile (t), folder.getChildFile (prefix + " - " + juce::String (t + 1).paddedLeft ('0', 2) + " "
+                                                                          + juce::File::createLegalFileName (reel->tracks[(size_t) t].name) + ".wav") });
+            auto sh = std::make_shared<tape::Shared>();
+            if (repro) sh->set ((tape::Stock) reel->tapeStock, reel->ips * reel->getSpeedRatio(), rate, tape::multitrackMachine (reel->machine));
+
+            runTapeJob ("Exporting tracks...", [items, length, rate, sh, repro] (std::function<bool (double)> progress)
+            {
+                for (size_t i = 0; i < items.size(); ++i)
+                {
+                    auto err = transfer::exportTrack (items[i].src, items[i].dest, rate, length, repro ? sh.get() : nullptr,
+                                                      [&] (double p) { return progress (((double) i + p) / (double) items.size()); });
+                    if (err.isNotEmpty()) return err;
+                }
+                return juce::String();
+            }, [folder] (bool ok) { if (ok) folder.revealToUser(); });
+        });
+    };
+
+    if (reel->tapeStock == 0) { go (false); return; }
+    auto* w = new ReelDialog ("Export tracks", juce::String (withTape.size()) + " track(s) as 24-bit WAV, the length of the reel.",
+                              juce::MessageBoxIconType::NoIcon, this);
+    w->addComboBox ("sound", { "As printed on the tape", "With the machine's playback sound (head bump, top end, hiss)" }, "Sound:");
+    w->addButton ("Export", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([w, go] (int result)
+    {
+        if (result == 1) go (w->getComboBoxComponent ("sound")->getSelectedItemIndex() == 1);
+    }), true);
+}
+
+void MainComponent::flipReel()
+{
+    if (reel == nullptr || engine.isRecording()) return;
+    auto* w = new ReelDialog (reel->flipped ? "Turn the reel back over" : "Flip the reel over",
+                              juce::String ("Turns the tape over so everything on it plays backwards - record onto it "
+                                            "(reverse guitar, backwards cymbals), then turn it back.\n"
+                                            "Markers, takes and the punch points flip with it."),
+                              juce::MessageBoxIconType::NoIcon, this);
+    w->addComboBox ("swap", { "Keep the track numbers", juce::String ("Swap the track order, like a real machine (track 1 plays on track ") + juce::String (reel->numTracks) + ")" },
+                    "Tracks:");
+    w->getComboBoxComponent ("swap")->setSelectedItemIndex (0);
+    w->addButton (reel->flipped ? "Turn back" : "Flip", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int result)
+    {
+        if (result != 1 || reel == nullptr) return;
+        const bool swap = w->getComboBoxComponent ("swap")->getSelectedItemIndex() == 1;
+        const auto length = engine.getReelLength();
+        if (length <= 0) { showAlert ("Flip", "There's nothing on this reel yet."); return; }
+
+        juce::Array<juce::File> files;
+        for (int t = 0; t < reel->numTracks; ++t) files.add (reel->getTapeFile (t));
+        juce::Array<juce::File> masters;
+        for (int m = 0; m < (int) reel->masters.size(); ++m)
+            for (int side = 0; side < 2; ++side) masters.add (reel->getMasterFile (m, side));
+        const double rate = reel->sampleRate;
+        const int n = reel->numTracks;
+
+        runTapeJob ("Flipping the reel...", [files, masters, rate, length, swap, n] (std::function<bool (double)> progress)
+        {
+            juce::Array<juce::File> all;
+            for (auto& f : files)   if (f.existsAsFile()) all.add (f);
+            for (auto& f : masters) if (f.existsAsFile()) all.add (f);
+            for (int i = 0; i < all.size(); ++i)
+            {
+                auto err = transfer::reverseFile (all[i], rate, length, [&] (double p) { return progress (((double) i + p) / (double) all.size()); });
+                if (err.isNotEmpty()) return err;
+            }
+            if (swap)
+                for (int a = 0, b = n - 1; a < b; ++a, --b)
+                {
+                    // the tape's track 1 now passes the head for the last track
+                    const auto fa = files[a], fb = files[b];
+                    const auto tmp = fa.getSiblingFile (fa.getFileName() + ".swap");
+                    if (fa.existsAsFile() && ! fa.moveFileTo (tmp)) return juce::String ("Could not swap the tracks.");
+                    if (fb.existsAsFile() && ! fb.moveFileTo (fa)) return juce::String ("Could not swap the tracks.");
+                    if (tmp.existsAsFile() && ! tmp.moveFileTo (fb)) return juce::String ("Could not swap the tracks.");
+                }
+            return juce::String();
+        }, [this, length, swap] (bool ok)
+        {
+            if (ok && reel != nullptr) reel->flipMetadata (length, swap);
+        });
     }), true);
 }
 
@@ -1485,12 +1795,40 @@ void MainComponent::doRecord()
 
     if (engine.isRecording())
     {
-        engine.punchOut();
+        engine.punchOutSmooth();
+        return;
+    }
+
+    if (engine.getAutoPunch())
+    {
+        if (engine.isAutoPunching()) { engine.punchOutSmooth(); return; }   // REC again: cancel the punch
+        if (auto err = engine.autoRecord(); err.isNotEmpty())
+            showAlert ("Cannot auto punch", err);
         return;
     }
 
     if (auto err = engine.record(); err.isNotEmpty())
         showAlert ("Cannot record", err);
+}
+
+void MainComponent::setPunchHere (bool isIn)
+{
+    if (reel == nullptr) return;
+    auto in = engine.getPunchIn(), out = engine.getPunchOut();
+    const auto target = isIn ? in : out;
+
+    if (juce::ModifierKeys::currentModifiers.isShiftDown() || juce::ModifierKeys::currentModifiers.isCommandDown())
+    {
+        if (target >= 0) locate (target);
+        return;
+    }
+    if (engine.isRecording() || engine.isAutoPunching()) return;
+
+    const auto here = engine.getWindTarget();
+    if (isIn) { in = here; if (out >= 0 && out <= in) out = -1; }
+    else      { out = here; if (in >= 0 && in >= out) in = -1; }
+    engine.setPunchPoints (in, out);
+    repaint (locatorArea);
 }
 
 void MainComponent::locate (juce::int64 pos)
@@ -1512,6 +1850,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
         toggleFullScreen();
         return true;
     }
+
+    if (k == juce::KeyPress::F1Key) { showManual(); return true; }
 
     if (library.isVisible())
         return false;
@@ -1560,6 +1900,12 @@ void MainComponent::timerCallback()
     const int windDir = engine.getWindDirection();
     rewKey.setLit (windDir < 0);
     liftKey.setLit (engine.getLifterDefeat());
+    inKey.setLit (engine.getPunchIn() >= 0);
+    outKey.setLit (engine.getPunchOut() >= 0);
+    autoKey.setLit (engine.getAutoPunch() && (! engine.isAutoPunching() || flash));
+    rehKey.setLit (engine.getRehearse());
+    loopKey.setLit (engine.getCycle());
+    if (frame % 10 == 0) repaint (locatorArea);
     ffwKey.setLit (windDir > 0);
     clickKey.setLit (reel != nullptr && reel->clickOn && reel->tempoBpm > 0.0);
     if (frame % 5 == 0)
@@ -1685,7 +2031,7 @@ void MainComponent::paint (juce::Graphics& g)
                 sessionArea, juce::Justification::centredLeft, true);
     g.setColour (Colours::textDim);
     g.setFont (monoFont (11.0f));
-    g.drawText ((reel != nullptr ? juce::String (tape::multitrackMachine (reel->machine).label) + "  "
+    g.drawText ((reel != nullptr ? juce::String (reel->flipped ? "FLIPPED  " : "") + tape::multitrackMachine (reel->machine).label + "  "
                                      + tape::info ((tape::Stock) reel->tapeStock).label + "  " : juce::String())
                   + juce::String (reel != nullptr ? reel->numTracks : 0) + "-TRACK  v" HAWTHORNE_VERSION,
                 sessionArea, juce::Justification::centredRight);
@@ -1761,6 +2107,31 @@ void MainComponent::paint (juce::Graphics& g)
     g.setFont (monoFont (15.0f, true));
     g.drawText ("MASTER", masterLabelArea, juce::Justification::centredLeft);
 
+    // Autolocator
+    g.setColour (Colours::panel);
+    g.fillRect (locatorArea);
+    g.setColour (Colours::edge);
+    g.drawVerticalLine (locatorArea.getX(), (float) locatorArea.getY(), (float) locatorArea.getBottom());
+    g.drawHorizontalLine (locatorArea.getBottom() - 1, (float) locatorArea.getX(), (float) locatorArea.getRight());
+    g.setColour (Colours::mustard);
+    g.setFont (monoFont (12.0f, true));
+    g.drawText ("AUTOLOCATOR", locatorLabelArea, juce::Justification::centredLeft);
+    {
+        const double sr = sessionRate();
+        auto t = [&] (juce::int64 v) { return v >= 0 ? formatShortTime (v, sr) : juce::String ("--:--"); };
+        g.setColour (Colours::text);
+        g.setFont (monoFont (13.0f, true));
+        g.drawText (t (engine.getPunchIn()), inTimeArea, juce::Justification::centredLeft);
+        g.drawText (t (engine.getPunchOut()), outTimeArea, juce::Justification::centredLeft);
+        if (engine.isAutoPunching())
+        {
+            g.setColour (Colours::red);
+            g.setFont (monoFont (10.0f, true));
+            g.drawText (engine.getRehearse() ? "REHEARSING" : (engine.isRecording() ? "PUNCHED IN" : "PUNCH ARMED"),
+                        locatorLabelArea, juce::Justification::centredRight);
+        }
+    }
+
     // Status bar
     g.setColour (Colours::black);
     g.fillRect (statusArea);
@@ -1779,7 +2150,9 @@ void MainComponent::resized()
         auto h = headerArea.reduced (12, 9);
         fullScreenButton.setBounds (h.removeFromRight (150));
         h.removeFromRight (8);
-        audioButton.setBounds (h.removeFromRight (140));
+        helpButton.setBounds (h.removeFromRight (40));
+        h.removeFromRight (8);
+        audioButton.setBounds (h.removeFromRight (120));
         h.removeFromRight (8);
         machineButton.setBounds (h.removeFromRight (100));
         h.removeFromRight (8);
@@ -1882,6 +2255,26 @@ void MainComponent::resized()
         masterArmKey.setBounds (controls.removeFromLeft ((controls.getWidth() - 6) / 2));
         controls.removeFromLeft (6);
         monitorKey.setBounds (controls);
+    }
+    {
+        auto la = sidebar.removeFromTop (94);
+        locatorArea = la;
+        la = la.reduced (12, 6).withTrimmedLeft (1);
+        locatorLabelArea = la.removeFromTop (16);
+        la.removeFromTop (4);
+        auto row1 = la.removeFromTop (28);
+        la.removeFromTop (6);
+        auto row2 = la.removeFromTop (28);
+        const int kwL = 52;
+        inKey.setBounds (row1.removeFromLeft (kwL));  row1.removeFromLeft (6);
+        inTimeArea = row1.removeFromLeft ((row1.getWidth() - kwL - 6) / 2);
+        row1.removeFromLeft (0);
+        outKey.setBounds (row1.removeFromLeft (kwL)); row1.removeFromLeft (6);
+        outTimeArea = row1;
+        const int w3 = (row2.getWidth() - 12) / 3;
+        autoKey.setBounds (row2.removeFromLeft (w3)); row2.removeFromLeft (6);
+        rehKey.setBounds (row2.removeFromLeft (w3));  row2.removeFromLeft (6);
+        loopKey.setBounds (row2);
     }
     markers.setBounds (sidebar);
 

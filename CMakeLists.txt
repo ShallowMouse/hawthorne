@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(Hawthorne VERSION 1.15.0)
+project(Hawthorne VERSION 1.16.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -38,7 +38,7 @@ set(COMMON_DEFS
 #------------------------------------------------------------------------------
 if(HAWTHORNE_BUILD_APP)
     # Logo (header mark) for the apps
-    juce_add_binary_data(HawthorneBinaryData SOURCES Resources/hawthorne-mark.svg)
+    juce_add_binary_data(HawthorneBinaryData SOURCES Resources/hawthorne-mark.svg Resources/manual.html)
 
     juce_add_gui_app(Hawthorne
         ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/hawthorne-logo.png"

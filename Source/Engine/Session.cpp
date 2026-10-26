@@ -34,7 +34,7 @@ namespace
 const juce::StringArray& Session::infoFields()
 {
     static const juce::StringArray fields { "Artist", "Title", "Client / Label", "Producer", "Engineer",
-                                            "Tape Op", "Studio", "Job No.", "Notes" };
+                                            "Tape Op", "Assistant", "Studio", "Room", "Console", "Monitoring", "Job No.", "Notes" };
     return fields;
 }
 

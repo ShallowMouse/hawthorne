@@ -226,11 +226,9 @@ public:
     {
         setLookAndFeel (&paperLnf());
         auto& h = table.getHeader();
-        h.addColumn ("TRK", 1, 50, 40, 60, juce::TableHeaderComponent::notSortable);
-        h.addColumn ("NAME", 2, 170, 80, 400, juce::TableHeaderComponent::notSortable);
-        h.addColumn ("INSTRUMENT / SOURCE", 3, 220, 80, 500, juce::TableHeaderComponent::notSortable);
-        h.addColumn ("MIC / DI", 4, 170, 60, 400, juce::TableHeaderComponent::notSortable);
-        h.addColumn ("NOTES", 5, 360, 80, 2000, juce::TableHeaderComponent::notSortable);
+        h.addColumn ("TRK", 1, 44, 40, 60, juce::TableHeaderComponent::notSortable);
+        for (int c = 0; c < numFields(); ++c)
+            h.addColumn (fieldTitle (c), c + 2, fieldWidth (c), 50, 2000, juce::TableHeaderComponent::notSortable);
         h.setStretchToFitActive (true);
         table.setHeaderHeight (26);
         table.setRowHeight (26);
@@ -288,7 +286,7 @@ private:
             return label;
 
         auto& tr = s->tracks[(size_t) row];
-        juce::String* field = col == 2 ? &tr.name : col == 3 ? &tr.instrument : col == 4 ? &tr.mic : &tr.notes;
+        juce::String* field = &(tr.*fieldPtr (col - 2));
 
         if (! label->isBeingEdited())
             label->setText (*field, juce::dontSendNotification);
@@ -304,14 +302,35 @@ private:
                 t.name = text.trim().isEmpty() ? "Track " + juce::String (row + 1) : text.trim();
                 if (owner.onTrackNamesChanged) owner.onTrackNamesChanged();
             }
-            else if (col == 3) t.instrument = text;
-            else if (col == 4) t.mic = text;
-            else               t.notes = text;
+            else
+                t.*fieldPtr (col - 2) = text;
             owner.markDirty();
         };
         return label;
     }
 
+public:
+    // The recall columns: (title, width, member)
+    static int numFields() { return 9; }
+    static const char* fieldTitle (int c)
+    {
+        static const char* t[] = { "NAME", "SOURCE", "MIC / DI", "MIC POSITION", "PRE / GAIN", "EQ", "DYNAMICS", "OUTBOARD / FX", "NOTES", "" };
+        return t[juce::jlimit (0, 9, c)];
+    }
+    static int fieldWidth (int c)
+    {
+        static const int w[] = { 130, 140, 120, 120, 110, 120, 120, 130, 200, 1 };
+        return w[juce::jlimit (0, 9, c)];
+    }
+    static juce::String TrackInfo::* fieldPtr (int c)
+    {
+        static juce::String TrackInfo::* const p[] = { &TrackInfo::name, &TrackInfo::instrument, &TrackInfo::mic, &TrackInfo::micPos,
+                                                       &TrackInfo::preamp, &TrackInfo::eq, &TrackInfo::dynamics, &TrackInfo::outboard,
+                                                       &TrackInfo::notes, &TrackInfo::notes };
+        return p[juce::jlimit (0, 9, c)];
+    }
+
+private:
     SessionSheet& owner;
     juce::TableListBox table { "Track sheet", this };
 };
@@ -469,6 +488,222 @@ private:
 };
 
 //==============================================================================
+/** Photos of the setup (mics, desk, outboard settings) kept with the reel. */
+class SessionSheet::PhotosPage : public juce::Component
+{
+public:
+    explicit PhotosPage (SessionSheet& o) : owner (o)
+    {
+        addButton.onClick = [this] { addPhotos(); };
+        addAndMakeVisible (addButton);
+        viewport.setViewedComponent (&grid, false);
+        viewport.setScrollBarsShown (true, false);
+        addAndMakeVisible (viewport);
+    }
+
+    static juce::File folderFor (const Reel& r) { return r.getFolder().getChildFile ("Photos"); }
+
+    void refresh()
+    {
+        thumbs.clear();
+        if (auto* r = owner.getReel())
+        {
+            auto files = folderFor (*r).findChildFiles (juce::File::findFiles, false, "*.jpg;*.jpeg;*.png;*.gif");
+            files.sort();
+            for (auto& f : files)
+                thumbs.add (new Thumb (*this, f));
+        }
+        for (auto* t : thumbs) grid.addAndMakeVisible (t);
+        layout();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        paintPaper (g, getLocalBounds(), "SETUP PHOTOS", 10000, 30);
+        if (thumbs.isEmpty())
+        {
+            g.setColour (Paper::faint);
+            g.setFont (Paper::type (15.0f));
+            g.drawText ("Photos of the mics, the desk and the outboard settings, kept with this reel and printed with the sheets.",
+                        getLocalBounds().withTrimmedTop (100).reduced (60, 0), juce::Justification::centredTop, true);
+        }
+    }
+
+    void resized() override
+    {
+        addButton.setBounds (getWidth() - 190, 14, 150, 28);
+        viewport.setBounds (getLocalBounds().withTrimmedTop (56).withTrimmedLeft (44).reduced (8, 0));
+        layout();
+    }
+
+private:
+    struct Thumb : juce::Component, juce::SettableTooltipClient
+    {
+        Thumb (PhotosPage& p, const juce::File& f) : page (p), file (f)
+        {
+            image = juce::ImageFileFormat::loadFrom (f);
+            if (image.isValid())
+            {
+                const int w = 300, h = juce::jmax (1, image.getHeight() * w / juce::jmax (1, image.getWidth()));
+                image = image.rescaled (w, h, juce::Graphics::mediumResamplingQuality);
+            }
+            setTooltip (file.getFileName() + "\nClick to open. Right-click to remove.");
+        }
+        void paint (juce::Graphics& g) override
+        {
+            auto b = getLocalBounds().reduced (6);
+            auto cap = b.removeFromBottom (20);
+            g.setColour (juce::Colours::white);
+            g.fillRect (b);
+            if (image.isValid())
+                g.drawImage (image, b.reduced (6).toFloat(), juce::RectanglePlacement::centred);
+            g.setColour (Paper::ink);
+            g.setFont (Paper::type (12.0f));
+            g.drawText (file.getFileNameWithoutExtension(), cap, juce::Justification::centred, true);
+        }
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            if (e.mods.isPopupMenu())
+            {
+                juce::PopupMenu m;
+                m.addItem (1, "Remove this photo");
+                juce::Component::SafePointer<PhotosPage> safe (&page);
+                const auto f = file;
+                m.showMenuAsync ({}, [safe, f] (int r) { if (r == 1 && safe != nullptr) { f.moveToTrash(); safe->refresh(); } });
+            }
+            else
+                file.startAsProcess();
+        }
+        PhotosPage& page;
+        juce::File file;
+        juce::Image image;
+    };
+
+    void layout()
+    {
+        const int w = juce::jmax (100, viewport.getMaximumVisibleWidth());
+        const int tw = 240, th = 210;
+        const int perRow = juce::jmax (1, w / tw);
+        for (int i = 0; i < thumbs.size(); ++i)
+            thumbs[i]->setBounds ((i % perRow) * tw, (i / perRow) * th, tw, th);
+        grid.setSize (w, ((thumbs.size() + perRow - 1) / perRow) * th + 10);
+    }
+
+    void addPhotos()
+    {
+        auto* r = owner.getReel();
+        if (r == nullptr) return;
+        chooser = std::make_unique<juce::FileChooser> ("Add setup photos", juce::File::getSpecialLocation (juce::File::userPicturesDirectory),
+                                                       "*.jpg;*.jpeg;*.png;*.gif");
+        const auto folder = folderFor (*r);
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles
+                                | juce::FileBrowserComponent::canSelectMultipleItems,
+                              [this, folder] (const juce::FileChooser& fc)
+        {
+            folder.createDirectory();
+            for (auto& f : fc.getResults())
+                f.copyFileTo (folder.getNonexistentChildFile (f.getFileNameWithoutExtension(), f.getFileExtension(), false));
+            refresh();
+        });
+    }
+
+    SessionSheet& owner;
+    juce::TextButton addButton { "ADD PHOTOS..." };
+    juce::Viewport viewport;
+    juce::Component grid;
+    juce::OwnedArray<Thumb> thumbs;
+    std::unique_ptr<juce::FileChooser> chooser;
+};
+
+//==============================================================================
+void SessionSheet::printSheets()
+{
+    auto* r = getReel();
+    auto* s = getSession();
+    if (r == nullptr) return;
+    if (isTimerRunning()) timerCallback();     // save what's being typed first
+
+    auto esc = [] (const juce::String& t) { return t.replace ("&", "&amp;").replace ("<", "&lt;").replace (">", "&gt;").replace ("\n", "<br>"); };
+    juce::String h;
+    h << "<!doctype html><html><head><meta charset='utf-8'><title>" << esc ((s != nullptr ? s->getName() + " - " : juce::String()) + r->getName()) << "</title>"
+      << "<style>"
+         "body{font-family:'Courier New',monospace;color:#221f19;margin:24px;font-size:12px}"
+         "h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;border-bottom:2px solid #221f19;margin:22px 0 8px;padding-bottom:3px}"
+         ".sub{color:#6b6455;margin-bottom:10px}"
+         "table{border-collapse:collapse;width:100%}td,th{border:1px solid #a9a090;padding:4px 6px;vertical-align:top;text-align:left}"
+         "th{background:#eee6d2;font-size:11px}"
+         ".kv td:first-child{width:22%;color:#6b6455;font-weight:bold}"
+         ".notes{white-space:pre-wrap;border:1px solid #a9a090;padding:8px;min-height:40px}"
+         ".photos img{max-width:46%;margin:0 2% 12px 0;border:1px solid #a9a090}"
+         ".page{page-break-before:always}"
+         "@media print{body{margin:10mm}button{display:none}}"
+         "</style></head><body>";
+    h << "<button onclick='window.print()' style='float:right'>Print</button>";
+    h << "<h1>" << esc (s != nullptr ? s->getName() : juce::String()) << "</h1>";
+    h << "<div class='sub'>" << esc (r->getName()) << " &nbsp;|&nbsp; " << r->numTracks << " tracks &nbsp;|&nbsp; "
+      << esc (Reel::formatIps (r->ips)) << " ips &nbsp;|&nbsp; " << esc (tape::info ((tape::Stock) r->tapeStock).name)
+      << " &nbsp;|&nbsp; " << esc (tape::multitrackMachine (r->machine).name) << " &nbsp;|&nbsp; "
+      << juce::String (r->sampleRate / 1000.0, 1) << " kHz" << (r->flipped ? " &nbsp;|&nbsp; FLIPPED" : "") << "</div>";
+
+    auto infoTable = [&] (const juce::String& title, const juce::StringArray& fields, const juce::String& notesKey, const juce::StringPairArray& info)
+    {
+        h << "<h2>" << title << "</h2><table class='kv'>";
+        for (auto& f : fields)
+            if (f != notesKey)
+                h << "<tr><td>" << esc (f) << "</td><td>" << esc (info[f]) << "</td></tr>";
+        h << "</table>";
+        if (info[notesKey].isNotEmpty())
+            h << "<p><b>" << esc (notesKey) << "</b></p><div class='notes'>" << esc (info[notesKey]) << "</div>";
+    };
+    if (s != nullptr) infoTable ("SESSION SHEET", Session::infoFields(), "Notes", s->info);
+    infoTable ("TAPE BOX LABEL", Reel::infoFields(), "Reel Notes", r->info);
+
+    h << "<h2 class='page'>TRACK SHEET</h2><table><tr><th>TRK</th>";
+    for (int c = 0; c < TrackSheetPage::numFields(); ++c) h << "<th>" << TrackSheetPage::fieldTitle (c) << "</th>";
+    h << "</tr>";
+    for (int t = 0; t < r->numTracks; ++t)
+    {
+        h << "<tr><td><b>" << (t + 1) << "</b></td>";
+        for (int c = 0; c < TrackSheetPage::numFields(); ++c)
+            h << "<td>" << esc (r->tracks[(size_t) t].*TrackSheetPage::fieldPtr (c)) << "</td>";
+        h << "</tr>";
+    }
+    h << "</table>";
+
+    if (! r->markers.empty())
+    {
+        h << "<h2>MARKERS</h2><table><tr><th>TIME</th><th>NAME</th></tr>";
+        for (auto& m : r->markers)
+            h << "<tr><td>" << formatShortTime (m.position, r->sampleRate) << "</td><td>" << esc (m.name) << "</td></tr>";
+        h << "</table>";
+    }
+
+    h << "<h2 class='page'>TAKE LOG</h2><table><tr><th>TAKE</th><th>WHEN</th><th>START</th><th>END</th><th>TRACKS</th><th>SONG</th><th>STATUS</th><th>COMMENTS</th></tr>";
+    for (auto& tk : r->takeLog)
+        h << "<tr><td>" << tk.take << "</td><td>" << esc (tk.when) << "</td><td>" << formatShortTime (tk.start, r->sampleRate)
+          << "</td><td>" << formatShortTime (tk.end, r->sampleRate) << "</td><td>" << esc (tk.tracks) << "</td><td>" << esc (tk.song)
+          << "</td><td>" << esc (tk.status) << "</td><td>" << esc (tk.comments) << "</td></tr>";
+    h << "</table>";
+
+    auto photos = PhotosPage::folderFor (*r).findChildFiles (juce::File::findFiles, false, "*.jpg;*.jpeg;*.png;*.gif");
+    photos.sort();
+    if (! photos.isEmpty())
+    {
+        h << "<h2 class='page'>SETUP PHOTOS</h2><div class='photos'>";
+        for (auto& p : photos)
+            h << "<figure style='display:inline-block;width:46%;margin:0 2% 12px 0'><img style='max-width:100%' src='"
+              << juce::URL (p).toString (false) << "'><figcaption>" << esc (p.getFileNameWithoutExtension()) << "</figcaption></figure>";
+        h << "</div>";
+    }
+    h << "<script>window.onload=function(){setTimeout(function(){window.print();},400);};</script></body></html>";
+
+    auto out = r->getFolder().getChildFile ("Sheets").getChildFile (juce::File::createLegalFileName (r->getName()) + " - sheets.html");
+    out.getParentDirectory().createDirectory();
+    if (out.replaceWithText (h, false, false, "\n"))
+        out.startAsProcess();
+}
+
+//==============================================================================
 SessionSheet::SessionSheet (std::function<Reel*()> gr, std::function<Session*()> gs)
     : getReel (std::move (gr)), getSession (std::move (gs))
 {
@@ -488,6 +723,7 @@ SessionSheet::SessionSheet (std::function<Reel*()> gr, std::function<Session*()>
                              });
     trackPage = new TrackSheetPage (*this);
     takePage  = new TakeLogPage (*this);
+    photosPage = new PhotosPage (*this);
 
     tabs.setTabBarDepth (34);
     tabs.setOutline (0);
@@ -495,10 +731,14 @@ SessionSheet::SessionSheet (std::function<Reel*()> gr, std::function<Session*()>
     tabs.addTab ("REEL", Paper::paperDark, reelPage, true);
     tabs.addTab ("TRACK SHEET", Paper::paperDark, trackPage, true);
     tabs.addTab ("TAKE LOG", Paper::paperDark, takePage, true);
+    tabs.addTab ("PHOTOS", Paper::paperDark, photosPage, true);
     tabs.setColour (juce::TabbedComponent::backgroundColourId, Paper::paper);
     tabs.getTabbedButtonBar().setColour (juce::TabbedButtonBar::tabTextColourId, Paper::ink);
     tabs.getTabbedButtonBar().setColour (juce::TabbedButtonBar::frontTextColourId, Paper::ink);
     addAndMakeVisible (tabs);
+    printButton.setTooltip ("Print the session sheet, tape box label, track sheet, take log and photos (opens in your browser)");
+    printButton.onClick = [this] { printSheets(); };
+    addAndMakeVisible (printButton);
 
     refresh();
 }
@@ -515,6 +755,7 @@ void SessionSheet::refresh()
     reelPage->refresh();
     trackPage->refresh();
     takePage->refresh();
+    photosPage->refresh();
 }
 
 void SessionSheet::showTakeLog()
@@ -536,7 +777,12 @@ void SessionSheet::timerCallback()
 }
 
 void SessionSheet::paint (juce::Graphics& g) { g.fillAll (Colours::panel); }
-void SessionSheet::resized() { tabs.setBounds (getLocalBounds()); }
+void SessionSheet::resized()
+{
+    tabs.setBounds (getLocalBounds());
+    printButton.setBounds (getWidth() - 110, 4, 100, 26);
+    printButton.toFront (false);
+}
 
 //==============================================================================
 SessionSheetWindow::SessionSheetWindow (std::function<Reel*()> gr, std::function<Session*()> gs)

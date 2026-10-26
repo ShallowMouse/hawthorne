@@ -23,8 +23,9 @@ struct TrackInfo
     bool toMix = true;        // feeds the master bus
     ChannelList outputs;      // direct outs
 
-    // Track sheet
+    // Track sheet (recall)
     juce::String instrument, mic, notes;
+    juce::String micPos, preamp, eq, dynamics, outboard;
 };
 
 /** The master is a stereo bus: the mix of the tracks plus any patched-in inputs. */
@@ -141,6 +142,12 @@ public:
     int    tapeStock = 0;          // tape::Stock, chosen when the reel is made, fixed for life (0 = clean)
     int    machine = 0;            // multitrack machine model (tape::multitrackMachine), changeable
     int    masterMachine = 0;      // 2-track machine model for the master (tape::masterMachine), changeable
+    bool   flipped = false;        // turned over: playing backwards (reverse tape)
+
+    /** Turning the reel over: every position on it mirrors about `length`
+        (markers, takes, punch points). With swapTracks the track sheet
+        reverses too (on a real machine track 1 then plays on the last track). */
+    void flipMetadata (juce::int64 length, bool swapTracks);
     double deckIps = 15.0;
     bool   variOn = false;
     double variPercent = 0.0;      // -50 .. +50
@@ -150,6 +157,10 @@ public:
         return (deckIps / ips) * (variOn ? 1.0 + variPercent / 100.0 : 1.0);
     }
     static juce::String formatIps (double v) { return v == 7.5 ? juce::String (juce::CharPointer_UTF8 ("7\xc2\xbd")) : juce::String ((int) v); }
+    // Autolocator: punch points (tape samples, -1 = not set), auto punch, rehearse, cycle
+    juce::int64 punchIn = -1, punchOut = -1;
+    bool   autoPunch = false, rehearse = false, cycle = false;
+    double preRoll = 2.0, postRoll = 1.0;   // seconds
     // Click and timecode (kept with the reel)
     bool   clickOn = false;
     double clickLevelDb = -12.0;

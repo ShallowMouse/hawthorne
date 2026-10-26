@@ -140,6 +140,15 @@ private:
     void renameMaster();
     void deleteMaster();
     void exportMaster (juce::int64 start, juce::int64 end, const juce::String& suggestedName);
+    // Tape jobs (transport stopped, files let go while they run)
+    void showTrackMenu (int track);
+    void showMachineMenu();
+    void showManual();
+    void importAudio (int track);
+    void exportTracks (juce::Array<int> tracks);
+    void flipReel();
+    void runTapeJob (const juce::String& title, std::function<juce::String (std::function<bool (double)>)> work,
+                     std::function<void (bool ok)> after);
     void refreshMasterSection();
 
     // Latency (measured values are kept per audio device)
@@ -199,7 +208,7 @@ private:
     std::unique_ptr<Session> session;    // the session it belongs to
 
     juce::TextButton libraryButton { "LIBRARY" }, sheetButton { "SESSION SHEET" },
-                     routingButton { "ROUTING" }, networkButton { "NETWORK" }, syncButton { "TEMPO" }, timecodeButton { "TIMECODE" }, audioButton { "SETTINGS" }, machineButton { "MACHINE" }, updateButton;
+                     routingButton { "ROUTING" }, networkButton { "NETWORK" }, syncButton { "TEMPO" }, timecodeButton { "TIMECODE" }, audioButton { "SETTINGS" }, machineButton { "MACHINE" }, helpButton { "?" }, updateButton;
     Updater updater;
 
     TransportKey rtzKey  { "RTZ",  "Return to zero (Enter)",          Colours::mustard },
@@ -218,7 +227,13 @@ private:
     juce::TextButton masterButton;
     TransportKey masterArmKey { "ARM",  "Arm the master: record the mix onto this reel, in step with the tracks", Colours::red },
                  monitorKey   { "TAPE", "Master monitoring: hear the master tape instead of the live mix",       Colours::mustard };
-    juce::Rectangle<int> masterLabelArea, masterPanelArea;
+    juce::Rectangle<int> masterLabelArea, masterPanelArea, locatorArea, locatorLabelArea, inTimeArea, outTimeArea;
+    TransportKey inKey   { "IN",   "Punch IN point: click to set it here. Shift-click to go there.", Colours::mustard },
+                 outKey  { "OUT",  "Punch OUT point: click to set it here. Shift-click to go there.", Colours::mustard },
+                 autoKey { "AUTO", "Auto punch: REC spools to the pre-roll, plays, and punches in and out at IN / OUT (pre / post roll in SETTINGS)", Colours::red },
+                 rehKey  { "REH",  "Rehearse: with AUTO, the punch is rehearsed - armed tracks switch to input between IN and OUT, nothing is recorded", Colours::mustard },
+                 loopKey { "LOOP", "Cycle: play IN to OUT round and round. With AUTO, the whole punch (pre-roll to post-roll) repeats, recording over the last try each time", Colours::mustard };
+    void setPunchHere (bool isIn);
     TempoBox tempoBox;
     juce::TextButton syncSourceButton;
     juce::TextButton fullScreenButton { "FULL SCREEN" };

@@ -7,6 +7,7 @@ ChannelModule::ChannelModule (int i) : index (i), meter ("Track " + juce::String
 {
     meter.setTooltip ("Double-click to rename");
     meter.onDoubleClick = [this] { if (onRenameRequest) onRenameRequest (index); };
+    meter.onRightClick  = [this] { if (onMenuRequest) onMenuRequest (index); };
     addAndMakeVisible (meter);
 
     armButton.setClickingTogglesState (false);

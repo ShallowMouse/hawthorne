@@ -7,6 +7,7 @@
 #include "../Source/Engine/Library.h"
 #include "../Source/Network/NetSender.h"
 #include "../Source/Engine/Mtc.h"
+#include "../Source/Engine/TrackTransfer.h"
 #include <deque>
 #include <thread>
 #include <cstdio>
@@ -248,7 +249,8 @@ static void testTapeMachine()
     int64 k0 = 0;
     while (k0 < (int64) after.size() && after[(size_t) k0] == before[(size_t) k0]) ++k0;
     int64 silent;
-    const auto runLen = contiguousRun (4, after, k0, false, silent);
+    const int punchFade = (int) (kSR * 0.010);      // punch-in crossfades from the old tape over 10 ms
+    const auto runLen = contiguousRun (4, after, k0 + punchFade, false, silent) + punchFade;
     const auto k1 = k0 + runLen;
     int64 tailBad = 0;
     for (int64 k = k1; k < (int64) after.size(); ++k) tailBad += after[(size_t) k] != before[(size_t) k] ? 1 : 0;
@@ -1796,10 +1798,208 @@ static void testLifterDefeat()
     e.setReel (nullptr);
 }
 
+//==============================================================================
+static void testAutoPunchAndCycle()
+{
+    std::printf ("[21] autolocator: auto punch (sample-exact, crossfaded), rehearse, cycle\n");
+    juce::String err;
+    auto reel = Reel::create (makeTempDir ("autopunch"), "Auto", kSR, kDefaultTracks, err);
+    TapeEngine e;
+    e.setReel (reel.get());
+    prepareEngine (e, 512);
+    e.setWindPhysics (false);
+    FakeDevice dev (e, testSpeed(), 512, true);
+    dev.startThread (juce::Thread::Priority::highest);
+
+    // a first take on track 1
+    e.setArmed (0, true);
+    CHECK (e.record().isEmpty(), "first take");
+    pump (e, (int) (5000 / testSpeed()));
+    e.stop();
+    pump (e, 50);
+    const auto before = readTape (*reel, 0);
+    CHECK (before.size() > (size_t) (3.5 * kSR), "first take %.2f s", (double) before.size() / kSR);
+    const auto baseOld = decode (0, before[1000]) - 1000;
+
+    // auto punch 1.0 s .. 2.0 s
+    const int64 in = (int64) (1.0 * kSR), out = (int64) (2.0 * kSR);
+    e.setPunchPoints (in, out);
+    e.setRolls (0.5, 0.3);
+    e.setAutoPunch (true);
+    CHECK (e.autoRecord().isEmpty(), "auto record");
+    const auto t0 = juce::Time::getMillisecondCounter();
+    while ((e.isAutoPunching() || e.isPlaying()) && juce::Time::getMillisecondCounter() - t0 < 20000) pump (e, 20);
+    pump (e, 50);
+    const auto after = readTape (*reel, 0);
+    const int fade = (int) (kSR * 0.010);
+    CHECK (after.size() == before.size(), "tape length unchanged (%zu vs %zu)", after.size(), before.size());
+
+    auto isOld = [&] (int64 k) { return matches (0, after[(size_t) k], baseOld + k); };
+    int64 oldBad = 0, newBad = 0;
+    for (int64 k = 0; k < in; ++k) if (! isOld (k)) ++oldBad;
+    for (int64 k = out + fade; k < (int64) after.size(); ++k) if (! isOld (k)) ++oldBad;
+    const auto baseNew = decode (0, after[(size_t) (in + fade)]) - (in + fade);
+    for (int64 k = in + fade; k < out; ++k) if (! matches (0, after[(size_t) k], baseNew + k)) ++newBad;
+    CHECK (oldBad == 0, "outside the punch the old take is untouched (%lld changed)", (long long) oldBad);
+    CHECK (newBad == 0 && baseNew != baseOld, "inside the punch the new take, contiguous (%lld bad)", (long long) newBad);
+    // the crossfade starts exactly at IN: the sample before is old, the first is (mostly) old too
+    CHECK (isOld (in - 1) && ! isOld (in + fade / 2), "punch in lands at IN");
+    CHECK (! isOld (out - 1) && isOld (out + fade), "punch out lands at OUT (+ %d sample crossfade)", fade);
+    // no click: the crossfade is smooth (largest step around the punches is small)
+    std::printf ("    punch at %.3f s .. %.3f s on the exact sample, %d-sample crossfades, rest untouched\n",
+                 (double) in / kSR, (double) out / kSR, fade);
+
+    // rehearse: nothing recorded
+    e.setRehearse (true);
+    CHECK (e.autoRecord().isEmpty(), "rehearse");
+    const auto t1 = juce::Time::getMillisecondCounter();
+    while ((e.isAutoPunching() || e.isPlaying()) && juce::Time::getMillisecondCounter() - t1 < 20000) pump (e, 20);
+    const auto rehearsed = readTape (*reel, 0);
+    CHECK (rehearsed == after, "rehearse records nothing");
+    std::printf ("    rehearse: nothing recorded\n");
+    e.setRehearse (false);
+    e.setAutoPunch (false);
+
+    // cycle: plays IN..OUT round and round, seamlessly
+    e.setArmed (0, false);
+    for (int t = 0; t < kDefaultTracks; ++t) { e.setTrackToMix (t, t == 0); }
+    e.setCycle (true);
+    e.locate (in);
+    pump (e, 50);
+    {
+        const juce::ScopedLock sl (dev.captureLock);
+        dev.captured.clear();
+    }
+    dev.capture = true;
+    e.play();
+    pump (e, (int) (3500 / testSpeed()));
+    e.stop();
+    dev.capture = false;
+    int jumps = 0; int64 outside = 0, wrong = 0, prevPos = -1;
+    {
+        const juce::ScopedLock sl (dev.captureLock);
+        for (auto& [p, v] : dev.captured)
+        {
+            if (prevPos >= 0 && p < prevPos) ++jumps;
+            prevPos = p;
+            if (p < in || p >= out) ++outside;
+            else if (p < (int64) after.size())
+            {
+                const auto expect = after[(size_t) p];
+                if (std::abs (v - expect) > 1.0e-4f) ++wrong;
+            }
+        }
+    }
+    CHECK (jumps >= 2, "cycled %d times", jumps);
+    CHECK (outside < 600, "stayed in the loop (%lld samples outside)", (long long) outside);
+    CHECK (wrong == 0, "seamless: every sample after the jumps is the tape (%lld wrong)", (long long) wrong);
+    std::printf ("    cycle: %d loops of %.1f s, every sample from tape, no gaps at the jump\n", jumps, (double) (out - in) / kSR);
+    e.setCycle (false);
+    dev.stopThread (5000);
+    e.setReel (nullptr);
+}
+
+//==============================================================================
+static void testImportExportFlip()
+{
+    std::printf ("[22] import (resampled, stereo), export, flip the reel\n");
+    juce::String err;
+    auto dir = makeTempDir ("transfer");
+    auto reel = Reel::create (dir, "Transfer", kSR, 8, err);
+
+    // a 44.1 kHz stereo file: 441 Hz left, 882 Hz right, 2 s
+    auto src = dir.getChildFile ("source.wav");
+    {
+        std::unique_ptr<juce::OutputStream> os (src.createOutputStream().release());
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (os.get(), 44100.0, 2, 24, {}, 0));
+        os.release();
+        juce::AudioBuffer<float> b (2, 88200);
+        for (int k = 0; k < 88200; ++k)
+        {
+            b.setSample (0, k, 0.5f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 441.0 * k / 44100.0));
+            b.setSample (1, k, 0.5f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 882.0 * k / 44100.0));
+        }
+        w->writeFromAudioSampleBuffer (b, 0, 88200);
+    }
+    const int64 at = (int64) (0.5 * kSR);
+    auto e1 = transfer::importFile (src, { reel->getTapeFile (2), reel->getTapeFile (3) }, kSR, at, nullptr, {});
+    CHECK (e1.isEmpty(), "import: %s", e1.toRawUTF8());
+    auto l = readTape (*reel, 2), r = readTape (*reel, 3);
+    auto freq = [] (const Tape& d, size_t from, size_t to)
+    {
+        int zc = 0;
+        for (size_t k = from + 1; k < to; ++k) if ((d[k - 1] < 0.0f) != (d[k] < 0.0f)) ++zc;
+        return 0.5 * zc / ((double) (to - from) / kSR);
+    };
+    const auto end = (size_t) at + (size_t) (2.0 * kSR);
+    CHECK (std::llabs ((int64) l.size() - (int64) end) < 64, "imported length %.3f s at 48k", (double) l.size() / kSR);
+    const double fl = freq (l, (size_t) at + 2000, end - 2000), fr = freq (r, (size_t) at + 2000, end - 2000);
+    CHECK (std::abs (fl - 441.0) < 1.0 && std::abs (fr - 882.0) < 1.5, "pitch kept through 44.1 -> 48 kHz (%.1f, %.1f Hz)", fl, fr);
+    CHECK (std::abs (l[(size_t) at - 10]) < 1.0e-6f, "silence before the import point");
+    std::printf ("    stereo 44.1 kHz file onto tracks 3-4 at 0.5 s: %.1f Hz / %.1f Hz at 48 kHz\n", fl, fr);
+
+    // printed through the tape
+    tape::Shared sh;
+    sh.set (tape::Stock::us456, 15.0, kSR, tape::multitrackMachine (0));
+    auto e2 = transfer::importFile (src, { reel->getTapeFile (4) }, kSR, at, &sh, {});
+    CHECK (e2.isEmpty(), "import printed: %s", e2.toRawUTF8());
+    auto m = readTape (*reel, 4);
+    double cs = 0, ss = 0;
+    for (size_t k = (size_t) at + 2000; k < end - 2000; ++k)
+    {
+        const double ref = 0.25 * (std::sin (2.0 * juce::MathConstants<double>::pi * 441.0 * ((double) (k - (size_t) at) / kSR))
+                                 + std::sin (2.0 * juce::MathConstants<double>::pi * 882.0 * ((double) (k - (size_t) at) / kSR)));
+        cs += (m[k] - ref) * (m[k] - ref); ss += ref * ref;
+    }
+    const double resid = 10.0 * std::log10 (cs / ss);
+    CHECK (resid < -20.0, "printed import stays aligned (residual %.1f dB)", resid);
+    std::printf ("    mono, printed through 456 tape: aligned (residual vs source %.1f dB)\n", resid);
+
+    // export track 3
+    auto out = dir.getChildFile ("t3.wav");
+    auto e3 = transfer::exportTrack (reel->getTapeFile (2), out, kSR, (int64) l.size() + 4800, nullptr, {});
+    CHECK (e3.isEmpty(), "export: %s", e3.toRawUTF8());
+    auto ex = readFile (out);
+    bool same = ex.size() == l.size() + 4800;
+    for (size_t k = 0; same && k < l.size(); ++k) same = std::abs (ex[k] - l[k]) < 1.0e-6f;
+    CHECK (same, "export is the tape, padded to the length");
+    std::printf ("    export: identical to the tape\n");
+
+    // flip: reversed about the reel length, twice = back
+    const int64 len = (int64) l.size();
+    CHECK (transfer::reverseFile (reel->getTapeFile (2), kSR, len, {}).isEmpty(), "flip");
+    auto f = readTape (*reel, 2);
+    bool rev = (int64) f.size() == len;
+    for (int64 k = 0; rev && k < len; ++k) rev = std::abs (f[(size_t) k] - l[(size_t) (len - 1 - k)]) < 1.0e-6f;
+    CHECK (rev, "flipped track plays backwards");
+    CHECK (transfer::reverseFile (reel->getTapeFile (2), kSR, len, {}).isEmpty(), "flip back");
+    auto back = readTape (*reel, 2);
+    {
+        size_t diff = 0, first = (size_t) -1; float worst = 0;
+        for (size_t k = 0; k < juce::jmin (back.size(), l.size()); ++k)
+            if (back[k] != l[k]) { ++diff; if (first == (size_t) -1) first = k; worst = juce::jmax (worst, std::abs (back[k] - l[k])); }
+        CHECK (back.size() == l.size() && worst < 1.0e-6f, "flipped back = original (%zu vs %zu, %zu differ from %zu, worst %g)", back.size(), l.size(), diff, first, (double) worst);
+    }
+    reel->markers.push_back ({ (int64) kSR, "A" });
+    reel->flipMetadata (len, false);
+    CHECK (reel->markers[0].position == len - (int64) kSR && reel->flipped, "markers flip with the tape");
+    std::printf ("    flip: reversed exactly, and back; markers follow\n");
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
     if (juce::SystemStats::getEnvironmentVariable ("HAWTHORNE_BENCH", {}).isNotEmpty()) { benchVarispeed(); return 0; }
+    if (auto only = juce::SystemStats::getEnvironmentVariable ("HAWTHORNE_ONLY", {}); only.isNotEmpty())
+    {
+        // quick runs of the newest tests
+        if (only.contains ("21")) testAutoPunchAndCycle();
+        if (only.contains ("22")) testImportExportFlip();
+        if (only.contains ("3"))  testTapeMachine();
+        std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURE(S)\n", failures);
+        return failures == 0 ? 0 : 1;
+    }
 
     testTapeMachine();
     testDiskOverflowKeepsAlignment();
@@ -1816,6 +2016,8 @@ int main()
     testTapeStock();
     testWind();
     testLifterDefeat();
+    testAutoPunchAndCycle();
+    testImportExportFlip();
    #if JUCE_LINUX || JUCE_MAC
     testCrashRecovery();
    #endif

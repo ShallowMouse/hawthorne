@@ -26,6 +26,8 @@ public:
 
     std::function<void (int track, bool arm)>                 onArm;
     std::function<void (int track)>                           onRenameRequest;
+    std::function<void (int track)>                           onMenuRequest;     // right-click: import / export
+    void mouseUp (const juce::MouseEvent& e) override { if (e.mods.isPopupMenu() && onMenuRequest) onMenuRequest (index); }
 
     static constexpr float meterAspect = 1.3f;
     static constexpr int   controlsHeight = 30;
