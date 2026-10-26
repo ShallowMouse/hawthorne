@@ -77,6 +77,7 @@ void TapeEngine::setReel (Reel* s)
     {
         setTempo (s->tempoBpm, s->beatsPerBar, s->barOne);
         clickOn = s->clickOn;
+        clickToMaster = s->clickToMaster;
         clickGain = (double) juce::Decibels::decibelsToGain (s->clickLevelDb);
         tcRate = s->tcRate;
         tcStart = s->tcStartSeconds;
@@ -588,7 +589,7 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
 
     // --- Click: on every beat of the reel's tempo, following the tape (and its speed)
     const double spb = tempoSpb.load (std::memory_order_relaxed);
-    if (rt != nullptr && ! rt->clickOut.empty() && clickOn.load (std::memory_order_relaxed) && spb > 0.0)
+    if (rt != nullptr && clickOn.load (std::memory_order_relaxed) && spb > 0.0)
     {
         float* cb = clickBuf.getWritePointer (0);
         juce::FloatVectorOperations::clear (cb, n);
@@ -596,7 +597,9 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         const double barOne = tempoBarOne.load (std::memory_order_relaxed);
         const int bpb = juce::jmax (1, tempoBpb.load (std::memory_order_relaxed));
         const float gain = (float) clickGain.load (std::memory_order_relaxed);
-        const double decay = std::exp (-1.0 / (0.012 * sr));
+        // The click is "on the tape": its pitch and length follow the tape speed (varispeed).
+        const double speed = isRolling ? juce::jlimit (0.25, 4.0, currentRate.load (std::memory_order_relaxed)) : 1.0;
+        const double decay = std::exp (-speed / (0.012 * sr));
 
         for (int k = 0; k < n; ++k)
         {
@@ -622,12 +625,18 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
             if (clickEnv > 1.0e-4)
             {
                 cb[k] = gain * (float) (clickEnv * std::sin (clickPhase));
-                clickPhase += juce::MathConstants<double>::twoPi * clickFreq / sr;
+                clickPhase += juce::MathConstants<double>::twoPi * clickFreq * speed / sr;
                 clickEnv *= decay;
             }
         }
         if (! isRolling) clickWasRolling = false;
         sendToOutputs (cb, rt->clickOut);
+        // Never to tape: the click only ever goes to device outputs, after the
+        // tracks and master have been recorded. Not into the master outs if they
+        // come back in as master returns (it would be recorded from there).
+        if (clickToMaster.load (std::memory_order_relaxed) && ! rt->hasReturns)
+            for (int side = 0; side < 2; ++side)              // option: also in the master outs (monitor only, never recorded)
+                sendToOutputs (cb, rt->masterOut[(size_t) side]);
     }
     else
     {
@@ -733,6 +742,12 @@ void TapeEngine::setClick (bool on, double levelDb)
     clickOn = on;
     clickGain = (double) juce::Decibels::decibelsToGain (levelDb);
     if (reel != nullptr) { reel->clickOn = on; reel->clickLevelDb = levelDb; saveReel(); }
+}
+
+void TapeEngine::setClickToMaster (bool on)
+{
+    clickToMaster = on;
+    if (reel != nullptr) { reel->clickToMaster = on; saveReel(); }
 }
 
 void TapeEngine::setClickOutputs (const ChannelList& outs)

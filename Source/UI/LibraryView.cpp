@@ -653,20 +653,44 @@ static double ipsFromIndex (int i) { return i == 0 ? 7.5 : i == 2 ? 30.0 : 15.0;
 // Tape stock picker: the four tapes first, "Clean" last. Set for the life of the reel.
 static int stockFromIndex (int i) { return i >= 0 && i < tape::numStocks - 1 ? i + 1 : 0; }
 static int indexFromStock (int s) { return s <= 0 ? tape::numStocks - 1 : s - 1; }
-static void addStockCombo (juce::AlertWindow& w, int stock)
+/** An AlertWindow that owns an extra description label (for the tape stock). */
+struct ReelDialog : juce::AlertWindow
+{
+    using juce::AlertWindow::AlertWindow;
+    std::unique_ptr<juce::Label> stockText;
+};
+
+static void addStockCombo (ReelDialog& w, int stock)
 {
     juce::StringArray names;
     for (int i = 0; i < tape::numStocks; ++i) names.add (tape::info ((tape::Stock) stockFromIndex (i)).name);
     w.addComboBox ("stock", names, "Tape stock (fixed for the life of the reel):");
     auto* c = w.getComboBoxComponent ("stock");
-    c->setSelectedItemIndex (indexFromStock (stock));
-    c->setTooltip (tape::info ((tape::Stock) stock).description);
-    c->onChange = [c] { c->setTooltip (tape::info ((tape::Stock) stockFromIndex (c->getSelectedItemIndex())).description); };
+    c->setSelectedItemIndex (indexFromStock (stock), juce::dontSendNotification);
+
+    // What this tape does to the sound, under the picker.
+    w.stockText = std::make_unique<juce::Label>();
+    auto* l = w.stockText.get();
+    l->setJustificationType (juce::Justification::topLeft);
+    l->setFont (juce::FontOptions (14.0f));
+    l->setColour (juce::Label::textColourId, Colours::text);
+    l->setMinimumHorizontalScale (1.0f);
+    l->setSize (420, 96);
+    auto update = [c, l]
+    {
+        const int s = stockFromIndex (c->getSelectedItemIndex());
+        juce::String t = tape::info ((tape::Stock) s).description;
+        if (s != 0) t << "\nSlower tape = bigger low bump, darker top, more hiss.";
+        l->setText (t, juce::dontSendNotification);
+    };
+    update();
+    c->onChange = update;
+    w.addCustomComponent (l);
 }
 
 void LibraryView::newSession()
 {
-    auto* w = new juce::AlertWindow ("New Session", "A session holds the reels for one job - an album, a single, a client.",
+    auto* w = new ReelDialog ("New Session", "A session holds the reels for one job - an album, a single, a client.",
                                      juce::MessageBoxIconType::NoIcon, this);
     w->addTextEditor ("name", "", "Session name:");
     w->addTextEditor ("artist", "", "Artist:");
@@ -736,7 +760,7 @@ void LibraryView::newReel()
     const int lastStock = s->reels.empty() ? 1 : s->reels.back().tapeStock;
     const auto sessionFile = s->file;
 
-    auto* w = new juce::AlertWindow ("New Reel", "Add a reel to \"" + s->name + "\".\nThe track count can't be changed later.",
+    auto* w = new ReelDialog ("New Reel", "Add a reel to \"" + s->name + "\".\nThe track count can't be changed later.",
                                      juce::MessageBoxIconType::NoIcon, this);
     juce::StringArray counts { "8", "16", "24", "32", "48", "64", "72", "96" };
     w->addComboBox ("tracks", counts, "Tracks:");

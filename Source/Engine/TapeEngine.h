@@ -78,6 +78,7 @@ public:
     void setTempo (double bpm, int beatsPerBar, double barOne) noexcept;
     /** Click on/off and level; it plays on the reel's click outputs (routing) while the tape rolls. */
     void setClick (bool on, double levelDb);
+    void setClickToMaster (bool on);        // also play the click in the master outputs
     void setClickOutputs (const ChannelList& deviceOutputs);
     /** Timecode format: rate and the timecode at tape zero. */
     void setTimecodeFormat (timecode::Rate, double startSeconds);
@@ -298,7 +299,7 @@ private:
     // Tempo / click (audio thread reads)
     std::atomic<double> tempoSpb { 0.0 }, tempoBarOne { 0.0 }, clickGain { 0.25 };
     std::atomic<int> tempoBpb { 4 };
-    std::atomic<bool> clickOn { false };
+    std::atomic<bool> clickOn { false }, clickToMaster { false };
     juce::int64 clickLastBeat = 0;
     bool clickWasRolling = false;
     double clickPhase = 0.0, clickEnv = 0.0, clickFreq = 1000.0;

@@ -51,15 +51,15 @@ namespace tape
     inline const StockInfo& info (Stock s)
     {
         static const StockInfo stocks[numStocks] = {
-            { "Clean (no tape)",          "CLEAN",         "No tape sound: the audio is stored exactly as it comes in.",
+            { "Clean (no tape)",          "CLEAN",         "No tape sound at all. Records bit-for-bit what comes in: no saturation, no EQ change, no hiss, no wow or flutter.",
               99.0, 0.0,   -200.0, -200.0, 0.0, 0.0, false },
-            { "US mastering (456-type)",  "456-TYPE +6",   "+6 dB elevated. Warm and thick in the low end, saturates musically. The 70s / 80s US studio tape.",
+            { "US mastering (456-type)",  "456-TYPE +6",   "Warm, fat and punchy. A strong low-end bump (around 60 Hz at 15 ips) and a slightly rounded top. Saturates fairly early and musically - push the levels for glue and thickness on drums and bass. Moderate hiss. The classic 70s / 80s rock sound.",
               12.0, 0.025, -58.0,  -63.0,  2.0, 0.5, false },
-            { "High output (GP9-type)",   "GP9-TYPE +9",   "+9 dB. More headroom, cleaner and tighter; the 90s tape.",
+            { "High output (GP9-type)",   "GP9-TYPE +9",   "Clean, tight and modern. The most headroom: you can hit it hard before it gets gritty, so it colours the least. Smaller low bump, full top end, low hiss. Tape glue without obvious distortion.",
               15.0, 0.015, -62.0,  -66.0,  1.5, 0.0, false },
-            { "Vintage 60s (250-type)",   "250-TYPE STD",  "Standard level. Breaks up early, softer top, more hiss: the 60s sound.",
+            { "Vintage 60s (250-type)",   "250-TYPE STD",  "Lo-fi and characterful. Breaks up soonest, with the most even-harmonic grit. Darker, softer top end, the biggest woolly low bump, and the most hiss and modulation noise. The 60s / garage sound.",
               8.0,  0.07,  -52.0,  -58.0,  2.5, 2.0, false },
-            { "European (911-type)",      "911-TYPE +9",   "+9 dB, low noise, firm low end, smooth top. CCIR equalisation.",
+            { "European (911-type)",      "911-TYPE +9",   "Smooth and polished. Lots of headroom, a firm but restrained low end and a silky top (European CCIR EQ). The quietest tape. Refined rather than vibey.",
               14.0, 0.02,  -63.0,  -67.0,  1.2, 0.3, true },
         };
         return stocks[juce::jlimit (0, numStocks - 1, (int) s)];

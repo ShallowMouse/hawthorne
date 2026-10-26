@@ -339,6 +339,7 @@ std::unique_ptr<juce::XmlElement> Reel::toXml() const
     auto* sy = root->createNewChildElement ("Sync");
     sy->setAttribute ("click", clickOn);
     sy->setAttribute ("clickLevel", clickLevelDb);
+    sy->setAttribute ("clickMaster", clickToMaster);
     sy->setAttribute ("clickOut", channelsToString (clickOutputs));
     sy->setAttribute ("ltcOut", channelsToString (ltcOutputs));
     sy->setAttribute ("ltcLevel", ltcLevelDb);
@@ -463,6 +464,7 @@ bool Reel::fromXml (const juce::XmlElement& root, juce::String& error)
     if (auto* sy = root.getChildByName ("Sync"))
     {
         clickOn        = sy->getBoolAttribute ("click", false);
+        clickToMaster  = sy->getBoolAttribute ("clickMaster", false);
         clickLevelDb   = juce::jlimit (-60.0, 0.0, sy->getDoubleAttribute ("clickLevel", -12.0));
         clickOutputs   = channelsFromString (sy->getStringAttribute ("clickOut"));
         ltcOutputs     = channelsFromString (sy->getStringAttribute ("ltcOut"));

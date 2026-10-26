@@ -46,6 +46,10 @@ SyncPanel::SyncPanel (Page p, TapeEngine& e, std::function<Reel*()> gr, std::fun
     clickLevel.setRange (-40.0, 0.0, 0.5);
     clickLevel.setTextValueSuffix (" dB");
     clickLevel.onValueChange = [this] { if (! updating) engine.setClick (clickOn.getToggleState(), clickLevel.getValue()); };
+    clickMaster.setTooltip ("Also play the click in the master outputs (your monitors). It is never recorded to the master.\n"
+                            "To send it somewhere else, use the CLICK row in the routing matrix.");
+    clickMaster.onClick = [this] { if (! updating) engine.setClickToMaster (clickMaster.getToggleState()); };
+    addAndMakeVisible (clickMaster);
     addAndMakeVisible (clickOn);
     addAndMakeVisible (clickLevel);
 
@@ -86,7 +90,7 @@ SyncPanel::SyncPanel (Page p, TapeEngine& e, std::function<Reel*()> gr, std::fun
     const bool isTempo = page == Page::tempo;
     for (juce::Component* c : { (juce::Component*) &bpm, (juce::Component*) &beats, (juce::Component*) &barOneButton,
                                 (juce::Component*) &tapButton, (juce::Component*) &clearTempo, (juce::Component*) &clickOn,
-                                (juce::Component*) &clickLevel })
+                                (juce::Component*) &clickLevel, (juce::Component*) &clickMaster })
         c->setVisible (isTempo);
     for (juce::Component* c : { (juce::Component*) &tcRate, (juce::Component*) &tcStart, (juce::Component*) &ltcLevel,
                                 (juce::Component*) &mtcOut, (juce::Component*) &chase })
@@ -135,6 +139,7 @@ void SyncPanel::refresh()
     beats.setSelectedId (r != nullptr ? r->beatsPerBar : 4, juce::dontSendNotification);
     clickOn.setToggleState (r != nullptr && r->clickOn, juce::dontSendNotification);
     clickLevel.setValue (r != nullptr ? r->clickLevelDb : -12.0, juce::dontSendNotification);
+    clickMaster.setToggleState (r != nullptr && r->clickToMaster, juce::dontSendNotification);
     ltcLevel.setValue (r != nullptr ? r->ltcLevelDb : -10.0, juce::dontSendNotification);
 
     const auto rate = engine.getTimecodeRate();
@@ -158,7 +163,7 @@ void SyncPanel::refresh()
     for (juce::Component* c : { (juce::Component*) &bpm, (juce::Component*) &beats, (juce::Component*) &barOneButton,
                                 (juce::Component*) &tapButton, (juce::Component*) &clearTempo, (juce::Component*) &clickOn,
                                 (juce::Component*) &clickLevel, (juce::Component*) &tcRate, (juce::Component*) &tcStart,
-                                (juce::Component*) &ltcLevel })
+                                (juce::Component*) &ltcLevel, (juce::Component*) &clickMaster })
         c->setEnabled (r != nullptr);
     updating = false;
     repaint();
@@ -234,7 +239,7 @@ void SyncPanel::paint (juce::Graphics& g)
     if (page == Page::tempo)
     {
         heading (tempoArea, "TEMPO", "Bars and beats show on the counter and the markers. A synced THOREAU sets this too.");
-        heading (clickArea, "CLICK", "Plays while the tape rolls, on the beats of the tempo above. Choose where it goes: ROUTING > CLICK.");
+        heading (clickArea, "CLICK", "Monitor only - never written to tape. Goes to ROUTING > CLICK outputs and/or the master outs (tick below).");
         g.setFont (monoFont (11.0f, true));
         g.setColour (Colours::textDim);
         g.drawText ("BPM", bpm.getBounds().translated (0, -16).withHeight (14), juce::Justification::centredLeft);
@@ -313,7 +318,8 @@ void SyncPanel::resized()
     {
         auto a = clickArea.withTrimmedTop (42).removeFromTop (28);
         clickOn.setBounds (a.removeFromLeft (100));      a.removeFromLeft (10);
-        clickLevel.setBounds (a.removeFromLeft (300));
+        clickLevel.setBounds (a.removeFromLeft (300));   a.removeFromLeft (16);
+        clickMaster.setBounds (a.removeFromLeft (230));
     }
 
 }

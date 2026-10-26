@@ -53,7 +53,7 @@ private:
     juce::TextEditor bpm, tcStart;
     juce::ComboBox beats, tcRate, mtcOut, chase, ltcIn, mtcIn;
     juce::TextButton barOneButton { "BAR 1 = PLAYHEAD" }, tapButton { "TAP" }, clearTempo { "NO TEMPO" };
-    juce::ToggleButton clickOn { "Click" };
+    juce::ToggleButton clickOn { "Click" }, clickMaster { "In master outs" };
     juce::Slider clickLevel { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight },
                  ltcLevel   { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
     juce::Array<double> taps;

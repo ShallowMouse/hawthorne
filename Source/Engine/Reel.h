@@ -150,6 +150,7 @@ public:
     // Click and timecode (kept with the reel)
     bool   clickOn = false;
     double clickLevelDb = -12.0;
+    bool   clickToMaster = false;   // also send the click to the master outputs (not recorded)
     ChannelList clickOutputs;          // device outputs for the click
     ChannelList ltcOutputs;            // device outputs for LTC timecode
     double ltcLevelDb = -10.0;
