@@ -74,7 +74,7 @@ public:
     /** Creates <parentFolder>/<name>/<name>.reel plus its Audio folder. The track count is fixed for life. */
     static std::unique_ptr<Reel> create (const juce::File& parentFolder, const juce::String& name,
                                             double sampleRate, int numTracks, juce::String& error,
-                                            double ips = 15.0);
+                                            double ips = 15.0, int tapeStock = 0);
 
     /** Loads a reel, repairs any tape left mid-write by a crash and evens up tape lengths. */
     static std::unique_ptr<Reel> load (const juce::File& reelFile, juce::String& error);
@@ -137,6 +137,7 @@ public:
     // Speed. The reel's speed is the one it was recorded at (fixed for life);
     // the deck can run it at another speed and/or varispeed, like a real machine.
     double ips = 15.0;             // 7.5, 15 or 30
+    int    tapeStock = 0;          // tape::Stock, chosen when the reel is made, fixed for life (0 = clean)
     double deckIps = 15.0;
     bool   variOn = false;
     double variPercent = 0.0;      // -50 .. +50

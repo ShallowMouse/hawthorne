@@ -1584,7 +1584,8 @@ void MainComponent::paint (juce::Graphics& g)
                 sessionArea, juce::Justification::centredLeft, true);
     g.setColour (Colours::textDim);
     g.setFont (monoFont (11.0f));
-    g.drawText (juce::String (reel != nullptr ? reel->numTracks : 0) + "-TRACK  v" HAWTHORNE_VERSION,
+    g.drawText ((reel != nullptr ? juce::String (tape::info ((tape::Stock) reel->tapeStock).label) + "  " : juce::String())
+                  + juce::String (reel != nullptr ? reel->numTracks : 0) + "-TRACK  v" HAWTHORNE_VERSION,
                 sessionArea, juce::Justification::centredRight);
 
     // Transport deck

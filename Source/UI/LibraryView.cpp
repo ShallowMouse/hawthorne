@@ -2,6 +2,7 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 #include "SessionSheet.h"   // Paper colours
 #include "UIHelpers.h"
+#include "../Engine/TapeStock.h"
 
 namespace hawthorne
 {
@@ -419,7 +420,7 @@ public:
         if (! reel->masters.isEmpty())
             field ("MASTERS", reel->masters.joinIntoString (",  "));
         field ("SPEED", Reel::formatIps (reel->ips) + " ips");
-        field ("TAPE", juce::StringArray { reel->info["Tape Stock"], reel->info["EQ"], reel->info["Noise Reduction"] }
+        field ("TAPE", juce::StringArray { tape::info ((tape::Stock) reel->tapeStock).label, reel->info["EQ"], reel->info["Noise Reduction"] }
                             .joinIntoString ("  ").trim());
 
         // tracks on the tape
@@ -649,6 +650,20 @@ void LibraryView::updateSelection()
 //==============================================================================
 static double ipsFromIndex (int i) { return i == 0 ? 7.5 : i == 2 ? 30.0 : 15.0; }
 
+// Tape stock picker: the four tapes first, "Clean" last. Set for the life of the reel.
+static int stockFromIndex (int i) { return i >= 0 && i < tape::numStocks - 1 ? i + 1 : 0; }
+static int indexFromStock (int s) { return s <= 0 ? tape::numStocks - 1 : s - 1; }
+static void addStockCombo (juce::AlertWindow& w, int stock)
+{
+    juce::StringArray names;
+    for (int i = 0; i < tape::numStocks; ++i) names.add (tape::info ((tape::Stock) stockFromIndex (i)).name);
+    w.addComboBox ("stock", names, "Tape stock (fixed for the life of the reel):");
+    auto* c = w.getComboBoxComponent ("stock");
+    c->setSelectedItemIndex (indexFromStock (stock));
+    c->setTooltip (tape::info ((tape::Stock) stock).description);
+    c->onChange = [c] { c->setTooltip (tape::info ((tape::Stock) stockFromIndex (c->getSelectedItemIndex())).description); };
+}
+
 void LibraryView::newSession()
 {
     auto* w = new juce::AlertWindow ("New Session", "A session holds the reels for one job - an album, a single, a client.",
@@ -659,6 +674,7 @@ void LibraryView::newSession()
     w->getComboBoxComponent ("tracks")->setSelectedItemIndex (2);
     w->addComboBox ("ips", { juce::String (juce::CharPointer_UTF8 ("7\xc2\xbd ips")), "15 ips", "30 ips" }, "Tape speed:");
     w->getComboBoxComponent ("ips")->setSelectedItemIndex (1);
+    addStockCombo (*w, 1);
     w->addButton ("Create", 1, juce::KeyPress (juce::KeyPress::returnKey));
     w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
@@ -699,7 +715,8 @@ void LibraryView::newSession()
         }
 
         const double ips = ipsFromIndex (w->getComboBoxComponent ("ips")->getSelectedItemIndex());
-        auto reel = s->createReel (tracks, getSampleRate ? getSampleRate() : 48000.0, err, ips);
+        const int stock = stockFromIndex (w->getComboBoxComponent ("stock")->getSelectedItemIndex());
+        auto reel = s->createReel (tracks, getSampleRate ? getSampleRate() : 48000.0, err, ips, stock);
         if (reel == nullptr) { showError ("New Session", err); return; }
 
         const auto file = reel->getFile();
@@ -716,6 +733,7 @@ void LibraryView::newReel()
 
     const int lastTracks = s->reels.empty() ? kDefaultTracks : s->reels.back().numTracks;
     const double lastIps = s->reels.empty() ? 15.0 : s->reels.back().ips;
+    const int lastStock = s->reels.empty() ? 1 : s->reels.back().tapeStock;
     const auto sessionFile = s->file;
 
     auto* w = new juce::AlertWindow ("New Reel", "Add a reel to \"" + s->name + "\".\nThe track count can't be changed later.",
@@ -725,6 +743,7 @@ void LibraryView::newReel()
     w->getComboBoxComponent ("tracks")->setSelectedItemIndex (juce::jmax (0, counts.indexOf (juce::String (lastTracks))));
     w->addComboBox ("ips", { juce::String (juce::CharPointer_UTF8 ("7\xc2\xbd ips")), "15 ips", "30 ips" }, "Tape speed:");
     w->getComboBoxComponent ("ips")->setSelectedItemIndex (lastIps == 7.5 ? 0 : lastIps == 30.0 ? 2 : 1);
+    addStockCombo (*w, lastStock);
     w->addButton ("Create", 1, juce::KeyPress (juce::KeyPress::returnKey));
     w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
@@ -736,7 +755,8 @@ void LibraryView::newReel()
         juce::String err;
         auto session = Session::load (sessionFile, err);
         const double ips = ipsFromIndex (w->getComboBoxComponent ("ips")->getSelectedItemIndex());
-        auto reel = session != nullptr ? session->createReel (tracks, getSampleRate ? getSampleRate() : 48000.0, err, ips) : nullptr;
+        const int stock = stockFromIndex (w->getComboBoxComponent ("stock")->getSelectedItemIndex());
+        auto reel = session != nullptr ? session->createReel (tracks, getSampleRate ? getSampleRate() : 48000.0, err, ips, stock) : nullptr;
         if (reel == nullptr) { showError ("New Reel", err); return; }
 
         const auto file = reel->getFile();

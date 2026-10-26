@@ -180,13 +180,13 @@ juce::Array<juce::File> Session::getReelFiles() const
     return reels;
 }
 
-std::unique_ptr<Reel> Session::createReel (int numTracks, double sampleRate, juce::String& error, double ips)
+std::unique_ptr<Reel> Session::createReel (int numTracks, double sampleRate, juce::String& error, double ips, int tapeStock)
 {
     int n = 1;
     while (getFolder().getChildFile (reelFolderName (n)).exists())
         ++n;
 
-    return Reel::create (getFolder(), reelFolderName (n), sampleRate, numTracks, error, ips);
+    return Reel::create (getFolder(), reelFolderName (n), sampleRate, numTracks, error, ips, tapeStock);
 }
 
 //==============================================================================

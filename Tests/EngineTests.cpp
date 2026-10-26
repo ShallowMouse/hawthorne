@@ -967,6 +967,145 @@ static void testVarispeed()
 }
 
 //==============================================================================
+// Tape stock: printed on record. Must stay sample-aligned (the oversampler's
+// delay is compensated), near unity at low level, saturate when hit hard,
+// and the repro side adds hiss. Clean reels are covered bit-exact above.
+struct SignalDevice : juce::Thread
+{
+    SignalDevice (TapeEngine& e, std::function<float (int64)> f) : juce::Thread ("SigAudio"), engine (e), sig (std::move (f)) {}
+    ~SignalDevice() override { stopThread (5000); }
+    void run() override
+    {
+        const int n = 256;
+        juce::AudioBuffer<float> in (kDefaultTracks, n), out (2, n);
+        in.clear();
+        const double t0 = juce::Time::getMillisecondCounterHiRes();
+        int64 rendered = 0;
+        while (! threadShouldExit())
+        {
+            for (int k = 0; k < n; ++k) in.setSample (0, k, sig (clock + k));
+            const auto pos = engine.getPosition();
+            const bool rolling = engine.isPlaying();
+            engine.process (in.getArrayOfReadPointers(), kDefaultTracks, out.getArrayOfWritePointers(), 2, n);
+            if (rolling && engine.isRecording() && ! mapped.load()) { posAt = pos; clockAt = clock; mapped = true; }
+            if (rolling && capture.load())
+                for (int k = 0; k < n; ++k) captured.push_back (out.getSample (0, k));
+            clock += n; rendered += n;
+            const double due = t0 + (double) rendered / kSR * 1000.0 / testSpeed();
+            const double now = juce::Time::getMillisecondCounterHiRes();
+            if (due > now) juce::Thread::sleep ((int) (due - now));
+        }
+    }
+    TapeEngine& engine;
+    std::function<float (int64)> sig;
+    int64 clock = 0;
+    std::atomic<bool> mapped { false }, capture { false };
+    std::atomic<int64> posAt { 0 }, clockAt { 0 };
+    std::vector<float> captured;
+};
+
+static double toneLevel (const Tape& d, size_t from, size_t len, double f)
+{
+    double re = 0, im = 0;
+    for (size_t k = 0; k < len; ++k)
+    {
+        const double w = 0.5 - 0.5 * std::cos (juce::MathConstants<double>::twoPi * (double) k / (double) len);
+        const double ph = juce::MathConstants<double>::twoPi * f * (double) k / kSR;
+        re += w * d[from + k] * std::cos (ph); im += w * d[from + k] * std::sin (ph);
+    }
+    return 20.0 * std::log10 (juce::jmax (1.0e-12, 4.0 * std::sqrt (re * re + im * im) / (double) len));
+}
+
+static void testTapeStock()
+{
+    std::printf ("[18] tape stock: printed on record, aligned, saturates, hiss\n");
+    for (int stock = 1; stock <= 4; ++stock)
+    {
+        const auto& si = tape::info ((tape::Stock) stock);
+        for (double amp : { 0.0316, 0.5 })      // -30 dBFS and -6 dBFS
+        {
+            juce::String err;
+            auto reel = Reel::create (makeTempDir ("stock"), "Stock", kSR, kDefaultTracks, err, 15.0, stock);
+            CHECK (reel != nullptr && reel->tapeStock == stock, "reel keeps its stock");
+            auto sig = [amp] (int64 c) { const double t = (double) c / kSR; return (float) (amp * (0.6 * std::sin (6.2831853 * 997.0 * t) + 0.25 * std::sin (6.2831853 * 211.3 * t) + 0.15 * std::sin (6.2831853 * 3001.0 * t))); };
+            auto pure = [amp] (int64 c) { return (float) (amp * std::sin (6.2831853 * 997.0 * (double) c / kSR)); };
+            const bool hard = amp > 0.1;
+            TapeEngine e;
+            e.setReel (reel.get());
+            prepareEngine (e, 256);
+            e.setInput (0, 0);
+            e.setArmed (0, true);
+            SignalDevice dev (e, hard ? std::function<float (int64)> (pure) : std::function<float (int64)> (sig));
+            dev.startThread();
+            juce::Thread::sleep (50);
+            e.locate (4800);
+            CHECK (e.record().isEmpty(), "record on stock");
+            pump (e, (int) (2500 / testSpeed()));
+            e.stop();
+            dev.stopThread (5000);
+
+            const auto got = readTape (*reel, 0);
+            const int64 offset = dev.clockAt.load() - dev.posAt.load() + kLat;   // tape Q <- input clock Q + offset
+            int64 first = -1, last = -1;
+            for (size_t k = 0; k < got.size(); ++k) if (got[k] != 0.0f) { if (first < 0) first = (int64) k; last = (int64) k; }
+            const auto& f = hard ? std::function<float (int64)> (pure) : std::function<float (int64)> (sig);
+            double best = 1e9; int bestLag = 99;
+            for (int lag = -3; lag <= 3; ++lag)
+            {
+                double es = 0, ss = 0;
+                for (int64 q = first + 2000; q < last - 2000; ++q)
+                {
+                    const double r = f (q + offset + lag);
+                    es += (got[(size_t) q] - r) * (got[(size_t) q] - r); ss += r * r;
+                }
+                const double db = 10.0 * std::log10 (juce::jmax (1.0e-30, es / juce::jmax (1.0e-30, ss)));
+                if (db < best) { best = db; bestLag = lag; }
+            }
+            if (! hard)
+            {
+                CHECK (bestLag == 0 && best < -30.0, "%s -30 dBFS: lag %d, residual %.1f dB", si.name, bestLag, best);
+                std::printf ("    %-20s -30 dBFS: aligned (lag %d), residual vs input %6.1f dB\n", si.name, bestLag, best);
+            }
+            else
+            {
+                const size_t from = (size_t) first + 4000, len = 16384;
+                const double h1 = toneLevel (got, from, len, 997.0), h2 = toneLevel (got, from, len, 1994.0), h3 = toneLevel (got, from, len, 2991.0);
+                CHECK (bestLag == 0 && h3 - h1 > -50.0 && h3 - h1 < -10.0 && std::abs (h1 + 6.0) < 1.5,
+                       "%s -6 dBFS: lag %d, fund %.1f, H2 %.1f, H3 %.1f", si.name, bestLag, h1, h2 - h1, h3 - h1);
+                std::printf ("    %-20s  -6 dBFS: aligned (lag %d), H2 %6.1f dB  H3 %6.1f dB\n", si.name, bestLag, h2 - h1, h3 - h1);
+            }
+            e.setReel (nullptr);
+        }
+    }
+
+    // Repro: hiss on a stock reel, silence on a clean one.
+    for (int stock : { 0, 1 })
+    {
+        juce::String err;
+        auto reel = Reel::create (makeTempDir ("hiss"), "Hiss", kSR, kDefaultTracks, err, 15.0, stock);
+        writeSineTape (reel->getTapeFile (0), 1000.0, 5.0, 0.0f);
+        TapeEngine e;
+        e.setReel (reel.get());
+        prepareEngine (e, 256);
+        for (int t = 0; t < kDefaultTracks; ++t) e.setTrackToMix (t, t == 0);
+        SignalDevice dev (e, [] (int64) { return 0.0f; });
+        dev.startThread();
+        e.locate (0);
+        dev.capture = true;
+        e.play();
+        pump (e, (int) (2000 / testSpeed()));
+        e.stop();
+        dev.stopThread (5000);
+        double ss = 0; for (auto v : dev.captured) ss += (double) v * v;
+        const double db = 10.0 * std::log10 (juce::jmax (1.0e-30, ss / juce::jmax<size_t> (1, dev.captured.size())));
+        if (stock == 0) CHECK (ss == 0.0, "clean reel: no hiss (%.1f dB)", db);
+        else            CHECK (db > -95.0 && db < -50.0, "stock hiss %.1f dB", db);
+        std::printf ("    playback of blank tape, %-12s %s\n", stock == 0 ? "clean:" : "US mastering:", stock == 0 ? "digital silence" : juce::String (db, 1).toRawUTF8());
+        e.setReel (nullptr);
+    }
+}
+
+//==============================================================================
 // Hawthorne Link: a simulated network between a sender and the receiver,
 // with its own sample clock, bursty sends, jitter and packet loss.
 struct LinkSim
@@ -1589,6 +1728,7 @@ int main()
     testNetworkLink();
     testTempoClickTimecode();
     testTapeSync();
+    testTapeStock();
    #if JUCE_LINUX || JUCE_MAC
     testCrashRecovery();
    #endif

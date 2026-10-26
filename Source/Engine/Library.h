@@ -17,6 +17,7 @@ struct ReelSummary
     juce::StringArray trackNames;     // recorded / named tracks, for the box
     juce::StringArray masters;        // master mixes on the reel
     double ips = 15.0;                // speed it was recorded at
+    int tapeStock = 0;                // tape::Stock
     juce::uint32 colour = 0;          // its own box colour (ARGB), 0 = the session's
     std::vector<TakeEntry> takes;
     bool archived = false;

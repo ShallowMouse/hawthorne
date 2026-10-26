@@ -38,7 +38,7 @@ public:
     juce::Array<juce::File> getReelFiles() const;
 
     /** Adds the next reel ("Reel 02" ...). */
-    std::unique_ptr<Reel> createReel (int numTracks, double sampleRate, juce::String& error, double ips = 15.0);
+    std::unique_ptr<Reel> createReel (int numTracks, double sampleRate, juce::String& error, double ips = 15.0, int tapeStock = 0);
 
     static const juce::StringArray& infoFields();
     juce::StringPairArray info;

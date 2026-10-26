@@ -6,6 +6,7 @@
 #include "RecordingStream.h"
 #include "Varispeed.h"
 #include "Timecode.h"
+#include "TapeStock.h"
 #include "../Network/NetReceiver.h"
 #include <map>
 
@@ -325,6 +326,23 @@ private:
     std::atomic<juce::int64> pubClock { 0 };
     std::atomic<double> pubMs { 0.0 }, pubTapePos { 0.0 }, pubRate { 0.0 };
     std::atomic<bool> pubRolling { false };
+
+    // Tape emulation (the reel's stock)
+    std::atomic<int> tapeStock { 0 };
+    std::atomic<double> reelIps { 15.0 };
+    std::atomic<bool> tapeReset { true };
+    tape::Shared tapeShared;                            // audio thread
+    double tapeSharedIps = -1.0;
+    int tapeSharedStock = -1;
+    std::unique_ptr<std::array<tape::RecordChannel, kMaxTracks>> tapeRec;
+    std::unique_ptr<std::array<tape::PlaybackChannel, kMaxTracks>> tapePlay;
+    tape::WowFlutter wowFlutter;
+    double wfPrev = 1.0;
+    juce::HeapBlock<float> tapeRecBuf;
+public:
+    /** The record path's added latency for this reel's stock (compensated when recording). */
+    int getTapeLatency() const noexcept { return tapeStock.load() != 0 ? tape::HalfBand::latency : 0; }
+private:
 
     juce::HeapBlock<double> tapePosBuf;                 // tape position of every sample in a block
     juce::AudioBuffer<float> clickBuf;

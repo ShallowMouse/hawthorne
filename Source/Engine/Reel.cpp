@@ -29,7 +29,7 @@ namespace
 //==============================================================================
 std::unique_ptr<Reel> Reel::create (const juce::File& parentFolder, const juce::String& name,
                                           double sampleRate, int numTracks, juce::String& error,
-                                          double ips)
+                                          double ips, int tapeStock)
 {
     const auto cleanName = juce::File::createLegalFileName (name.trim());
 
@@ -52,6 +52,7 @@ std::unique_ptr<Reel> Reel::create (const juce::File& parentFolder, const juce::
     s->sampleRate  = sampleRate > 0 ? sampleRate : 48000.0;
     s->numTracks   = juce::jlimit (1, kMaxTracks, numTracks);
     s->ips = s->deckIps = (ips == 7.5 || ips == 30.0) ? ips : 15.0;
+    s->tapeStock = juce::jlimit (0, 4, tapeStock);
     initDefaultTracks (s->tracks);
     s->info.set ("Reel No.", cleanName.retainCharacters ("0123456789").trimCharactersAtStart ("0"));
     s->info.set ("Date", juce::Time::getCurrentTime().formatted ("%d %b %Y"));
@@ -124,7 +125,7 @@ std::unique_ptr<Reel> Reel::load (const juce::File& file, juce::String& error)
 //==============================================================================
 const juce::StringArray& Reel::infoFields()
 {
-    static const juce::StringArray fields { "Reel No.", "Date", "Tape Stock", "EQ",
+    static const juce::StringArray fields { "Reel No.", "Date", "EQ",
                                             "Alignment", "Noise Reduction", "Tones", "Reel Notes" };
     return fields;
 }
@@ -301,6 +302,7 @@ std::unique_ptr<juce::XmlElement> Reel::toXml() const
     root->setAttribute ("numTracks", numTracks);
     root->setAttribute ("nextTake", nextTake);
     root->setAttribute ("ips", ips);
+    root->setAttribute ("stock", tapeStock);
     auto* deck = root->createNewChildElement ("Deck");
     deck->setAttribute ("ips", deckIps);
     deck->setAttribute ("vari", variOn);
@@ -393,6 +395,7 @@ bool Reel::fromXml (const juce::XmlElement& root, juce::String& error)
     nextTake   = juce::jmax (1, root.getIntAttribute ("nextTake", 1));
 
     auto validIps = [] (double v) { return v == 7.5 || v == 15.0 || v == 30.0; };
+    tapeStock = juce::jlimit (0, 4, root.getIntAttribute ("stock", 0));   // older reels: clean
     ips = root.getDoubleAttribute ("ips", 0.0);
     if (! validIps (ips))
     {

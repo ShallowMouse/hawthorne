@@ -33,6 +33,8 @@ TapeEngine::TapeEngine()
 
     masterPeak[0] = masterPeak[1] = 0.0f;
     absToActiveOut.fill (-1);
+    tapeRec = std::make_unique<std::array<tape::RecordChannel, kMaxTracks>>();
+    tapePlay = std::make_unique<std::array<tape::PlaybackChannel, kMaxTracks>>();
     rebuildRouting();
 }
 
@@ -68,6 +70,9 @@ void TapeEngine::setReel (Reel* s)
         s->activeMaster = s->masters.empty() ? -1 : 0;
     masterArmedFlag   = s != nullptr && s->masterArmed && s->activeMaster >= 0;
     targetRate = currentRate = s != nullptr ? s->getSpeedRatio() : 1.0;
+    tapeStock = s != nullptr ? s->tapeStock : 0;
+    reelIps = s != nullptr ? s->ips : 15.0;
+    tapeReset = true;
     if (s != nullptr)
     {
         setTempo (s->tempoBpm, s->beatsPerBar, s->barOne);
@@ -113,6 +118,8 @@ void TapeEngine::prepare (double sampleRate, int maxBlockSize,
     vsSpan.calloc ((size_t) std::ceil (vsChunk * maxSpeedRatio) + (size_t) (2 * vsMaxHalfSpan) + 16);
     vsOffset.calloc ((size_t) vsChunk);
     tapePosBuf.calloc ((size_t) vsChunk);
+    tapeRecBuf.calloc ((size_t) juce::jmax (vsChunk, maxBlock));
+    tapeReset = true;
     clickBuf.setSize (2, maxBlock);
     clickBuf.clear();
     ltcEncoder.prepare (sampleRate);
@@ -304,9 +311,48 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     }
     currentRate.store (r1, std::memory_order_relaxed);
 
+    // Tape: the stock's settings for the speed the tape is really running at,
+    // and transport wow & flutter while playing back (held steady while recording).
+    const int stockNow = tapeStock.load (std::memory_order_relaxed);
+    const bool tapeOn = stockNow != 0;
+    if (tapeReset.exchange (false))
+    {
+        for (int t = 0; t < kMaxTracks; ++t)
+        {
+            (*tapeRec)[(size_t) t].reset (0x1234567u + (uint32_t) t * 7919u);
+            (*tapePlay)[(size_t) t].reset (0x7654321u + (uint32_t) t * 104729u);
+        }
+        tapeSharedStock = -1;
+    }
+    if (tapeOn)
+    {
+        const double sr = juce::jmax (1000.0, deviceSampleRate.load (std::memory_order_relaxed));
+        const double ips = reelIps.load (std::memory_order_relaxed) * (isRolling ? r1 : targetRate.load (std::memory_order_relaxed));
+        if (stockNow != tapeSharedStock || std::abs (ips - tapeSharedIps) > 0.003 * ips || tapeShared.sr != sr)
+        {
+            tapeShared.set ((tape::Stock) stockNow, ips, sr);
+            tapeSharedStock = stockNow;
+            tapeSharedIps = ips;
+        }
+        if (isRolling && rp == nullptr)
+        {
+            const double w1 = wowFlutter.next (ips, sr, n);
+            r0 *= wfPrev;
+            r1 *= w1;
+            wfPrev = w1;
+        }
+        else
+            wfPrev = 1.0;
+    }
+    else
+        wfPrev = 1.0;
+
     // First block of a record pass: decide how it goes to tape.
     if (rp != nullptr && rp->mode.load (std::memory_order_relaxed) == 0)
     {
+        for (int t = 0; t < kMaxTracks; ++t)
+            if (rp->streams[(size_t) t] != nullptr)
+                (*tapeRec)[(size_t) t].reset (0x1234567u + (uint32_t) t * 7919u);   // a fresh pass starts clean
         if (rp->rate == 1.0 && posFrac == 0.0)
         {
             rp->trackStart.store (pos - rp->latency);
@@ -438,8 +484,15 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         if (rp != nullptr)
             if (auto* stream = rp->streams[(size_t) t].get())
             {
-                if (resampledRec) rp->trackRs.push (rp->rsChannel[(size_t) t], src, n);
-                else              stream->push (src != nullptr ? src : zeros.getReadPointer (0), n);
+                const float* toTape = src != nullptr ? src : zeros.getReadPointer (0);
+                if (tapeOn)
+                {
+                    // the tape's record side, printed into the file
+                    (*tapeRec)[(size_t) t].process (tapeShared, src, tapeRecBuf.get(), n);
+                    toTape = tapeRecBuf.get();
+                }
+                if (resampledRec) rp->trackRs.push (rp->rsChannel[(size_t) t], toTape, n);
+                else              stream->push (toTape, n);
             }
 
         // --- Playback from tape
@@ -447,6 +500,8 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         //  for a seamless punch-out.)
         float* tb = trackBuffers.getWritePointer (t);
         const bool hasTape = isRolling && g != nullptr && readTape (g->tracks[(size_t) t], tb);
+        if (hasTape && tapeOn)
+            (*tapePlay)[(size_t) t].process (tapeShared, tb, n);      // repro head: bump, top, hiss
 
         // --- Tape-style auto input: armed tracks hear the input when stopped or
         //     recording, and hear tape when just playing back.
@@ -1160,7 +1215,7 @@ juce::String TapeEngine::beginRecordPass()
     const int flushInterval = (int) (sr * flushIntervalSeconds);
 
     auto p = std::make_unique<RecordPass>();
-    p->latency = getRoundTrip();
+    p->latency = getRoundTrip() + getTapeLatency();     // the tape's record side adds a fixed delay
     p->masterLatency = getMasterBusLatency();
     p->rate = targetRate.load();
     p->rsChannel.fill (-1);
