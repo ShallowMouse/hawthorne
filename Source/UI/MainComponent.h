@@ -118,7 +118,7 @@ private:
     void toggleFullScreen();
 
     // Tempo, click, timecode
-    void showSync();
+    void showSync (SyncPanel::Page);
     void tempoEdited();
     void loadSyncSettings();
     void applySyncSettings (const SyncPanel::Settings&);
@@ -165,7 +165,7 @@ private:
     std::unique_ptr<Session> session;    // the session it belongs to
 
     juce::TextButton libraryButton { "LIBRARY" }, sheetButton { "SESSION SHEET" },
-                     routingButton { "ROUTING" }, networkButton { "NETWORK" }, syncButton { "SYNC" }, audioButton { "AUDIO SETTINGS" }, updateButton;
+                     routingButton { "ROUTING" }, networkButton { "NETWORK" }, syncButton { "TEMPO" }, timecodeButton { "TIMECODE" }, audioButton { "AUDIO SETTINGS" }, updateButton;
     Updater updater;
 
     TransportKey rtzKey  { "RTZ",  "Return to zero (Enter)",          Colours::mustard },
@@ -175,7 +175,7 @@ private:
                  playKey { "PLAY", "Play (Space)",                    Colours::mustard },
                  recKey  { "REC",  "Record / punch in-out (R)",       Colours::red },
                  markKey { "MARK", "Drop a marker here (M)",          Colours::mustard },
-                 clickKey { "CLICK", "Click on / off (needs a tempo - SYNC)", Colours::mustard };
+                 clickKey { "CLICK", "Click on / off (needs a tempo - TEMPO)", Colours::mustard };
 
     juce::Viewport bridgeView;
     MeterBridge bridge;
@@ -199,7 +199,7 @@ private:
 
     std::unique_ptr<RoutingWindow> routingWindow;
     std::unique_ptr<NetworkWindow> networkWindow;
-    std::unique_ptr<SyncWindow> syncWindow;
+    std::unique_ptr<SyncWindow> tempoWindow, timecodeWindow;
     juce::String netInputsKey;
     std::unique_ptr<SessionSheetWindow> sheetWindow;
     std::unique_ptr<juce::FileChooser> chooser;

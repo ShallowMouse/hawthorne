@@ -25,7 +25,8 @@ public:
         juce::String mtcIn;                       // MIDI input identifier
     };
 
-    SyncPanel (TapeEngine&, std::function<Reel*()> getReel, std::function<Settings()> getSettings);
+    enum class Page { tempo, timecode };     // TEMPO: tempo + click.  TIMECODE: timecode out + chase.
+    SyncPanel (Page, TapeEngine&, std::function<Reel*()> getReel, std::function<Settings()> getSettings);
 
     std::function<void()> onTempoChanged;         // reel tempo edited here
     std::function<void (const Settings&)> onSettingsChanged;
@@ -44,6 +45,7 @@ private:
     void applySettings();
     void fillMidi();
 
+    const Page page;
     TapeEngine& engine;
     std::function<Reel*()> getReel;
     std::function<Settings()> getSettings;
@@ -68,14 +70,15 @@ private:
 class SyncWindow : public juce::DocumentWindow
 {
 public:
-    SyncWindow (TapeEngine& e, std::function<Reel*()> gr, std::function<SyncPanel::Settings()> gs)
-        : juce::DocumentWindow ("Hawthorne - Tempo, Click & Timecode", Colours::panel, juce::DocumentWindow::closeButton),
-          panel (e, std::move (gr), std::move (gs))
+    SyncWindow (SyncPanel::Page page, TapeEngine& e, std::function<Reel*()> gr, std::function<SyncPanel::Settings()> gs)
+        : juce::DocumentWindow (page == SyncPanel::Page::tempo ? "Hawthorne - Tempo & Click" : "Hawthorne - Timecode",
+                                Colours::panel, juce::DocumentWindow::closeButton),
+          panel (page, e, std::move (gr), std::move (gs))
     {
         setUsingNativeTitleBar (true);
         setContentNonOwned (&panel, false);
         setResizable (false, false);
-        centreWithSize (760, 600);
+        centreWithSize (760, page == SyncPanel::Page::tempo ? 280 : 320);
     }
     ~SyncWindow() override { clearContentComponent(); }
     SyncPanel& getPanel() { return panel; }

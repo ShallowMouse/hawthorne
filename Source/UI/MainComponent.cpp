@@ -88,7 +88,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     juce::LookAndFeel::setDefaultLookAndFeel (&lnf);
     setWantsKeyboardFocus (true);
 
-    for (auto* b : { &libraryButton, &sheetButton, &routingButton, &networkButton, &syncButton, &audioButton })
+    for (auto* b : { &libraryButton, &sheetButton, &routingButton, &networkButton, &syncButton, &timecodeButton, &audioButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (b);
@@ -97,8 +97,10 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     sheetButton.onClick   = [this] { showSheet(); };
     routingButton.onClick = [this] { showRouting(); };
     networkButton.onClick = [this] { showNetwork(); };
-    syncButton.onClick = [this] { showSync(); };
-    syncButton.setTooltip ("Tempo, click, timecode out (LTC / MTC) and chase");
+    syncButton.onClick = [this] { showSync (SyncPanel::Page::tempo); };
+    syncButton.setTooltip ("Tempo, bars and beats, click");
+    timecodeButton.onClick = [this] { showSync (SyncPanel::Page::timecode); };
+    timecodeButton.setTooltip ("Timecode out (LTC / MTC) and chase");
     fullScreenButton.onClick = [this] { toggleFullScreen(); };
     fullScreenButton.setTooltip ("Full screen (F11)");
     fullScreenButton.setWantsKeyboardFocus (false);
@@ -118,9 +120,9 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     clickKey.onClick = [this]
     {
         if (reel == nullptr) return;
-        if (reel->tempoBpm <= 0.0) { showSync(); return; }      // needs a tempo first
+        if (reel->tempoBpm <= 0.0) { showSync (SyncPanel::Page::tempo); return; }      // needs a tempo first
         engine.setClick (! reel->clickOn, reel->clickLevelDb);
-        if (syncWindow != nullptr) syncWindow->getPanel().refresh();
+        for (auto* w : { tempoWindow.get(), timecodeWindow.get() }) if (w != nullptr) w->getPanel().refresh();
     };
 
     bridgeView.setViewedComponent (&bridge, false);
@@ -269,7 +271,8 @@ MainComponent::~MainComponent()
     shutdown();
     sheetWindow = nullptr;
     routingWindow = nullptr;
-    syncWindow = nullptr;
+    tempoWindow = nullptr;
+    timecodeWindow = nullptr;
     networkWindow = nullptr;
     juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
     setLookAndFeel (nullptr);
@@ -448,7 +451,7 @@ void MainComponent::setReel (std::unique_ptr<Reel> r, std::unique_ptr<Session> s
     rebuildModules();
     refreshMasterSection();
     refreshSpeedSection();
-    if (syncWindow != nullptr) syncWindow->getPanel().refresh();
+    for (auto* w : { tempoWindow.get(), timecodeWindow.get() }) if (w != nullptr) w->getPanel().refresh();
 
     if (routingWindow != nullptr) { routingWindow->getMatrix().tracksChanged(); routingWindow->getLatencyPanel().refresh(); }
     if (sheetWindow != nullptr)   sheetWindow->getSheet().refresh();
@@ -493,7 +496,7 @@ void MainComponent::handleTempoRequests()
     if (changed)
     {
         engine.setTempo (reel->tempoBpm, reel->beatsPerBar, reel->barOne);
-        if (syncWindow != nullptr) syncWindow->getPanel().refresh();
+        for (auto* w : { tempoWindow.get(), timecodeWindow.get() }) if (w != nullptr) w->getPanel().refresh();
         markers.refresh();
         pushReelSync();
         tempoSaveDueMs = juce::Time::getMillisecondCounterHiRes() + 1500.0;   // a knob may still be turning
@@ -905,19 +908,20 @@ void MainComponent::toggleFullScreen()
 //==============================================================================
 // Tempo, click, timecode
 
-void MainComponent::showSync()
+void MainComponent::showSync (SyncPanel::Page page)
 {
-    if (syncWindow == nullptr)
+    auto& w = page == SyncPanel::Page::tempo ? tempoWindow : timecodeWindow;
+    if (w == nullptr)
     {
-        syncWindow = std::make_unique<SyncWindow> (engine, [this] { return reel.get(); }, [this] { return syncSettings; });
-        syncWindow->getPanel().onTempoChanged = [this] { tempoEdited(); };
-        syncWindow->getPanel().onSettingsChanged = [this] (const SyncPanel::Settings& s) { applySyncSettings (s); };
+        w = std::make_unique<SyncWindow> (page, engine, [this] { return reel.get(); }, [this] { return syncSettings; });
+        w->getPanel().onTempoChanged = [this] { tempoEdited(); };
+        w->getPanel().onSettingsChanged = [this] (const SyncPanel::Settings& s) { applySyncSettings (s); };
         if (auto* dev = deviceManager.getCurrentAudioDevice())
-            syncWindow->getPanel().setInputNames (dev->getInputChannelNames(), dev->getActiveInputChannels());
+            w->getPanel().setInputNames (dev->getInputChannelNames(), dev->getActiveInputChannels());
     }
-    syncWindow->getPanel().refresh();
-    syncWindow->setVisible (true);
-    syncWindow->toFront (true);
+    w->getPanel().refresh();
+    w->setVisible (true);
+    w->toFront (true);
 }
 
 void MainComponent::tempoEdited()
@@ -1055,11 +1059,9 @@ void MainComponent::showRouting()
 
 void MainComponent::updateRoutingDevice()
 {
-    if (syncWindow != nullptr)
-    {
-        if (auto* dev = deviceManager.getCurrentAudioDevice())
-            syncWindow->getPanel().setInputNames (dev->getInputChannelNames(), dev->getActiveInputChannels());
-    }
+    if (auto* dev = deviceManager.getCurrentAudioDevice())
+        for (auto* w : { tempoWindow.get(), timecodeWindow.get() })
+            if (w != nullptr) w->getPanel().setInputNames (dev->getInputChannelNames(), dev->getActiveInputChannels());
 
     if (routingWindow == nullptr)
         return;
@@ -1447,7 +1449,9 @@ void MainComponent::resized()
         h.removeFromRight (8);
         audioButton.setBounds (h.removeFromRight (140));
         h.removeFromRight (8);
-        syncButton.setBounds (h.removeFromRight (70));
+        timecodeButton.setBounds (h.removeFromRight (100));
+        h.removeFromRight (8);
+        syncButton.setBounds (h.removeFromRight (76));
         h.removeFromRight (8);
         networkButton.setBounds (h.removeFromRight (100));
         h.removeFromRight (8);

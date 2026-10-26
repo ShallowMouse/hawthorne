@@ -4,8 +4,8 @@
 namespace hawthorne
 {
 
-SyncPanel::SyncPanel (TapeEngine& e, std::function<Reel*()> gr, std::function<Settings()> gs)
-    : engine (e), getReel (std::move (gr)), getSettings (std::move (gs))
+SyncPanel::SyncPanel (Page p, TapeEngine& e, std::function<Reel*()> gr, std::function<Settings()> gs)
+    : page (p), engine (e), getReel (std::move (gr)), getSettings (std::move (gs))
 {
     auto setupEditor = [this] (juce::TextEditor& ed, const juce::String& tip)
     {
@@ -82,9 +82,19 @@ SyncPanel::SyncPanel (TapeEngine& e, std::function<Reel*()> gr, std::function<Se
         addAndMakeVisible (c);
     }
 
+    // Each window shows only its own controls
+    const bool isTempo = page == Page::tempo;
+    for (juce::Component* c : { (juce::Component*) &bpm, (juce::Component*) &beats, (juce::Component*) &barOneButton,
+                                (juce::Component*) &tapButton, (juce::Component*) &clearTempo, (juce::Component*) &clickOn,
+                                (juce::Component*) &clickLevel })
+        c->setVisible (isTempo);
+    for (juce::Component* c : { (juce::Component*) &tcRate, (juce::Component*) &tcStart, (juce::Component*) &ltcLevel,
+                                (juce::Component*) &mtcOut, (juce::Component*) &chase })
+        c->setVisible (! isTempo);
+
     fillMidi();
     refresh();
-    startTimerHz (10);
+    if (! isTempo) startTimerHz (10);
 }
 
 void SyncPanel::fillMidi()
@@ -142,8 +152,8 @@ void SyncPanel::refresh()
     for (int ch = 0; ch < inputNames.size(); ++ch)
         if (inputActive[ch]) ltcIn.addItem ("In " + juce::String (ch + 1) + "  " + inputNames[ch], ch + 2);
     ltcIn.setSelectedId (keep >= 0 ? keep + 2 : 1, juce::dontSendNotification);
-    ltcIn.setVisible (s.chase == TapeEngine::ChaseSource::ltc);
-    mtcIn.setVisible (s.chase == TapeEngine::ChaseSource::mtc);
+    ltcIn.setVisible (page == Page::timecode && s.chase == TapeEngine::ChaseSource::ltc);
+    mtcIn.setVisible (page == Page::timecode && s.chase == TapeEngine::ChaseSource::mtc);
 
     for (juce::Component* c : { (juce::Component*) &bpm, (juce::Component*) &beats, (juce::Component*) &barOneButton,
                                 (juce::Component*) &tapButton, (juce::Component*) &clearTempo, (juce::Component*) &clickOn,
@@ -220,17 +230,24 @@ void SyncPanel::paint (juce::Graphics& g)
         g.drawText (note, area.removeFromBottom (18), juce::Justification::centredLeft, true);
     };
 
-    heading (tempoArea, "TEMPO", "Bars and beats show on the counter and the markers. A synced THOREAU sets this too.");
-    heading (clickArea, "CLICK", "Plays while the tape rolls, on the beats of the tempo above. Choose where it goes: ROUTING > CLICK.");
+    g.setFont (monoFont (11.0f, true));
+    if (page == Page::tempo)
+    {
+        heading (tempoArea, "TEMPO", "Bars and beats show on the counter and the markers. A synced THOREAU sets this too.");
+        heading (clickArea, "CLICK", "Plays while the tape rolls, on the beats of the tempo above. Choose where it goes: ROUTING > CLICK.");
+        g.setFont (monoFont (11.0f, true));
+        g.setColour (Colours::textDim);
+        g.drawText ("BPM", bpm.getBounds().translated (0, -16).withHeight (14), juce::Justification::centredLeft);
+        g.drawText ("LEVEL", clickLevel.getBounds().translated (0, -16).withHeight (14), juce::Justification::centredLeft);
+        return;
+    }
+
     heading (tcArea, "TIMECODE OUT", "LTC goes to the outputs ticked in ROUTING > LTC OUT. MTC goes to the MIDI port chosen here.");
     heading (chaseArea, "CHASE", "Hawthorne follows incoming timecode: it locates, rolls, stays in sync and stops with it.");
-
     g.setFont (monoFont (11.0f, true));
     g.setColour (Colours::textDim);
-    g.drawText ("BPM", bpm.getBounds().translated (0, -16).withHeight (14), juce::Justification::centredLeft);
     g.drawText ("TAPE STARTS AT", tcStart.getBounds().translated (0, -16).withHeight (14), juce::Justification::centredLeft);
     g.drawText ("LTC LEVEL", ltcLevel.getBounds().translated (0, -16).withHeight (14), juce::Justification::centredLeft);
-    g.drawText ("LEVEL", clickLevel.getBounds().translated (0, -16).withHeight (14), juce::Justification::centredLeft);
 
     // Chase status
     const auto st = engine.getChaseStatus();
@@ -262,6 +279,26 @@ void SyncPanel::resized()
 
     auto section = [&r] (int h) { auto a = r.removeFromTop (h); r.removeFromTop (14); return a; };
 
+    if (page == Page::timecode)
+    {
+        tcArea = section (110);
+        auto a = tcArea.withTrimmedTop (42).removeFromTop (30);
+        tcRate.setBounds (a.removeFromLeft (150));       a.removeFromLeft (10);
+        tcStart.setBounds (a.removeFromLeft (140));      a.removeFromLeft (10);
+        ltcLevel.setBounds (a.removeFromLeft (180));     a.removeFromLeft (10);
+        mtcOut.setBounds (a);
+
+        chaseArea = section (140);
+        auto c = chaseArea.withTrimmedTop (28);
+        auto row = c.removeFromTop (28);
+        chase.setBounds (row.removeFromLeft (300));      row.removeFromLeft (10);
+        ltcIn.setBounds (row);
+        mtcIn.setBounds (row);
+        c.removeFromTop (12);
+        statusArea = c.removeFromTop (26);
+        return;
+    }
+
     tempoArea = section (110);
     {
         auto a = tempoArea.withTrimmedTop (42).removeFromTop (30);
@@ -279,25 +316,6 @@ void SyncPanel::resized()
         clickLevel.setBounds (a.removeFromLeft (300));
     }
 
-    tcArea = section (110);
-    {
-        auto a = tcArea.withTrimmedTop (42).removeFromTop (30);
-        tcRate.setBounds (a.removeFromLeft (150));       a.removeFromLeft (10);
-        tcStart.setBounds (a.removeFromLeft (140));      a.removeFromLeft (10);
-        ltcLevel.setBounds (a.removeFromLeft (180));     a.removeFromLeft (10);
-        mtcOut.setBounds (a);
-    }
-
-    chaseArea = section (140);
-    {
-        auto a = chaseArea.withTrimmedTop (28);
-        auto row = a.removeFromTop (28);
-        chase.setBounds (row.removeFromLeft (300));      row.removeFromLeft (10);
-        ltcIn.setBounds (row);
-        mtcIn.setBounds (row);
-        a.removeFromTop (12);
-        statusArea = a.removeFromTop (26);
-    }
 }
 
 } // namespace hawthorne
