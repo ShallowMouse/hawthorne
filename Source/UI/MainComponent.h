@@ -50,6 +50,35 @@ private:
 };
 
 //==============================================================================
+/** Tempo in the transport: BPM (drag up / down, shift = fine; double-click to type),
+    time signature (click), and TAP. */
+class TempoBox : public juce::Component,
+                 public juce::SettableTooltipClient
+{
+public:
+    TempoBox();
+
+    std::function<Reel*()> getReel;
+    std::function<void (bool save)> onChanged;
+
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+
+private:
+    void setBpm (double bpm, bool save);
+    juce::Rectangle<int> bpmArea, sigArea;
+    juce::TextButton tapButton { "TAP" };
+    juce::TextEditor editor;
+    juce::Array<double> taps;
+    double dragStart = 0.0;
+    bool dragging = false;
+};
+
+//==============================================================================
 class MainComponent : public juce::Component,
                       private juce::Timer,
                       private juce::ChangeListener
@@ -61,6 +90,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
+    void mouseUp (const juce::MouseEvent&) override;
 
     /** Called before quitting: stops and saves cleanly. */
     void shutdown();
@@ -116,6 +146,9 @@ private:
     void applyStoredLatency();
 
     void toggleFullScreen();
+    void showSyncMenu();
+    void showCounterMenu();
+    int counterMode = 0;              // big display: 0 min:sec, 1 bars.beats, 2 timecode
 
     // Tempo, click, timecode
     void showSync (SyncPanel::Page);
@@ -184,6 +217,8 @@ private:
     TransportKey masterArmKey { "ARM",  "Arm the master: record the mix onto this reel, in step with the tracks", Colours::red },
                  monitorKey   { "TAPE", "Master monitoring: hear the master tape instead of the live mix",       Colours::mustard };
     juce::Rectangle<int> masterLabelArea, masterPanelArea;
+    TempoBox tempoBox;
+    juce::TextButton syncSourceButton;
     juce::TextButton fullScreenButton { "FULL SCREEN" };
 
     TransportKey ips7Key  { juce::String (juce::CharPointer_UTF8 ("7\xc2\xbd")), juce::String (juce::CharPointer_UTF8 ("Deck speed 7\xc2\xbd ips")), Colours::mustard },

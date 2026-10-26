@@ -82,6 +82,141 @@ void MeterBridge::paint (juce::Graphics& g)
 }
 
 //==============================================================================
+TempoBox::TempoBox()
+{
+    tapButton.setWantsKeyboardFocus (false);
+    tapButton.setTooltip ("Tap the tempo");
+    tapButton.onClick = [this]
+    {
+        const double now = juce::Time::getMillisecondCounterHiRes();
+        if (! taps.isEmpty() && now - taps.getLast() > 2000.0) taps.clear();
+        taps.add (now);
+        if (taps.size() > 8) taps.remove (0);
+        if (taps.size() >= 3)
+            setBpm (60000.0 / ((taps.getLast() - taps.getFirst()) / (taps.size() - 1)), true);
+    };
+    addAndMakeVisible (tapButton);
+
+    editor.setFont (monoFont (16.0f, true));
+    editor.setJustification (juce::Justification::centred);
+    editor.setInputRestrictions (6, "0123456789.");
+    editor.setColour (juce::TextEditor::backgroundColourId, Colours::black);
+    editor.setColour (juce::TextEditor::textColourId, Colours::mustard);
+    auto commit = [this]
+    {
+        if (! editor.isVisible()) return;
+        const double v = editor.getText().getDoubleValue();
+        editor.setVisible (false);
+        if (v >= 20.0 && v <= 400.0) setBpm (v, true);
+    };
+    editor.onReturnKey = commit;
+    editor.onFocusLost = commit;
+    editor.onEscapeKey = [this] { editor.setVisible (false); };
+    addChildComponent (editor);
+    setTooltip ("Tempo: drag up / down (shift = fine), double-click to type. Click the 4/4 to change the bar.");
+}
+
+void TempoBox::setBpm (double bpm, bool save)
+{
+    auto* r = getReel ? getReel() : nullptr;
+    if (r == nullptr) return;
+    r->tempoBpm = juce::jlimit (20.0, 400.0, std::round (bpm * 100.0) / 100.0);
+    if (onChanged) onChanged (save);
+    repaint();
+}
+
+void TempoBox::paint (juce::Graphics& g)
+{
+    auto* r = getReel ? getReel() : nullptr;
+    const bool has = r != nullptr && r->tempoBpm > 0.0;
+
+    for (auto a : { bpmArea, sigArea })
+    {
+        g.setColour (Colours::black);
+        g.fillRoundedRectangle (a.toFloat(), 3.0f);
+        g.setColour (Colours::edge);
+        g.drawRoundedRectangle (a.toFloat(), 3.0f, 1.0f);
+    }
+
+    g.setColour (has ? Colours::mustard : Colours::textDim);
+    g.setFont (monoFont (16.0f, true));
+    auto b = bpmArea.reduced (6, 0);
+    g.drawText (has ? juce::String (r->tempoBpm, 2) : juce::String ("---.--"), b, juce::Justification::centredLeft);
+    g.setFont (monoFont (9.0f, true));
+    g.setColour (Colours::textDim);
+    g.drawText ("BPM", b, juce::Justification::centredRight);
+
+    g.setColour (has ? Colours::text : Colours::textDim);
+    g.setFont (monoFont (15.0f, true));
+    g.drawText (juce::String (r != nullptr ? r->beatsPerBar : 4) + "/4", sigArea, juce::Justification::centred);
+}
+
+void TempoBox::resized()
+{
+    auto a = getLocalBounds();
+    tapButton.setBounds (a.removeFromRight (40));
+    a.removeFromRight (4);
+    sigArea = a.removeFromRight (44);
+    a.removeFromRight (4);
+    bpmArea = a;
+    editor.setBounds (bpmArea);
+}
+
+void TempoBox::mouseDown (const juce::MouseEvent& e)
+{
+    auto* r = getReel ? getReel() : nullptr;
+    if (r == nullptr) return;
+
+    if (sigArea.contains (e.getPosition()))
+    {
+        juce::PopupMenu m;
+        for (int b = 1; b <= 12; ++b) m.addItem (b, juce::String (b) + "/4", true, b == r->beatsPerBar);
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [this] (int b)
+        {
+            if (auto* rr = getReel ? getReel() : nullptr; rr != nullptr && b > 0)
+            {
+                rr->beatsPerBar = b;
+                if (rr->tempoBpm <= 0.0) rr->tempoBpm = 120.0;
+                if (onChanged) onChanged (true);
+                repaint();
+            }
+        });
+        return;
+    }
+
+    if (bpmArea.contains (e.getPosition()))
+    {
+        dragStart = r->tempoBpm > 0.0 ? r->tempoBpm : 120.0;
+        dragging = true;
+    }
+}
+
+void TempoBox::mouseDrag (const juce::MouseEvent& e)
+{
+    if (! dragging || e.getDistanceFromDragStartY() == 0) return;
+    const double step = e.mods.isShiftDown() ? 0.01 : 0.25;
+    setBpm (dragStart - e.getDistanceFromDragStartY() * step, false);
+}
+
+void TempoBox::mouseUp (const juce::MouseEvent& e)
+{
+    if (dragging && e.getDistanceFromDragStartY() != 0 && onChanged)
+        onChanged (true);     // save once, at the end of the drag
+    dragging = false;
+}
+
+void TempoBox::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    if (! bpmArea.contains (e.getPosition())) return;
+    auto* r = getReel ? getReel() : nullptr;
+    if (r == nullptr) return;
+    editor.setText (r->tempoBpm > 0.0 ? juce::String (r->tempoBpm, 2) : juce::String ("120"), juce::dontSendNotification);
+    editor.setVisible (true);
+    editor.grabKeyboardFocus();
+    editor.selectAll();
+}
+
+//==============================================================================
 MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
 {
     setLookAndFeel (&lnf);
@@ -117,6 +252,23 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     playKey.onClick = [this] { doPlay(); };
     recKey.onClick  = [this] { doRecord(); };
     markKey.onClick = [this] { addMarker(); };
+
+    // Tempo and sync in the transport
+    tempoBox.getReel = [this] { return reel.get(); };
+    tempoBox.onChanged = [this] (bool save)
+    {
+        if (reel == nullptr) return;
+        engine.setTempo (reel->tempoBpm, reel->beatsPerBar, reel->barOne);
+        if (save) tempoEdited();
+        for (auto* w : { tempoWindow.get(), timecodeWindow.get() }) if (w != nullptr) w->getPanel().refresh();
+        markers.refresh();
+        repaint (counterArea);
+    };
+    addAndMakeVisible (tempoBox);
+    syncSourceButton.setWantsKeyboardFocus (false);
+    syncSourceButton.setTooltip ("Sync: INTERNAL (Hawthorne runs the tape) or EXTERNAL (chase incoming LTC / MTC)");
+    syncSourceButton.onClick = [this] { showSyncMenu(); };
+    addAndMakeVisible (syncSourceButton);
     clickKey.onClick = [this]
     {
         if (reel == nullptr) return;
@@ -262,6 +414,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     loadSyncSettings();
     showLibrary (true);   // the tape library is the first thing you see
 
+    counterMode = juce::jlimit (0, 2, props.getUserSettings()->getIntValue ("counterMode", 0));
     setSize (1600, 900);
     startTimerHz (30);
 }
@@ -924,6 +1077,70 @@ void MainComponent::showSync (SyncPanel::Page page)
     w->toFront (true);
 }
 
+void MainComponent::showSyncMenu()
+{
+    // Like a DAW's transport sync: internal, or follow external timecode
+    juce::PopupMenu m;
+    const auto src = engine.getChase();
+    m.addSectionHeader ("SYNC");
+    m.addItem (1, "Internal - Hawthorne runs the tape", true, src == TapeEngine::ChaseSource::off);
+
+    juce::PopupMenu ltc, mtc;
+    if (auto* dev = deviceManager.getCurrentAudioDevice())
+    {
+        const auto names = dev->getInputChannelNames();
+        const auto active = dev->getActiveInputChannels();
+        for (int ch = 0; ch < names.size(); ++ch)
+            if (active[ch])
+                ltc.addItem (1000 + ch, "In " + juce::String (ch + 1) + "  " + names[ch], true,
+                             src == TapeEngine::ChaseSource::ltc && syncSettings.ltcIn == ch);
+    }
+    const auto ins = juce::MidiInput::getAvailableDevices();
+    for (int i = 0; i < ins.size(); ++i)
+        mtc.addItem (2000 + i, ins[i].name, true, src == TapeEngine::ChaseSource::mtc && syncSettings.mtcIn == ins[i].identifier);
+    if (ins.isEmpty()) mtc.addItem (-1, "(no MIDI inputs)", false);
+
+    m.addSubMenu ("External - chase LTC on", ltc, true, nullptr, src == TapeEngine::ChaseSource::ltc);
+    m.addSubMenu ("External - chase MTC from", mtc, true, nullptr, src == TapeEngine::ChaseSource::mtc);
+    m.addSeparator();
+    m.addItem (3, "Timecode settings...");
+
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (syncSourceButton), [this, ins] (int r)
+    {
+        auto s = syncSettings;
+        if (r == 1) s.chase = TapeEngine::ChaseSource::off;
+        else if (r >= 1000 && r < 2000) { s.chase = TapeEngine::ChaseSource::ltc; s.ltcIn = r - 1000; }
+        else if (r >= 2000 && r - 2000 < ins.size()) { s.chase = TapeEngine::ChaseSource::mtc; s.mtcIn = ins[r - 2000].identifier; }
+        else if (r == 3) { showSync (SyncPanel::Page::timecode); return; }
+        else return;
+        applySyncSettings (s);
+        for (auto* w : { tempoWindow.get(), timecodeWindow.get() }) if (w != nullptr) w->getPanel().refresh();
+    });
+}
+
+void MainComponent::showCounterMenu()
+{
+    juce::PopupMenu m;
+    m.addSectionHeader ("MAIN DISPLAY");
+    m.addItem (1, "Minutes : seconds", true, counterMode == 0);
+    m.addItem (2, "Bars . beats", reel != nullptr && reel->tempoBpm > 0.0, counterMode == 1);
+    m.addItem (3, "Timecode", true, counterMode == 2);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (counterArea)), [this] (int r)
+    {
+        if (r <= 0) return;
+        counterMode = r - 1;
+        props.getUserSettings()->setValue ("counterMode", counterMode);
+        repaint (counterArea);
+    });
+}
+
+void MainComponent::mouseUp (const juce::MouseEvent& e)
+{
+    // (on release, so the release doesn't pick an item from the menu it opened)
+    if (counterArea.contains (e.getPosition()) && counterArea.contains (e.getMouseDownPosition()))
+        showCounterMenu();
+}
+
 void MainComponent::tempoEdited()
 {
     if (reel == nullptr) return;
@@ -1244,6 +1461,24 @@ void MainComponent::timerCallback()
 
     playKey.setLit (rolling);
     clickKey.setLit (reel != nullptr && reel->clickOn && reel->tempoBpm > 0.0);
+    if (frame % 5 == 0)
+    {
+        const auto src = engine.getChase();
+        juce::String t = "SYNC: INTERNAL";
+        auto bgc = Colours::panelLight, txt = Colours::text;
+        if (src != TapeEngine::ChaseSource::off)
+        {
+            const auto st = engine.getChaseStatus();
+            t = juce::String ("SYNC: EXT ") + (src == TapeEngine::ChaseSource::mtc ? "MTC" : "LTC")
+              + (st.locked ? "  LOCKED" : (st.receiving ? "" : "  - NO TC"));
+            bgc = st.locked ? Colours::mustard : Colours::panelLight;
+            txt = st.locked ? Colours::black : (st.receiving ? Colours::mustard : Colours::red);
+        }
+        if (syncSourceButton.getButtonText() != t) syncSourceButton.setButtonText (t);
+        syncSourceButton.setColour (juce::TextButton::buttonColourId, bgc);
+        syncSourceButton.setColour (juce::TextButton::textColourOffId, txt);
+        tempoBox.repaint();
+    }
     recKey.setLit (rec);
     stopKey.setLit (! rolling);
 
@@ -1366,43 +1601,36 @@ void MainComponent::paint (juce::Graphics& g)
     const bool rec = engine.isRecording();
     g.setColour (rec ? Colours::red : Colours::mustard);
     {
-        // top: state, chase, tempo.  middle: minutes / seconds.  bottom: bars / beats and timecode.
+        // top: state and which readout is big.  middle: the chosen readout (click the clock to
+        // choose).  bottom: the other two.
         auto c = counterArea.reduced (8, 3);
         auto top = c.removeFromTop (13), bottom = c.removeFromBottom (15);
         const auto pos = engine.getPosition();
 
+        const juce::String ms = formatTime (pos, sessionRate());
+        const juce::String bbt = reel != nullptr ? reel->bbtString (pos) : juce::String();
+        const auto rate = engine.getTimecodeRate();
+        const juce::String tc = timecode::fromFrames ((juce::int64) std::floor (engine.timecodeFramesAt ((double) pos) + 1.0e-9), rate)
+                                    .toString (timecode::isDrop (rate));
+        const int mode = (counterMode == 1 && bbt.isEmpty()) ? 0 : counterMode;
+        const juce::String big = mode == 1 ? bbt : (mode == 2 ? tc : ms);
+
         g.setFont (monoFont (juce::jmin ((float) c.getHeight() * 0.95f, (float) c.getWidth() / 7.6f), true));
-        g.drawText (formatTime (pos, sessionRate()), c, juce::Justification::centred);
+        g.drawText (big, c, juce::Justification::centred);
 
         g.setFont (monoFont (10.0f, true));
         g.setColour (rec ? Colours::red : (engine.isPlaying() ? Colours::mustard : Colours::textDim));
         g.drawText (rec ? "REC" : (engine.isPlaying() ? "PLAY" : "STOP"), top, juce::Justification::centredLeft);
-
-        if (engine.getChase() != TapeEngine::ChaseSource::off)
-        {
-            const auto cs = engine.getChaseStatus();
-            g.setColour (cs.locked ? Colours::mustard : (cs.receiving ? Colours::text : Colours::red));
-            g.drawText (cs.locked ? "CHASE LOCKED" : (cs.receiving ? "CHASE" : "CHASE - NO TC"), top.withTrimmedLeft (44),
-                        juce::Justification::centredLeft);
-        }
-
-        if (reel != nullptr && reel->tempoBpm > 0.0)
-        {
-            g.setColour (Colours::textDim);
-            g.drawText (juce::String (reel->tempoBpm, 1) + " BPM  " + juce::String (reel->beatsPerBar) + "/4", top, juce::Justification::centredRight);
-        }
+        g.setColour (Colours::textDim);
+        g.drawText (mode == 1 ? juce::String ("BARS . BEATS") : (mode == 2 ? "TIMECODE  " + timecode::name (rate) : juce::String ("MIN : SEC")),
+                    top, juce::Justification::centredRight);
 
         g.setFont (monoFont (13.0f, true));
-        if (reel != nullptr)
-        {
-            const auto bbt = reel->bbtString (pos);
-            g.setColour (Colours::mustardDim.brighter (0.5f));
-            g.drawText (bbt.isNotEmpty() ? "BAR " + bbt : juce::String ("NO TEMPO"), bottom, juce::Justification::centredLeft);
-            const auto rate = engine.getTimecodeRate();
-            const auto tc = timecode::fromFrames ((juce::int64) std::floor (engine.timecodeFramesAt ((double) pos) + 1.0e-9), rate);
-            g.setColour (Colours::textDim);
-            g.drawText ("TC " + tc.toString (timecode::isDrop (rate)), bottom, juce::Justification::centredRight);
-        }
+        const juce::String bbtLine = bbt.isNotEmpty() ? "BAR " + bbt : juce::String ("NO TEMPO");
+        g.setColour (Colours::mustardDim.brighter (0.5f));
+        g.drawText (mode == 0 ? bbtLine : ms, bottom, juce::Justification::centredLeft);
+        g.setColour (Colours::textDim);
+        g.drawText (mode == 2 ? bbtLine : "TC " + tc, bottom, juce::Justification::centredRight);
     }
 
     if (reel != nullptr)
@@ -1477,6 +1705,15 @@ void MainComponent::resized()
 
         const bool compact = getWidth() < 1700;
         counterArea = d.removeFromLeft (compact ? 250 : 300).reduced (0, 2);
+        d.removeFromLeft (8);
+
+        // tempo (top) and sync (bottom), right by the clock
+        {
+            auto ts = d.removeFromLeft (compact ? 170 : 190).reduced (0, 4);
+            tempoBox.setBounds (ts.removeFromTop (ts.getHeight() / 2 - 2));
+            ts.removeFromTop (4);
+            syncSourceButton.setBounds (ts);
+        }
         d.removeFromLeft (compact ? 12 : 18);
 
         const int kw = compact ? 56 : 64, kwBig = compact ? 62 : 72, gap = compact ? 10 : 14;
