@@ -70,6 +70,7 @@ void TapeEngine::setReel (Reel* s)
         s->activeMaster = s->masters.empty() ? -1 : 0;
     masterArmedFlag   = s != nullptr && s->masterArmed && s->activeMaster >= 0;
     targetRate = currentRate = s != nullptr ? s->getSpeedRatio() : 1.0;
+    windCancel();
     tapeStock = s != nullptr ? s->tapeStock : 0;
     reelIps = s != nullptr ? s->ips : 15.0;
     tapeReset = true;
@@ -925,6 +926,14 @@ juce::String TapeEngine::play()
     if (auto err = checkCanRoll(); err.isNotEmpty())
         return err;
 
+    if (wind.active)
+    {
+        // Play while spooling: brake, then roll from wherever the tape stops.
+        wind.braking = true;
+        wind.rollAfter = true;
+        return {};
+    }
+
     primeReaders (position.load());
     playing = true;
     return {};
@@ -937,6 +946,8 @@ juce::String TapeEngine::record()
 
     if (auto err = checkCanRoll(); err.isNotEmpty())
         return err;
+
+    windCancel();
 
     if (auto err = beginRecordPass(); err.isNotEmpty())
         return err;
@@ -959,6 +970,12 @@ void TapeEngine::stop()
 {
     punchOut();
     playing = false;
+
+    if (wind.active)
+    {
+        wind.braking = true;        // STOP while spooling: the brakes come on
+        wind.rollAfter = false;
+    }
 }
 
 void TapeEngine::locate (juce::int64 samplePos)
@@ -966,10 +983,151 @@ void TapeEngine::locate (juce::int64 samplePos)
     if (recording)
         return;
 
+    windCancel();
     position.store (juce::jmax ((juce::int64) 0, samplePos));
 
     if (! playing)
         primeReaders (position.load());
+}
+
+//==============================================================================
+// Tape wind: a real transport spools to the locate point.
+//
+// Speeds are in tape inches per second, so a 7.5 ips reel spools through its
+// time twice as fast as a 15 ips one, as on a real machine.
+namespace windModel
+{
+    constexpr double maxIps     = 360.0;   // full fast wind
+    constexpr double accelTime  = 1.6;     // s from stop to full wind
+    constexpr double brakeTime  = 1.1;     // s from full wind to stop
+    constexpr double brakeLate  = 0.92;    // brakes a touch late: overshoots, then creeps back
+    constexpr double creepIps   = 30.0;    // slow creep onto the locate point
+    constexpr double creepAccel = 0.25;    // s to reach creep speed
+}
+
+void TapeEngine::windTo (juce::int64 target)
+{
+    if (recording)
+        return;
+
+    target = juce::jmax ((juce::int64) 0, target);
+
+    if (! windPhysics || reel == nullptr || getChase() != ChaseSource::off)
+    {
+        locate (target);
+        return;
+    }
+
+    if (! wind.active)
+    {
+        wind = {};
+        wind.pos = (double) position.load();
+        wind.rollAfter = playing.load();
+        if (playing)
+            playing = false;          // lifters out, spool, then play again
+    }
+    if (target == (juce::int64) wind.pos && ! wind.active)
+    {
+        windFinish (target);
+        return;
+    }
+
+    wind.active = true;
+    wind.braking = false;
+    wind.creeping = false;
+    wind.target = target;
+    wind.lastMs = juce::Time::getMillisecondCounterHiRes();
+}
+
+void TapeEngine::windCancel()
+{
+    wind.active = false;
+    wind.rollAfter = false;
+}
+
+void TapeEngine::windFinish (juce::int64 at)
+{
+    const bool roll = wind.rollAfter;
+    wind = {};
+    position.store (juce::jmax ((juce::int64) 0, at));
+    primeReaders (position.load());
+    if (roll)
+        play();
+}
+
+void TapeEngine::windStep()
+{
+    if (! wind.active)
+        return;
+    if (reel == nullptr || recording) { windCancel(); return; }
+
+    using namespace windModel;
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    const double dt = juce::jlimit (0.0, 0.1, (now - wind.lastMs) / 1000.0);
+    wind.lastMs = now;
+
+    const double sr = reel->sampleRate;
+    const double perIps = sr / juce::jmax (1.0, reel->ips);     // samples/s of tape time per 1 ips
+    const double vmax = maxIps * perIps, accel = vmax / accelTime, brake = vmax / brakeTime;
+    const double creepV = creepIps * perIps, creepA = creepV / creepAccel;
+    auto sgn = [] (double x) { return x < 0.0 ? -1.0 : 1.0; };
+    auto towards = [] (double v, double goal, double step) { return v < goal ? juce::jmin (goal, v + step) : juce::jmax (goal, v - step); };
+
+    double err = (double) wind.target - wind.pos;
+
+    if (wind.braking)
+    {
+        wind.vel = towards (wind.vel, 0.0, brake * dt);
+        wind.pos += wind.vel * dt;
+        if (wind.pos <= 0.0) { wind.pos = 0.0; wind.vel = 0.0; }
+        position.store ((juce::int64) wind.pos);
+        if (wind.vel == 0.0)
+            windFinish ((juce::int64) wind.pos);
+        return;
+    }
+
+    // Short hops (and the end of a long one) go at creep speed.
+    if (! wind.creeping && ! wind.moved && std::abs (err) < 0.6 * creepV)
+        wind.creeping = true;
+
+    if (! wind.creeping)
+    {
+        const double dir = sgn (err);
+        const double stopping = wind.vel * wind.vel / (2.0 * brake);
+        const bool towardTarget = wind.vel * dir >= 0.0;
+
+        if (towardTarget && std::abs (err) > stopping * brakeLate)
+            wind.vel = towards (wind.vel, dir * vmax, accel * dt);
+        else
+            wind.vel = towards (wind.vel, 0.0, brake * dt);
+
+        wind.pos += wind.vel * dt;
+        wind.moved = true;
+        if (wind.pos <= 0.0) { wind.pos = 0.0; wind.vel = 0.0; }
+
+        if (wind.vel == 0.0)
+        {
+            err = (double) wind.target - wind.pos;
+            if (std::abs (err) < 0.002 * sr) { windFinish (wind.target); return; }
+            wind.creeping = true;      // overshot (or fell short): creep onto it
+        }
+    }
+    else
+    {
+        const double dir = sgn (err);
+        const double goal = dir * juce::jmin (creepV, std::sqrt (2.0 * creepA * std::abs (err)));
+        wind.vel = towards (wind.vel, goal, creepA * dt);
+        const double before = err;
+        wind.pos += wind.vel * dt;
+        err = (double) wind.target - wind.pos;
+        if (std::abs (err) < 0.0005 * sr || sgn (err) != sgn (before) || wind.pos < 0.0)
+        {
+            windFinish (wind.target);
+            return;
+        }
+    }
+
+    position.store ((juce::int64) wind.pos);
 }
 
 juce::String TapeEngine::setSpeed (double deckIps, bool variOn, double variPercent, bool save)
@@ -1600,6 +1758,7 @@ bool TapeEngine::saveReel()
 void TapeEngine::tick()
 {
     chaseTick();
+    windStep();
 
     if (deviceLost.exchange (false))
     {

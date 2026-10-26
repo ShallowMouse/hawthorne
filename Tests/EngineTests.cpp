@@ -1711,6 +1711,43 @@ static void benchVarispeed()
 }
 
 //==============================================================================
+//==============================================================================
+static void testWind()
+{
+    std::printf ("[19] tape wind physics: spool, overshoot, creep back, land exactly\n");
+    juce::String err;
+    auto reel = Reel::create (makeTempDir ("wind"), "Wind", kSR, 8, err);
+    TapeEngine e;
+    e.setReel (reel.get());
+    prepareEngine (e, 256, 8);
+    e.setWindPhysics (true);
+    for (juce::int64 target : { (juce::int64) (60 * kSR), (juce::int64) (61.5 * kSR), (juce::int64) 0 })
+    {
+        const auto from = e.getPosition();
+        e.windTo (target);
+        const double t0 = juce::Time::getMillisecondCounterHiRes();
+        juce::int64 beyond = 0; double maxV = 0; juce::int64 last = from; double tl = t0;
+        while (e.getWindDirection() != 0 && juce::Time::getMillisecondCounterHiRes() - t0 < 20000)
+        {
+            juce::Thread::sleep (10);
+            e.tick();
+            const auto p = e.getPosition();
+            const double tn = juce::Time::getMillisecondCounterHiRes(); maxV = juce::jmax (maxV, std::abs ((double) (p - last)) / kSR / juce::jmax (0.005, (tn - tl) / 1000.0)); tl = tn;
+            last = p;
+            beyond = juce::jmax (beyond, target > from ? p - target : target - p);
+        }
+        const double secs = (juce::Time::getMillisecondCounterHiRes() - t0) / 1000.0;
+        CHECK (e.getPosition() == target && e.getWindDirection() == 0, "landed on %lld (at %lld)", (long long) target, (long long) e.getPosition());
+        CHECK (secs > 0.3 && secs < 10.0, "wind took %.2f s", secs);
+        std::printf ("    %6.1f s -> %6.1f s: %.2f s, top speed ~%.0fx, overshoot %.2f s, landed exactly\n",
+                     (double) from / kSR, (double) target / kSR, secs, maxV, (double) beyond / kSR);
+    }
+    e.setWindPhysics (false);
+    e.windTo ((juce::int64) (5 * kSR));
+    CHECK (e.getPosition() == (juce::int64) (5 * kSR) && e.getWindDirection() == 0, "physics off: instant");
+    e.setReel (nullptr);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -1729,6 +1766,7 @@ int main()
     testTempoClickTimecode();
     testTapeSync();
     testTapeStock();
+    testWind();
    #if JUCE_LINUX || JUCE_MAC
     testCrashRecovery();
    #endif

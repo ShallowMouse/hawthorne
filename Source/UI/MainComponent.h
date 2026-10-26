@@ -198,7 +198,7 @@ private:
     std::unique_ptr<Session> session;    // the session it belongs to
 
     juce::TextButton libraryButton { "LIBRARY" }, sheetButton { "SESSION SHEET" },
-                     routingButton { "ROUTING" }, networkButton { "NETWORK" }, syncButton { "TEMPO" }, timecodeButton { "TIMECODE" }, audioButton { "AUDIO SETTINGS" }, updateButton;
+                     routingButton { "ROUTING" }, networkButton { "NETWORK" }, syncButton { "TEMPO" }, timecodeButton { "TIMECODE" }, audioButton { "SETTINGS" }, updateButton;
     Updater updater;
 
     TransportKey rtzKey  { "RTZ",  "Return to zero (Enter)",          Colours::mustard },

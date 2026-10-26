@@ -43,6 +43,16 @@ public:
     void stop();
     void locate (juce::int64 samplePos);
 
+    /** Locate like a real machine: spool there in fast wind (accelerate, brake,
+        a little overshoot, creep back). Instant if wind physics is off, or while
+        chasing. If the tape was playing, it plays again on arrival. */
+    void windTo (juce::int64 samplePos);
+    void setWindPhysics (bool on) noexcept { windPhysics = on; }
+    bool getWindPhysics() const noexcept   { return windPhysics; }
+    /** -1 rewinding, +1 fast forwarding, 0 not spooling. */
+    int getWindDirection() const noexcept  { return wind.active ? (wind.vel < 0.0 ? -1 : wind.vel > 0.0 ? 1 : (wind.target < wind.pos ? -1 : 1)) : 0; }
+    juce::int64 getWindTarget() const noexcept { return wind.active ? wind.target : position.load(); }
+
     //==========================================================================
     // Speed: the deck's IPS switch and varispeed. Tape speed relative to the
     // reel = deckIps / reel ips * (1 + varispeed %). Recording at a different
@@ -300,6 +310,19 @@ private:
     std::atomic<double> tempoSpb { 0.0 }, tempoBarOne { 0.0 }, clickGain { 0.25 };
     std::atomic<int> tempoBpb { 4 };
     std::atomic<bool> clickOn { false }, clickToMaster { false };
+
+    // Tape wind (message thread)
+    struct Wind
+    {
+        bool active = false, braking = false, creeping = false, rollAfter = false, moved = false;
+        juce::int64 target = 0;
+        double pos = 0.0, vel = 0.0, lastMs = 0.0;     // samples, samples/s
+    };
+    bool windPhysics = false;
+    Wind wind;
+    void windStep();
+    void windFinish (juce::int64 at);
+    void windCancel();
     juce::int64 clickLastBeat = 0;
     bool clickWasRolling = false;
     double clickPhase = 0.0, clickEnv = 0.0, clickFreq = 1000.0;

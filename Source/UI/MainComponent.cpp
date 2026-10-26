@@ -415,6 +415,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     showLibrary (true);   // the tape library is the first thing you see
 
     counterMode = juce::jlimit (0, 2, props.getUserSettings()->getIntValue ("counterMode", 0));
+    engine.setWindPhysics (props.getUserSettings()->getBoolValue ("windPhysics", true));
     setSize (1600, 900);
     startTimerHz (30);
 }
@@ -514,14 +515,54 @@ void MainComponent::matchDeviceToSession()
     }
 }
 
+namespace
+{
+    /** Settings: the audio device, plus transport options. */
+    struct SettingsPanel : juce::Component
+    {
+        SettingsPanel (juce::AudioDeviceManager& dm, TapeEngine& e, juce::PropertiesFile& p)
+            : selector (dm, 0, 256, 2, 256, false, false, false, false), engine (e), props (p)
+        {
+            addAndMakeVisible (selector);
+            windToggle.setToggleState (engine.getWindPhysics(), juce::dontSendNotification);
+            windToggle.setTooltip ("On: locating (RTZ, markers, REW / FFW) spools the tape there like a real machine - "
+                                   "it speeds up, brakes, overshoots a touch and creeps back.\nOff: jumps there instantly.");
+            windToggle.onClick = [this]
+            {
+                engine.setWindPhysics (windToggle.getToggleState());
+                props.setValue ("windPhysics", windToggle.getToggleState());
+                props.saveIfNeeded();
+            };
+            addAndMakeVisible (windToggle);
+            setSize (560, 620);
+        }
+        void paint (juce::Graphics& g) override
+        {
+            g.setColour (Colours::textDim);
+            g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+            g.drawText ("TRANSPORT", 16, getHeight() - 56, 200, 16, juce::Justification::centredLeft);
+        }
+        void resized() override
+        {
+            auto b = getLocalBounds();
+            windToggle.setBounds (b.removeFromBottom (36).reduced (16, 4));
+            b.removeFromBottom (24);
+            selector.setBounds (b);
+        }
+        juce::AudioDeviceSelectorComponent selector;
+        juce::ToggleButton windToggle { "Tape wind physics: spool to locate points (realistic FFWD / REW)" };
+        TapeEngine& engine;
+        juce::PropertiesFile& props;
+    };
+}
+
 void MainComponent::showAudioSettings()
 {
-    auto* selector = new juce::AudioDeviceSelectorComponent (deviceManager, 0, 256, 2, 256, false, false, false, false);
-    selector->setSize (560, 560);
+    auto* selector = new SettingsPanel (deviceManager, engine, *props.getUserSettings());
 
     juce::DialogWindow::LaunchOptions o;
     o.content.setOwned (selector);
-    o.dialogTitle = "Audio Settings";
+    o.dialogTitle = "Settings";
     o.dialogBackgroundColour = Colours::panel;
     o.escapeKeyTriggersCloseButton = true;
     o.useNativeTitleBar = true;
@@ -1399,12 +1440,12 @@ void MainComponent::doRecord()
 void MainComponent::locate (juce::int64 pos)
 {
     if (! engine.isRecording())
-        engine.locate (pos);
+        engine.windTo (pos);
 }
 
 void MainComponent::nudge (double seconds)
 {
-    locate (engine.getPosition() + (juce::int64) (seconds * sessionRate()));
+    locate (engine.getWindTarget() + (juce::int64) (seconds * sessionRate()));
 }
 
 bool MainComponent::keyPressed (const juce::KeyPress& k)
@@ -1460,6 +1501,9 @@ void MainComponent::timerCallback()
     }
 
     playKey.setLit (rolling);
+    const int windDir = engine.getWindDirection();
+    rewKey.setLit (windDir < 0);
+    ffwKey.setLit (windDir > 0);
     clickKey.setLit (reel != nullptr && reel->clickOn && reel->tempoBpm > 0.0);
     if (frame % 5 == 0)
     {
@@ -1480,7 +1524,7 @@ void MainComponent::timerCallback()
         tempoBox.repaint();
     }
     recKey.setLit (rec);
-    stopKey.setLit (! rolling);
+    stopKey.setLit (! rolling && windDir == 0);
 
     for (int t = 0; t < bridge.modules.size(); ++t)
     {
@@ -1621,7 +1665,8 @@ void MainComponent::paint (juce::Graphics& g)
 
         g.setFont (monoFont (10.0f, true));
         g.setColour (rec ? Colours::red : (engine.isPlaying() ? Colours::mustard : Colours::textDim));
-        g.drawText (rec ? "REC" : (engine.isPlaying() ? "PLAY" : "STOP"), top, juce::Justification::centredLeft);
+        const int wd = engine.getWindDirection();
+        g.drawText (rec ? "REC" : (engine.isPlaying() ? "PLAY" : wd < 0 ? "REW" : wd > 0 ? "F FWD" : "STOP"), top, juce::Justification::centredLeft);
         g.setColour (Colours::textDim);
         g.drawText (mode == 1 ? juce::String ("BARS . BEATS") : (mode == 2 ? "TIMECODE  " + timecode::name (rate) : juce::String ("MIN : SEC")),
                     top, juce::Justification::centredRight);
