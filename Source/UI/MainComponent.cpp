@@ -1,5 +1,6 @@
 #include "MainComponent.h"
 #include "UIHelpers.h"
+#include "TapeChoice.h"
 
 #ifndef HAWTHORNE_VERSION
  #define HAWTHORNE_VERSION "dev"
@@ -223,7 +224,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     juce::LookAndFeel::setDefaultLookAndFeel (&lnf);
     setWantsKeyboardFocus (true);
 
-    for (auto* b : { &libraryButton, &sheetButton, &routingButton, &networkButton, &syncButton, &timecodeButton, &audioButton })
+    for (auto* b : { &libraryButton, &sheetButton, &routingButton, &networkButton, &syncButton, &timecodeButton, &audioButton, &machineButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (b);
@@ -235,6 +236,8 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     syncButton.onClick = [this] { showSync (SyncPanel::Page::tempo); };
     syncButton.setTooltip ("Tempo, bars and beats, click");
     timecodeButton.onClick = [this] { showSync (SyncPanel::Page::timecode); };
+    machineButton.onClick = [this] { showMachines(); };
+    machineButton.setTooltip ("Tape machine models: the multitrack, and the 2-track for the master");
     timecodeButton.setTooltip ("Timecode out (LTC / MTC) and chase");
     fullScreenButton.onClick = [this] { toggleFullScreen(); };
     fullScreenButton.setTooltip ("Full screen (F11)");
@@ -243,7 +246,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     networkButton.setTooltip ("Hawthorne Link: record audio sent from other PCs");
     audioButton.onClick   = [this] { showAudioSettings(); };
 
-    for (auto* k : { &rtzKey, &rewKey, &ffwKey, &stopKey, &playKey, &recKey, &markKey, &clickKey })
+    for (auto* k : { &rtzKey, &rewKey, &ffwKey, &liftKey, &stopKey, &playKey, &recKey, &markKey, &clickKey })
         addAndMakeVisible (k);
     rtzKey.onClick  = [this] { locate (0); };
     rewKey.onClick  = [this] { nudge (-5.0); };
@@ -252,6 +255,13 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     playKey.onClick = [this] { doPlay(); };
     recKey.onClick  = [this] { doRecord(); };
     markKey.onClick = [this] { addMarker(); };
+    liftKey.onClick = [this]
+    {
+        const bool on = ! engine.getLifterDefeat();
+        engine.setLifterDefeat (on);
+        props.getUserSettings()->setValue ("lifterDefeat", on);
+        props.saveIfNeeded();
+    };
 
     // Tempo and sync in the transport
     tempoBox.getReel = [this] { return reel.get(); };
@@ -297,7 +307,11 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     masterArmKey.onClick = [this]
     {
         if (reel == nullptr || engine.isRecording()) return;
-        if (reel->activeMaster < 0) { newMaster(); if (reel->activeMaster < 0) return; }
+        if (reel->activeMaster < 0)
+        {
+            newMaster ([this] { engine.setMasterArmed (true); refreshMasterSection(); });
+            return;
+        }
         engine.setMasterArmed (! engine.isMasterArmed());
     };
     monitorKey.onClick = [this] { engine.setMonitorMaster (! engine.isMonitoringMaster()); };
@@ -416,6 +430,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
 
     counterMode = juce::jlimit (0, 2, props.getUserSettings()->getIntValue ("counterMode", 0));
     engine.setWindPhysics (props.getUserSettings()->getBoolValue ("windPhysics", true));
+    engine.setLifterDefeat (props.getUserSettings()->getBoolValue ("lifterDefeat", false));
     setSize (1600, 900);
     startTimerHz (30);
 }
@@ -904,7 +919,8 @@ void MainComponent::showMasterMenu()
     juce::PopupMenu m;
     m.addSectionHeader ("MASTERS ON THIS REEL");
     for (int i = 0; i < (int) reel->masters.size(); ++i)
-        m.addItem (1 + i, reel->masters[(size_t) i].name, ! rec, i == reel->activeMaster);
+        m.addItem (1 + i, reel->masters[(size_t) i].name + "   (" + tape::info ((tape::Stock) reel->masters[(size_t) i].stock).label + ")",
+                   ! rec, i == reel->activeMaster);
     if (reel->masters.empty())
         m.addItem (999, "(none yet)", false);
     m.addSeparator();
@@ -912,6 +928,8 @@ void MainComponent::showMasterMenu()
     const bool has = reel->activeMaster >= 0;
     m.addItem (1002, "Rename...", has && ! rec);
     m.addItem (1003, "Delete...", has && ! rec);
+    m.addSeparator();
+    m.addItem (1004, juce::String ("2-track machine: ") + tape::masterMachine (reel->masterMachine).name + "...", ! rec);
 
     juce::PopupMenu ex;
     ex.addItem (2000, "Whole reel...");
@@ -931,6 +949,7 @@ void MainComponent::showMasterMenu()
         else if (r == 1001) newMaster();
         else if (r == 1002) renameMaster();
         else if (r == 1003) deleteMaster();
+        else if (r == 1004) showMachines();
         else if (reel->activeMaster >= 0)
         {
             const auto& name = reel->masters[(size_t) reel->activeMaster].name;
@@ -948,13 +967,50 @@ void MainComponent::showMasterMenu()
     });
 }
 
-void MainComponent::newMaster()
+void MainComponent::newMaster (std::function<void()> then)
 {
     if (reel == nullptr || engine.isRecording()) return;
-    const int idx = reel->addMaster (reel->nextMasterName());
-    engine.mastersChanged();
-    engine.setActiveMaster (idx);
-    refreshMasterSection();
+
+    // A new master tape: pick its stock (mastering tapes are for the 2-track only).
+    auto* w = new ReelDialog ("New master", "A fresh 2-track master tape, recorded in step with this reel.",
+                              juce::MessageBoxIconType::NoIcon, this);
+    w->addTextEditor ("name", reel->nextMasterName(), "Name:");
+    const int lastStock = reel->masters.empty() ? (int) tape::Stock::mastering499 : reel->masters.back().stock;
+    w->addStockPicker ("stock", "Master tape (fixed for the life of this master):", tape::forMaster, lastStock);
+    w->addMachinePicker ("machine", "2-track machine (can be changed later):", true, reel->masterMachine);
+    w->addButton ("Create", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, then] (int result)
+    {
+        if (result != 1 || reel == nullptr || engine.isRecording()) return;
+        auto name = w->getTextEditorContents ("name").trim();
+        const int idx = reel->addMaster (name.isNotEmpty() ? name : reel->nextMasterName(), w->stockAt ("stock"));
+        engine.setMasterMachine (w->getComboBoxComponent ("machine")->getSelectedItemIndex());
+        engine.mastersChanged();
+        engine.setActiveMaster (idx);
+        refreshMasterSection();
+        if (then) then();
+    }), true);
+}
+
+void MainComponent::showMachines()
+{
+    if (reel == nullptr) return;
+    auto* w = new ReelDialog ("Machines", juce::String ("The machines this reel plays on. The tape is ")
+                                  + tape::info ((tape::Stock) reel->tapeStock).name
+                                  + ".\nThe record side is printed onto the tape; playback follows the machine, so switching changes how the tape sounds back.",
+                              juce::MessageBoxIconType::NoIcon, this);
+    w->addMachinePicker ("machine", "Multitrack:", false, reel->machine);
+    w->addMachinePicker ("master", "2-track (master):", true, reel->masterMachine);
+    w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int result)
+    {
+        if (result != 1 || reel == nullptr) return;
+        engine.setMachine (w->getComboBoxComponent ("machine")->getSelectedItemIndex());
+        engine.setMasterMachine (w->getComboBoxComponent ("master")->getSelectedItemIndex());
+        repaint();
+    }), true);
 }
 
 void MainComponent::renameMaster()
@@ -1503,6 +1559,7 @@ void MainComponent::timerCallback()
     playKey.setLit (rolling);
     const int windDir = engine.getWindDirection();
     rewKey.setLit (windDir < 0);
+    liftKey.setLit (engine.getLifterDefeat());
     ffwKey.setLit (windDir > 0);
     clickKey.setLit (reel != nullptr && reel->clickOn && reel->tempoBpm > 0.0);
     if (frame % 5 == 0)
@@ -1628,7 +1685,8 @@ void MainComponent::paint (juce::Graphics& g)
                 sessionArea, juce::Justification::centredLeft, true);
     g.setColour (Colours::textDim);
     g.setFont (monoFont (11.0f));
-    g.drawText ((reel != nullptr ? juce::String (tape::info ((tape::Stock) reel->tapeStock).label) + "  " : juce::String())
+    g.drawText ((reel != nullptr ? juce::String (tape::multitrackMachine (reel->machine).label) + "  "
+                                     + tape::info ((tape::Stock) reel->tapeStock).label + "  " : juce::String())
                   + juce::String (reel != nullptr ? reel->numTracks : 0) + "-TRACK  v" HAWTHORNE_VERSION,
                 sessionArea, juce::Justification::centredRight);
 
@@ -1723,6 +1781,8 @@ void MainComponent::resized()
         h.removeFromRight (8);
         audioButton.setBounds (h.removeFromRight (140));
         h.removeFromRight (8);
+        machineButton.setBounds (h.removeFromRight (100));
+        h.removeFromRight (8);
         timecodeButton.setBounds (h.removeFromRight (100));
         h.removeFromRight (8);
         syncButton.setBounds (h.removeFromRight (76));
@@ -1768,7 +1828,7 @@ void MainComponent::resized()
             k.setBounds (d.removeFromLeft (w).reduced (0, 6));
             d.removeFromLeft (6);
         };
-        key (rtzKey, kw); key (rewKey, kw); key (ffwKey, kw);
+        key (rtzKey, kw); key (rewKey, kw); key (ffwKey, kw); key (liftKey, kw);
         d.removeFromLeft (gap);
         key (stopKey, kwBig); key (playKey, kwBig); key (recKey, kwBig);
         d.removeFromLeft (gap);

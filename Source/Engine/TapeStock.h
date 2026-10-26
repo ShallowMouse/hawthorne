@@ -31,8 +31,10 @@ namespace hawthorne
 */
 namespace tape
 {
-    enum class Stock { clean = 0, us456, highOutput, vintage, european };
-    constexpr int numStocks = 5;
+    // Saved by number: only ever add to the end.
+    enum class Stock { clean = 0, us456, highOutput, vintage, european, emitape, mastering499, sm900 };
+    constexpr int numStocks = 8;
+    enum StockUse { forMultitrack = 1, forMaster = 2 };
 
     struct StockInfo
     {
@@ -46,24 +48,92 @@ namespace tape
         double bumpDb;              // head bump at 15 ips
         double hfSoftDb;            // extra softening of the top end
         bool ccir;                  // European equalisation
+        int use = forMultitrack;    // multitrack reels and/or the 2-track master
     };
 
     inline const StockInfo& info (Stock s)
     {
         static const StockInfo stocks[numStocks] = {
             { "Clean (no tape)",          "CLEAN",         "No tape sound at all. Records bit-for-bit what comes in: no saturation, no EQ change, no hiss, no wow or flutter.",
-              99.0, 0.0,   -200.0, -200.0, 0.0, 0.0, false },
+              99.0, 0.0,   -200.0, -200.0, 0.0, 0.0, false, forMultitrack | forMaster },
             { "US mastering (456-type)",  "456-TYPE +6",   "Warm, fat and punchy. A strong low-end bump (around 60 Hz at 15 ips) and a slightly rounded top. Saturates fairly early and musically - push the levels for glue and thickness on drums and bass. Moderate hiss. The classic 70s / 80s rock sound.",
-              12.0, 0.025, -58.0,  -63.0,  2.0, 0.5, false },
+              12.0, 0.025, -58.0,  -63.0,  2.0, 0.5, false, forMultitrack },
             { "High output (GP9-type)",   "GP9-TYPE +9",   "Clean, tight and modern. The most headroom: you can hit it hard before it gets gritty, so it colours the least. Smaller low bump, full top end, low hiss. Tape glue without obvious distortion.",
-              15.0, 0.015, -62.0,  -66.0,  1.5, 0.0, false },
+              15.0, 0.015, -62.0,  -66.0,  1.5, 0.0, false, forMultitrack },
             { "Vintage 60s (250-type)",   "250-TYPE STD",  "Lo-fi and characterful. Breaks up soonest, with the most even-harmonic grit. Darker, softer top end, the biggest woolly low bump, and the most hiss and modulation noise. The 60s / garage sound.",
-              8.0,  0.07,  -52.0,  -58.0,  2.5, 2.0, false },
+              8.0,  0.07,  -52.0,  -58.0,  2.5, 2.0, false, forMultitrack },
             { "European (911-type)",      "911-TYPE +9",   "Smooth and polished. Lots of headroom, a firm but restrained low end and a silky top (European CCIR EQ). The quietest tape. Refined rather than vibey.",
-              14.0, 0.02,  -63.0,  -67.0,  1.2, 0.3, true },
+              14.0, 0.02,  -63.0,  -67.0,  1.2, 0.3, true, forMultitrack },
+            { "EMI 60s (Emitape-type)",   "EMITAPE",       "The tape the Beatles used at Abbey Road. Standard level: breaks up early and sweetly with plenty of even harmonics, a soft top, a round low end and audible hiss (CCIR EQ). Pair it with the J37 or the 3M M23 - and the BTR2 for the master.",
+              7.0,  0.06,  -53.0,  -58.5,  2.3, 1.6, true, forMultitrack | forMaster },
+            { "Mastering (480/499-type)", "499-TYPE +9",   "Mastering-grade US tape for the 2-track. Big headroom with a warm, solid low end and a clean top: glues the mix without obvious distortion. Low noise.",
+              14.0, 0.02,  -62.0,  -67.0,  2.0, 0.3, false, forMaster },
+            { "Mastering (SM900-type)",   "SM900 +12",     "Very high output mastering tape. Huge headroom and the lowest noise: the cleanest tape print, a subtle firm low end and a full top. For loud, modern masters.",
+              17.0, 0.012, -65.0,  -70.0,  1.6, 0.0, true, forMaster },
         };
         return stocks[juce::jlimit (0, numStocks - 1, (int) s)];
     }
+
+    //==========================================================================
+    /** Tape machine models: their electronics and heads colour the stock.
+        Record side (headroom, asymmetry) is printed; repro side is live, so
+        changing the machine changes how existing tape plays back. */
+    struct MachineInfo
+    {
+        const char* name;
+        const char* label;
+        const char* description;
+        double headroomDb;      // added to the stock's
+        double asymmetry;       // added (valve electronics: more even harmonics)
+        double bumpScale;       // head bump size
+        double bumpFreq;        // head bump frequency
+        double hfScale;         // high-frequency extension (corner multiplier)
+        double hfSoftDb;        // added top-end softening (negative = brighter)
+        double lowCut;          // low roll-off frequency multiplier
+        double hissDb;          // added hiss
+        double wowFlutter;      // transport wobble multiplier
+    };
+
+    inline constexpr MachineInfo neutralMachine { "None", "", "", 0, 0, 1, 1, 1, 0, 1, 0, 1 };
+
+    constexpr int numMultitrackMachines = 6;
+    inline const MachineInfo& multitrackMachine (int i)
+    {
+        static const MachineInfo m[numMultitrackMachines] = {
+            { "Studer A800 / A827", "STUDER A800", "Clean, punchy and tight: a firm, controlled low end, an extended top and a rock-steady transport. The modern studio standard.",
+              0.0, 0.0,   1.0,  1.0,  1.1,  0.0,  0.9,  0.0, 0.7 },
+            { "MCI JH-24", "MCI JH-24", "Bright and aggressive: forward upper mids, a lighter low end and a bit more grit. The 70s / 80s rock workhorse.",
+              -1.0, 0.01, 0.8,  1.1,  1.15, -0.6, 1.1,  1.0, 1.2 },
+            { "Ampex MM1200", "AMPEX MM1200", "Big and warm: the fattest low end and a soft, rounded top. Thick and forgiving.",
+              -0.5, 0.015, 1.35, 0.9, 0.85, 0.8,  0.85, 1.5, 1.3 },
+            { "Otari MTR-90", "OTARI MTR-90", "Neutral and solid: modern, honest and quiet, with a dependable transport. Colours the least.",
+              1.0, -0.005, 0.9, 1.0,  1.0,  0.0,  1.0, -1.0, 0.8 },
+            { "Studer J37 (EMI, valve 4-track)", "STUDER J37", "The Beatles' 4-track at Abbey Road (1965-67, Revolver, Sgt. Pepper). Valve electronics: thick, warm and slightly compressed, with soft valve grit, a gentle top and more hiss and wobble.",
+              -3.0, 0.05, 1.3,  1.0,  0.8,  1.5,  1.1,  3.0, 1.6 },
+            { "3M M23 (8-track)", "3M M23", "The Beatles' first 8-track at Abbey Road (1968-69, the White Album, Abbey Road). Early transistor: punchy and solid, a little darker and grainier than later machines.",
+              -1.5, 0.025, 1.2, 1.0,  0.95, 0.6,  1.0,  1.5, 1.2 },
+        };
+        return m[juce::jlimit (0, numMultitrackMachines - 1, i)];
+    }
+
+    constexpr int numMasterMachines = 5;
+    inline const MachineInfo& masterMachine (int i)
+    {
+        static const MachineInfo m[numMasterMachines] = {
+            { "Ampex ATR-102", "AMPEX ATR-102", "The classic mastering deck: a huge, deep low end, an open top and very low noise.",
+              1.0, 0.005, 1.4,  0.85, 1.15, -0.2, 0.75, -1.5, 0.5 },
+            { "Studer A80 / A820", "STUDER A80", "Smooth and detailed with a slightly silky top. Polished and refined.",
+              0.5, 0.0,   1.0,  1.0,  1.05, 0.3,  0.9, -1.0, 0.6 },
+            { "Otari MTR-12", "OTARI MTR-12", "Clean and neutral: an honest print of the mix.",
+              1.0, 0.0,   0.85, 1.0,  1.0,  0.0,  1.0, -1.0, 0.7 },
+            { "Ampex 351 (valve)", "AMPEX 351", "Vintage valve electronics: thick even-harmonic warmth, a softer top and more noise.",
+              -2.5, 0.05, 1.2,  0.95, 0.75, 1.5,  0.9,  3.0, 1.5 },
+            { "EMI BTR2 (valve)", "EMI BTR2", "EMI's valve 2-track: the Beatles' mono and stereo masters. Warm and round with gentle valve saturation and a soft top.",
+              -2.0, 0.04, 1.25, 0.95, 0.85, 1.0,  0.9,  2.0, 1.2 },
+        };
+        return m[juce::jlimit (0, numMasterMachines - 1, i)];
+    }
+
 
     //==========================================================================
     struct Biquad
@@ -206,7 +276,7 @@ namespace tape
 
         static inline float sat (float u) noexcept { return u / std::sqrt (1.0f + u * u); }
 
-        void set (Stock s, double tapeIps, double sampleRate)
+        void set (Stock s, double tapeIps, double sampleRate, const MachineInfo& mc = neutralMachine)
         {
             stock = s;
             ips = juce::jlimit (1.0, 60.0, tapeIps);
@@ -220,22 +290,22 @@ namespace tape
             deEmph  = Biquad::firstOrder (sr, tau / 6.0, tau);    // exact inverse after it
 
             // Saturation: ~3 % third harmonic at the stock's headroom above 0 VU (= -18 dBFS)
-            const double peakAtHeadroom = std::pow (10.0, (-18.0 + in.headroomDb) / 20.0) * std::sqrt (2.0);
+            const double peakAtHeadroom = std::pow (10.0, (-18.0 + in.headroomDb + mc.headroomDb) / 20.0) * std::sqrt (2.0);
             drive = (float) (0.49 / peakAtHeadroom);
-            bias = (float) in.asymmetry;
+            bias = (float) (in.asymmetry + mc.asymmetry);
             biasOut = sat (bias);
             modNoise = (float) std::pow (10.0, in.modNoiseDb / 20.0);
 
             // Playback: the head bump moves with the tape speed
-            const double fb = 4.0 * ips;
+            const double fb = 4.0 * ips * mc.bumpFreq;
             const double speedFactor = std::log2 (15.0 / ips);       // slower tape = bigger bump, earlier top loss
-            bump   = Biquad::peak (sr, fb, 1.1, in.bumpDb * (1.0 + 0.25 * speedFactor));
-            dip    = Biquad::peak (sr, fb * 2.2, 1.4, -0.4 * in.bumpDb);
-            lowCut = Biquad::highpass (sr, fb / 2.6, 0.65);
-            const double hfCorner = juce::jmin (0.45 * sr, 18000.0 * ips / 15.0);
+            bump   = Biquad::peak (sr, fb, 1.1, in.bumpDb * mc.bumpScale * (1.0 + 0.25 * speedFactor));
+            dip    = Biquad::peak (sr, fb * 2.2, 1.4, -0.4 * in.bumpDb * mc.bumpScale);
+            lowCut = Biquad::highpass (sr, fb / 2.6 * mc.lowCut, 0.65);
+            const double hfCorner = juce::jmin (0.45 * sr, 18000.0 * ips / 15.0 * mc.hfScale);
             hfLoss = Biquad::firstOrder (sr, 1.0 / (juce::MathConstants<double>::twoPi * hfCorner * 3.0), 1.0 / (juce::MathConstants<double>::twoPi * hfCorner));
-            hfSoft = Biquad::highShelf (sr, juce::jmin (0.4 * sr, 9000.0 * ips / 15.0), -in.hfSoftDb);
-            hiss = (float) (std::pow (10.0, (-18.0 + in.hissDb + 3.0 * speedFactor) / 20.0) * 1.7);
+            hfSoft = Biquad::highShelf (sr, juce::jmin (0.4 * sr, 9000.0 * ips / 15.0), -(in.hfSoftDb + mc.hfSoftDb));
+            hiss = (float) (std::pow (10.0, (-18.0 + in.hissDb + mc.hissDb + 3.0 * speedFactor) / 20.0) * 1.7);
             hissHp = Biquad::highpass (sr, 250.0, 0.7);
             hissLp = Biquad::firstOrder (sr, 0.0, 1.0 / (juce::MathConstants<double>::twoPi * juce::jmin (0.45 * sr, 11000.0)));
         }

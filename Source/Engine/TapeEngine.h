@@ -7,6 +7,7 @@
 #include "Varispeed.h"
 #include "Timecode.h"
 #include "TapeStock.h"
+#include "SpoolMonitor.h"
 #include "../Network/NetReceiver.h"
 #include <map>
 
@@ -48,6 +49,10 @@ public:
         chasing. If the tape was playing, it plays again on arrival. */
     void windTo (juce::int64 samplePos);
     void setWindPhysics (bool on) noexcept { windPhysics = on; }
+    /** Lifter defeat: hear the tape (the "chatter") while it spools. Monitor only. */
+    void setLifterDefeat (bool on);
+    bool getLifterDefeat() const noexcept  { return lifterDefeat.load(); }
+    bool isSpoolOverviewReady() const noexcept { return spool.isReady(); }
     bool getWindPhysics() const noexcept   { return windPhysics; }
     /** -1 rewinding, +1 fast forwarding, 0 not spooling. */
     int getWindDirection() const noexcept  { return wind.active ? (wind.vel < 0.0 ? -1 : wind.vel > 0.0 ? 1 : (wind.target < wind.pos ? -1 : 1)) : 0; }
@@ -320,6 +325,11 @@ private:
     };
     bool windPhysics = false;
     Wind wind;
+    std::atomic<bool> lifterDefeat { false }, windActiveA { false };
+    std::atomic<double> windPosA { 0.0 }, windVelA { 0.0 };
+    SpoolMonitor spool;
+    juce::HeapBlock<float> spoolBuf;
+    void requestSpool();
     void windStep();
     void windFinish (juce::int64 at);
     void windCancel();
@@ -352,7 +362,11 @@ private:
     std::atomic<bool> pubRolling { false };
 
     // Tape emulation (the reel's stock)
-    std::atomic<int> tapeStock { 0 };
+    std::atomic<int> tapeStock { 0 }, machineA { 0 }, masterMachineA { 0 }, masterStockA { 0 };
+    tape::Shared masterShared;                          // audio thread
+    int masterSharedKey = -1;
+    std::array<tape::RecordChannel, 2> masterRec;
+    std::array<tape::PlaybackChannel, 2> masterPlay;
     std::atomic<double> reelIps { 15.0 };
     std::atomic<bool> tapeReset { true };
     tape::Shared tapeShared;                            // audio thread
@@ -366,6 +380,9 @@ private:
 public:
     /** The record path's added latency for this reel's stock (compensated when recording). */
     int getTapeLatency() const noexcept { return tapeStock.load() != 0 ? tape::HalfBand::latency : 0; }
+    /** Machine models (changeable): the multitrack, and the 2-track for the master. */
+    void setMachine (int multitrackMachine);
+    void setMasterMachine (int twoTrackMachine);
 private:
 
     juce::HeapBlock<double> tapePosBuf;                 // tape position of every sample in a block

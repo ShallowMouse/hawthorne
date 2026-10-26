@@ -18,6 +18,7 @@ struct ReelSummary
     juce::StringArray masters;        // master mixes on the reel
     double ips = 15.0;                // speed it was recorded at
     int tapeStock = 0;                // tape::Stock
+    int machine = 0;                  // multitrack machine model
     juce::uint32 colour = 0;          // its own box colour (ARGB), 0 = the session's
     std::vector<TakeEntry> takes;
     bool archived = false;

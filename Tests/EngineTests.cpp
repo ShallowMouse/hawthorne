@@ -1748,6 +1748,54 @@ static void testWind()
     e.setReel (nullptr);
 }
 
+//==============================================================================
+static void testLifterDefeat()
+{
+    std::printf ("[20] lifter defeat: the tape is heard while it spools\n");
+    juce::String err;
+    auto reel = Reel::create (makeTempDir ("lifter"), "Lifter", kSR, 8, err);
+    writeSineTape (reel->getTapeFile (0), 100.0, 90.0, 0.5f);
+    TapeEngine e;
+    e.setReel (reel.get());
+    prepareEngine (e, 512, 8);
+    e.setWindPhysics (true);
+    for (bool lifter : { true, false })
+    {
+        e.setLifterDefeat (lifter);
+        if (lifter)
+        {
+            const auto t0 = juce::Time::getMillisecondCounter();
+            while (! e.isSpoolOverviewReady() && juce::Time::getMillisecondCounter() - t0 < 20000) juce::Thread::sleep (20);
+            CHECK (e.isSpoolOverviewReady(), "spool overview built");
+        }
+        e.windTo (lifter ? (juce::int64) (60 * kSR) : 0);
+        juce::AudioBuffer<float> in (8, 512), out (4, 512);
+        in.clear();
+        double ss = 0; juce::int64 count = 0; int zc = 0; float prev = 0.0f; double fastSs = 0; juce::int64 fastN = 0;
+        const auto t0 = juce::Time::getMillisecondCounter();
+        while (e.getWindDirection() != 0 && juce::Time::getMillisecondCounter() - t0 < 20000)
+        {
+            e.process (in.getArrayOfReadPointers(), 8, out.getArrayOfWritePointers(), 4, 512);
+            e.tick();
+            for (int k = 0; k < 512; ++k)
+            {
+                const float v = out.getSample (0, k);
+                ss += (double) v * v; ++count;
+                if ((v >= 0.0f) != (prev >= 0.0f)) ++zc;
+                prev = v;
+            }
+            juce::Thread::sleep (10);
+        }
+        juce::ignoreUnused (fastSs, fastN);
+        const double db = 10.0 * std::log10 (juce::jmax (1.0e-30, ss / juce::jmax ((juce::int64) 1, count)));
+        const double avgHz = 0.5 * zc / ((double) count / kSR);
+        if (lifter) CHECK (db > -40.0 && avgHz > 300.0, "lifter defeat: %.1f dB, ~%.0f Hz", db, avgHz);
+        else        CHECK (db < -50.0, "lifters in: silent (%.1f dB, only the previous wind's 20 ms fade)", db);
+        std::printf ("    lifter %-4s: %s\n", lifter ? "out" : "in", lifter ? juce::String::formatted ("chatter %.1f dB rms, average pitch ~%.0f Hz (100 Hz tone sped up)", db, avgHz).toRawUTF8() : "silent while spooling");
+    }
+    e.setReel (nullptr);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -1767,6 +1815,7 @@ int main()
     testTapeSync();
     testTapeStock();
     testWind();
+    testLifterDefeat();
    #if JUCE_LINUX || JUCE_MAC
     testCrashRecovery();
    #endif

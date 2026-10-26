@@ -72,6 +72,8 @@ void TapeEngine::setReel (Reel* s)
     targetRate = currentRate = s != nullptr ? s->getSpeedRatio() : 1.0;
     windCancel();
     tapeStock = s != nullptr ? s->tapeStock : 0;
+    machineA = s != nullptr ? s->machine : 0;
+    masterMachineA = s != nullptr ? s->masterMachine : 0;
     reelIps = s != nullptr ? s->ips : 15.0;
     tapeReset = true;
     if (s != nullptr)
@@ -121,6 +123,7 @@ void TapeEngine::prepare (double sampleRate, int maxBlockSize,
     vsOffset.calloc ((size_t) vsChunk);
     tapePosBuf.calloc ((size_t) vsChunk);
     tapeRecBuf.calloc ((size_t) juce::jmax (vsChunk, maxBlock));
+    spoolBuf.calloc ((size_t) juce::jmax (vsChunk, maxBlock));
     tapeReset = true;
     clickBuf.setSize (2, maxBlock);
     clickBuf.clear();
@@ -330,15 +333,17 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     {
         const double sr = juce::jmax (1000.0, deviceSampleRate.load (std::memory_order_relaxed));
         const double ips = reelIps.load (std::memory_order_relaxed) * (isRolling ? r1 : targetRate.load (std::memory_order_relaxed));
-        if (stockNow != tapeSharedStock || std::abs (ips - tapeSharedIps) > 0.003 * ips || tapeShared.sr != sr)
+        const int mach = machineA.load (std::memory_order_relaxed);
+        const int key = stockNow * 64 + mach;
+        if (key != tapeSharedStock || std::abs (ips - tapeSharedIps) > 0.003 * ips || tapeShared.sr != sr)
         {
-            tapeShared.set ((tape::Stock) stockNow, ips, sr);
-            tapeSharedStock = stockNow;
+            tapeShared.set ((tape::Stock) stockNow, ips, sr, tape::multitrackMachine (mach));
+            tapeSharedStock = key;
             tapeSharedIps = ips;
         }
         if (isRolling && rp == nullptr)
         {
-            const double w1 = wowFlutter.next (ips, sr, n);
+            const double w1 = 1.0 + (wowFlutter.next (ips, sr, n) - 1.0) * tape::multitrackMachine (mach).wowFlutter;
             r0 *= wfPrev;
             r1 *= w1;
             wfPrev = w1;
@@ -349,12 +354,33 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     else
         wfPrev = 1.0;
 
+    // The 2-track master: its own tape and machine
+    const int mStock = masterStockA.load (std::memory_order_relaxed);
+    const bool masterTapeOn = mStock != 0;
+    if (masterTapeOn)
+    {
+        const double sr = juce::jmax (1000.0, deviceSampleRate.load (std::memory_order_relaxed));
+        const double ips = reelIps.load (std::memory_order_relaxed) * (isRolling ? r1 : targetRate.load (std::memory_order_relaxed));
+        const int key = mStock * 64 + masterMachineA.load (std::memory_order_relaxed);
+        if (key != masterSharedKey || std::abs (ips - masterShared.ips) > 0.003 * ips || masterShared.sr != sr)
+        {
+            if (masterSharedKey < 0)
+                for (int side = 0; side < 2; ++side) { masterRec[(size_t) side].reset (0x2468ACEu + (uint32_t) side); masterPlay[(size_t) side].reset (0x13579BDu + (uint32_t) side); }
+            masterShared.set ((tape::Stock) mStock, ips, sr, tape::masterMachine (key % 64));
+            masterSharedKey = key;
+        }
+    }
+    else
+        masterSharedKey = -1;
+
     // First block of a record pass: decide how it goes to tape.
     if (rp != nullptr && rp->mode.load (std::memory_order_relaxed) == 0)
     {
         for (int t = 0; t < kMaxTracks; ++t)
             if (rp->streams[(size_t) t] != nullptr)
                 (*tapeRec)[(size_t) t].reset (0x1234567u + (uint32_t) t * 7919u);   // a fresh pass starts clean
+        for (int side = 0; side < 2; ++side)
+            masterRec[(size_t) side].reset (0x2468ACEu + (uint32_t) side);
         if (rp->rate == 1.0 && posFrac == 0.0)
         {
             rp->trackStart.store (pos - rp->latency);
@@ -560,8 +586,15 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
 
         if (recMaster)
         {
-            if (resampledRec) rp->masterRs.push (side, bus, n);
-            else              rp->masterStreams[(size_t) side]->push (bus, n);
+            const float* toTape = bus;
+            if (masterTapeOn)
+            {
+                // the 2-track's record side, printed onto the master tape
+                masterRec[(size_t) side].process (masterShared, bus, tapeRecBuf.get(), n);
+                toTape = tapeRecBuf.get();
+            }
+            if (resampledRec) rp->masterRs.push (side, toTape, n);
+            else              rp->masterStreams[(size_t) side]->push (toTape, n);
         }
 
         // Master tape playback
@@ -571,6 +604,8 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
             float* tb = masterTapeBus.getWritePointer (side);
             if (! readTape (g->master[(size_t) side], tb))
                 juce::FloatVectorOperations::clear (tb, n);
+            else if (masterTapeOn)
+                masterPlay[(size_t) side].process (masterShared, tb, n);   // 2-track repro head
             outSig = tb;
         }
 
@@ -643,6 +678,17 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     {
         clickWasRolling = false;
         clickEnv = 0.0;
+    }
+
+    // --- Lifter defeat: the tape heard while it spools (master outs, monitor only)
+    if (rt != nullptr && spoolBuf != nullptr)
+    {
+        const bool spooling = ! isRolling && lifterDefeat.load (std::memory_order_relaxed) && windActiveA.load (std::memory_order_relaxed);
+        juce::FloatVectorOperations::clear (spoolBuf.get(), n);
+        spool.render (spoolBuf.get(), n, spooling, windPosA.load (std::memory_order_relaxed), windVelA.load (std::memory_order_relaxed),
+                      juce::jmax (1000.0, deviceSampleRate.load (std::memory_order_relaxed)));
+        for (int side = 0; side < 2; ++side)
+                sendToOutputs (spoolBuf.get(), rt->masterOut[(size_t) side]);
     }
 
     // --- LTC out: timecode of the tape position, while it rolls
@@ -1032,6 +1078,12 @@ void TapeEngine::windTo (juce::int64 target)
         return;
     }
 
+    if (! wind.active)
+    {
+        windPosA.store (wind.pos);
+        windVelA.store (0.0);
+    }
+    windActiveA = true;
     wind.active = true;
     wind.braking = false;
     wind.creeping = false;
@@ -1041,6 +1093,7 @@ void TapeEngine::windTo (juce::int64 target)
 
 void TapeEngine::windCancel()
 {
+    windActiveA = false;
     wind.active = false;
     wind.rollAfter = false;
 }
@@ -1049,6 +1102,7 @@ void TapeEngine::windFinish (juce::int64 at)
 {
     const bool roll = wind.rollAfter;
     wind = {};
+    windActiveA = false;
     position.store (juce::jmax ((juce::int64) 0, at));
     primeReaders (position.load());
     if (roll)
@@ -1081,6 +1135,8 @@ void TapeEngine::windStep()
         wind.pos += wind.vel * dt;
         if (wind.pos <= 0.0) { wind.pos = 0.0; wind.vel = 0.0; }
         position.store ((juce::int64) wind.pos);
+        windPosA.store (wind.pos);
+        windVelA.store (wind.vel);
         if (wind.vel == 0.0)
             windFinish ((juce::int64) wind.pos);
         return;
@@ -1128,6 +1184,37 @@ void TapeEngine::windStep()
     }
 
     position.store ((juce::int64) wind.pos);
+    windPosA.store (wind.pos);
+    windVelA.store (wind.vel);
+    windActiveA.store (true);
+}
+
+void TapeEngine::setMachine (int m)
+{
+    machineA = juce::jlimit (0, tape::numMultitrackMachines - 1, m);
+    if (reel != nullptr) { reel->machine = machineA.load(); saveReel(); }
+}
+
+void TapeEngine::setMasterMachine (int m)
+{
+    masterMachineA = juce::jlimit (0, tape::numMasterMachines - 1, m);
+    if (reel != nullptr) { reel->masterMachine = masterMachineA.load(); saveReel(); }
+}
+
+void TapeEngine::setLifterDefeat (bool on)
+{
+    lifterDefeat = on;
+    if (on) requestSpool();
+}
+
+void TapeEngine::requestSpool()
+{
+    if (reel == nullptr || recording) return;
+    juce::Array<juce::File> files;
+    for (int t = 0; t < reel->numTracks; ++t)
+        if (reel->getTapeFile (t).existsAsFile())
+            files.add (reel->getTapeFile (t));
+    spool.request (files);
 }
 
 juce::String TapeEngine::setSpeed (double deckIps, bool variOn, double variPercent, bool save)
@@ -1389,7 +1476,9 @@ juce::String TapeEngine::beginRecordPass()
 
     auto p = std::make_unique<RecordPass>();
     p->latency = getRoundTrip() + getTapeLatency();     // the tape's record side adds a fixed delay
-    p->masterLatency = getMasterBusLatency();
+    p->masterLatency = getMasterBusLatency()
+                     + (juce::isPositiveAndBelow (reel->activeMaster, (int) reel->masters.size())
+                          && reel->masters[(size_t) reel->activeMaster].stock != 0 ? tape::HalfBand::latency : 0);
     p->rate = targetRate.load();
     p->rsChannel.fill (-1);
     {
@@ -1644,6 +1733,12 @@ void TapeEngine::rebuildPlaybackGraph()
 
     for (auto it = readerCache.begin(); it != readerCache.end();)
         it = it->second.use_count() == 1 ? readerCache.erase (it) : std::next (it);
+
+    if (lifterDefeat.load())
+        requestSpool();
+
+    masterStockA = reel != nullptr && juce::isPositiveAndBelow (reel->activeMaster, (int) reel->masters.size())
+                     ? reel->masters[(size_t) reel->activeMaster].stock : 0;
 }
 
 juce::int64 TapeEngine::getReelLength() const

@@ -38,6 +38,7 @@ struct MasterRouting
 struct MasterInfo
 {
     juce::String name;
+    int stock = 0;            // tape::Stock of this master tape, fixed when it's made
 };
 
 struct Marker
@@ -105,7 +106,7 @@ public:
     juce::Array<juce::File> equaliseTapeLengths (juce::String& error);
 
     // Masters
-    int  addMaster (const juce::String& name);                     // returns its index
+    int  addMaster (const juce::String& name, int stock = 0);                     // returns its index
     bool renameMaster (int index, const juce::String& newName, juce::String& error);
     bool removeMaster (int index, juce::String& error);            // files go to the Recycle Bin
     juce::String uniqueMasterName (const juce::String& wanted) const;
@@ -138,6 +139,8 @@ public:
     // the deck can run it at another speed and/or varispeed, like a real machine.
     double ips = 15.0;             // 7.5, 15 or 30
     int    tapeStock = 0;          // tape::Stock, chosen when the reel is made, fixed for life (0 = clean)
+    int    machine = 0;            // multitrack machine model (tape::multitrackMachine), changeable
+    int    masterMachine = 0;      // 2-track machine model for the master (tape::masterMachine), changeable
     double deckIps = 15.0;
     bool   variOn = false;
     double variPercent = 0.0;      // -50 .. +50

@@ -52,7 +52,7 @@ std::unique_ptr<Reel> Reel::create (const juce::File& parentFolder, const juce::
     s->sampleRate  = sampleRate > 0 ? sampleRate : 48000.0;
     s->numTracks   = juce::jlimit (1, kMaxTracks, numTracks);
     s->ips = s->deckIps = (ips == 7.5 || ips == 30.0) ? ips : 15.0;
-    s->tapeStock = juce::jlimit (0, 4, tapeStock);
+    s->tapeStock = juce::jlimit (0, 7, tapeStock);
     initDefaultTracks (s->tracks);
     s->info.set ("Reel No.", cleanName.retainCharacters ("0123456789").trimCharactersAtStart ("0"));
     s->info.set ("Date", juce::Time::getCurrentTime().formatted ("%d %b %Y"));
@@ -240,9 +240,9 @@ juce::String Reel::uniqueMasterName (const juce::String& wanted) const
     return name;
 }
 
-int Reel::addMaster (const juce::String& name)
+int Reel::addMaster (const juce::String& name, int stock)
 {
-    masters.push_back ({ uniqueMasterName (name) });
+    masters.push_back ({ uniqueMasterName (name), juce::jlimit (0, 7, stock) });
     return (int) masters.size() - 1;
 }
 
@@ -303,6 +303,8 @@ std::unique_ptr<juce::XmlElement> Reel::toXml() const
     root->setAttribute ("nextTake", nextTake);
     root->setAttribute ("ips", ips);
     root->setAttribute ("stock", tapeStock);
+    root->setAttribute ("machine", machine);
+    root->setAttribute ("masterMachine", masterMachine);
     auto* deck = root->createNewChildElement ("Deck");
     deck->setAttribute ("ips", deckIps);
     deck->setAttribute ("vari", variOn);
@@ -351,7 +353,11 @@ std::unique_ptr<juce::XmlElement> Reel::toXml() const
     ms->setAttribute ("armed", masterArmed);
     ms->setAttribute ("monitor", monitorMaster);
     for (auto& m : masters)
-        ms->createNewChildElement ("Mix")->setAttribute ("name", m.name);
+        {
+            auto* mx = ms->createNewChildElement ("Mix");
+            mx->setAttribute ("name", m.name);
+            mx->setAttribute ("stock", m.stock);
+        }
 
     auto* ie = root->createNewChildElement ("Info");
     for (auto& key : info.getAllKeys())
@@ -396,7 +402,9 @@ bool Reel::fromXml (const juce::XmlElement& root, juce::String& error)
     nextTake   = juce::jmax (1, root.getIntAttribute ("nextTake", 1));
 
     auto validIps = [] (double v) { return v == 7.5 || v == 15.0 || v == 30.0; };
-    tapeStock = juce::jlimit (0, 4, root.getIntAttribute ("stock", 0));   // older reels: clean
+    tapeStock = juce::jlimit (0, 7, root.getIntAttribute ("stock", 0));   // older reels: clean
+    machine = juce::jlimit (0, 5, root.getIntAttribute ("machine", 0));
+    masterMachine = juce::jlimit (0, 4, root.getIntAttribute ("masterMachine", 0));
     ips = root.getDoubleAttribute ("ips", 0.0);
     if (! validIps (ips))
     {
@@ -476,7 +484,7 @@ bool Reel::fromXml (const juce::XmlElement& root, juce::String& error)
     if (auto* ms = root.getChildByName ("Masters"))
     {
         for (auto* e : ms->getChildWithTagNameIterator ("Mix"))
-            masters.push_back ({ e->getStringAttribute ("name") });
+            masters.push_back ({ e->getStringAttribute ("name"), juce::jlimit (0, 7, e->getIntAttribute ("stock", 0)) });
         activeMaster  = juce::jlimit (-1, (int) masters.size() - 1, ms->getIntAttribute ("active", masters.empty() ? -1 : 0));
         masterArmed   = ms->getBoolAttribute ("armed", false) && activeMaster >= 0;
         monitorMaster = ms->getBoolAttribute ("monitor", false) && activeMaster >= 0;

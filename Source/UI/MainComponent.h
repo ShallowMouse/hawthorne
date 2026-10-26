@@ -135,7 +135,8 @@ private:
 
     // Masters
     void showMasterMenu();
-    void newMaster();
+    void newMaster (std::function<void()> then = {});
+    void showMachines();
     void renameMaster();
     void deleteMaster();
     void exportMaster (juce::int64 start, juce::int64 end, const juce::String& suggestedName);
@@ -198,7 +199,7 @@ private:
     std::unique_ptr<Session> session;    // the session it belongs to
 
     juce::TextButton libraryButton { "LIBRARY" }, sheetButton { "SESSION SHEET" },
-                     routingButton { "ROUTING" }, networkButton { "NETWORK" }, syncButton { "TEMPO" }, timecodeButton { "TIMECODE" }, audioButton { "SETTINGS" }, updateButton;
+                     routingButton { "ROUTING" }, networkButton { "NETWORK" }, syncButton { "TEMPO" }, timecodeButton { "TIMECODE" }, audioButton { "SETTINGS" }, machineButton { "MACHINE" }, updateButton;
     Updater updater;
 
     TransportKey rtzKey  { "RTZ",  "Return to zero (Enter)",          Colours::mustard },
@@ -208,7 +209,8 @@ private:
                  playKey { "PLAY", "Play (Space)",                    Colours::mustard },
                  recKey  { "REC",  "Record / punch in-out (R)",       Colours::red },
                  markKey { "MARK", "Drop a marker here (M)",          Colours::mustard },
-                 clickKey { "CLICK", "Click on / off (needs a tempo - TEMPO)", Colours::mustard };
+                 clickKey { "CLICK", "Click on / off (needs a tempo - TEMPO)", Colours::mustard },
+                 liftKey { "CUE", "Lifter defeat: keep the tape on the heads while it spools, so you hear it wind (the chatter). Monitor only.", Colours::mustard };
 
     juce::Viewport bridgeView;
     MeterBridge bridge;
