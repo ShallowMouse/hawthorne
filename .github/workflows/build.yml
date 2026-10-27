@@ -2,7 +2,7 @@ name: Build and Release
 
 on:
   push:
-    branches: [main, dev]  # main: build + test + publish.  dev: build + test only.
+    branches: [main]  # build + test + publish. (dev doesn't build: saves Actions minutes)
     tags:
       - 'v*'
   workflow_dispatch:  # Allow manual trigger
