@@ -49,8 +49,11 @@ inline const MachineStory& multitrackStory (int i)
           "3M's 8-track on 1-inch tape, one of the first 8-tracks. Abbey Road brought one in during 1968, and the Beatles used "
           "it for much of the White Album and Abbey Road. Each track has its own electronics drawer with a backlit VU.",
           "Early solid-state: punchy and solid, a little darker and grainier than later machines." },
+        { "Hawthorne  -  digital",
+          "No machine at all: the reel plays and records straight from its files, whatever tape it's on.",
+          "Bit-perfect: exactly what went in. No saturation, EQ, hiss, wow or flutter." },
     };
-    return s[juce::jlimit (0, 5, i)];
+    return s[juce::jlimit (0, 6, i)];
 }
 
 inline const MachineStory& masterStory (int i)
@@ -76,8 +79,11 @@ inline const MachineStory& masterStory (int i)
           "EMI's own valve tape recorder, the BTR2 - the mastering machine at Abbey Road for years. The Beatles' early mono "
           "and stereo masters were mixed to BTR2s. Housed in EMI green, read on a PPM.",
           "Warm and round with gentle valve saturation and a soft top." },
+        { "Hawthorne  -  digital",
+          "No 2-track machine: the master is recorded and played straight, whatever its tape.",
+          "Bit-perfect: the mix exactly as it left the bus." },
     };
-    return s[juce::jlimit (0, 4, i)];
+    return s[juce::jlimit (0, 5, i)];
 }
 
 //==============================================================================
@@ -187,36 +193,38 @@ public:
         viewport.setBounds (getLocalBounds());
         const int w = getWidth() - viewport.getScrollBarThickness() - 16;
         const int colW = (w - 16) / 2, cardH = 300;
-        int y = 8;
-        auto section = [&] (bool master, int count)
+        const int top = 42;
+        // multitrack on the left, the 2-track master on the right
+        int rows[2] = { 0, 0 };
+        auto place = [&] (bool master, int index)
         {
-            headers[master ? 1 : 0] = y;
-            y += 34;
-            int i = 0;
             for (auto* c : cards)
-                if (c->master == master)
+                if (c->master == master && c->index == index)
                 {
-                    c->setBounds (8 + (i % 2) * (colW + 16), y + (i / 2) * (cardH + 14), colW, cardH);
-                    ++i;
+                    const int col = master ? 1 : 0;
+                    c->setBounds (8 + col * (colW + 16), top + rows[col] * (cardH + 14), colW, cardH);
+                    ++rows[col];
                 }
-            y += ((count + 1) / 2) * (cardH + 14) + 10;
         };
-        section (false, tape::numMultitrackMachines);
-        section (true, tape::numMasterMachines);
-        content.setSize (w + 8, y);
-        content.headers = { headers[0], headers[1] };
+        // oldest at the top, newest at the bottom (no machine - digital - last)
+        for (int i : { 4 /*J37 1964*/, 5 /*3M M23 1966*/, 2 /*MM1200 1970s*/, 0 /*A800 1978*/, 1 /*JH-24 ~1980*/, 3 /*MTR-90 1980s*/, tape::noMultitrackMachine })
+            place (false, i);
+        for (int i : { 4 /*BTR2 1950s*/, 3 /*Ampex 351 1950s*/, 1 /*A80 1970*/, 0 /*ATR-102 1976*/, 2 /*MTR-12 1980s*/, tape::noMasterMachine })
+            place (true, i);
+        content.setSize (w + 8, top + juce::jmax (rows[0], rows[1]) * (cardH + 14) + 10);
+        content.colW = colW;
     }
 
 private:
     struct Content : juce::Component
     {
-        std::array<int, 2> headers { 0, 0 };
+        int colW = 400;
         void paint (juce::Graphics& g) override
         {
             g.setColour (Colours::mustard);
-            g.setFont (monoFont (16.0f, true));
-            g.drawText ("MULTITRACK  -  the deck, the transport and the track meters", 10, headers[0], getWidth() - 20, 30, juce::Justification::centredLeft);
-            g.drawText ("2-TRACK  -  the master", 10, headers[1], getWidth() - 20, 30, juce::Justification::centredLeft);
+            g.setFont (monoFont (15.0f, true));
+            g.drawText ("MULTITRACK  -  deck, transport, track meters", 10, 6, colW, 30, juce::Justification::centredLeft);
+            g.drawText ("2-TRACK  -  the master", 8 + colW + 18, 6, colW, 30, juce::Justification::centredLeft);
         }
     };
 
@@ -293,7 +301,6 @@ private:
     juce::Viewport viewport;
     Content content;
     juce::OwnedArray<Card> cards;
-    int headers[2] { 0, 0 };
 };
 
 } // namespace hawthorne

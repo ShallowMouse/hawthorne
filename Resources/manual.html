@@ -85,6 +85,7 @@ th { background:#ece2c8; font:700 13px "Courier New", monospace; }
 <h2 id="library">Sessions and reels</h2>
 <p>A <b>session</b> holds the reels for one job (an album, a single, a client). A <b>reel</b> is one tape: its track count, speed, sample rate and tape stock are fixed when it's made, like a real reel. The library shows each session's reels on a shelf as tape boxes.</p>
 <ul>
+  <li><b>IMPORT RECORDINGS</b> makes a new reel from existing recordings (stems or multitrack files). Pick the files, the session, the tape speed, the tape and the machine: the files are copied onto the new reel, one per track (stereo files onto two tracks, or mixed to mono), printed through the tape and machine you chose. The originals are only read, never changed. Choose Clean tape or no machine to bring them in bit-for-bit.</li>
   <li><b>NEW REEL</b> adds a reel to the selected session (defaults follow its last reel).</li>
   <li><b>COLOUR</b> sets a session's box colour; a reel can have its own.</li>
   <li>The tape box shows the reel's details: speed, machine, tape, length, masters and what's on it.</li>
@@ -176,6 +177,8 @@ th { background:#ece2c8; font:700 13px "Courier New", monospace; }
   <tr><td>Ampex 351 (valve)</td><td>Vintage valve warmth, softer top.</td></tr>
   <tr><td>EMI BTR2 (valve)</td><td>The Beatles' mono and stereo masters: warm and round.</td></tr>
 </table>
+
+<p><b>No machine (bit-perfect)</b> is in both columns too: with it, nothing is added on playback or recording &mdash; no saturation, EQ, hiss or wow &mdash; whatever tape the reel is on. The machine room lists the machines oldest first.</p>
 
 <h2 id="masters">Masters</h2>
 <p>A master is a stereo mix recorded onto the reel, sample-aligned with its tracks &mdash; the 2-track. In the sidebar:</p>

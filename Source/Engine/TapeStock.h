@@ -96,7 +96,8 @@ namespace tape
 
     inline constexpr MachineInfo neutralMachine { "None", "", "", 0, 0, 1, 1, 1, 0, 1, 0, 1 };
 
-    constexpr int numMultitrackMachines = 6;
+    constexpr int numMultitrackMachines = 7;     // the last is "None": bit-perfect
+    constexpr int noMultitrackMachine = 6;
     inline const MachineInfo& multitrackMachine (int i)
     {
         static const MachineInfo m[numMultitrackMachines] = {
@@ -112,11 +113,14 @@ namespace tape
               -3.0, 0.05, 1.3,  1.0,  0.8,  1.5,  1.1,  3.0, 1.6 },
             { "3M M23 (8-track)", "3M M23", "The Beatles' first 8-track at Abbey Road (1968-69, the White Album, Abbey Road). Early transistor: punchy and solid, a little darker and grainier than later machines.",
               -1.5, 0.025, 1.2, 1.0,  0.95, 0.6,  1.0,  1.5, 1.2 },
+            { "None (bit-perfect)", "NO MACHINE", "No machine: nothing between you and the files. No tape sound, no hiss, no wow or flutter - bit-for-bit, whatever the tape on the reel.",
+              0, 0, 1, 1, 1, 0, 1, 0, 0 },
         };
         return m[juce::jlimit (0, numMultitrackMachines - 1, i)];
     }
 
-    constexpr int numMasterMachines = 5;
+    constexpr int numMasterMachines = 6;         // the last is "None": bit-perfect
+    constexpr int noMasterMachine = 5;
     inline const MachineInfo& masterMachine (int i)
     {
         static const MachineInfo m[numMasterMachines] = {
@@ -130,6 +134,8 @@ namespace tape
               -2.5, 0.05, 1.2,  0.95, 0.75, 1.5,  0.9,  3.0, 1.5 },
             { "EMI BTR2 (valve)", "EMI BTR2", "EMI's valve 2-track: the Beatles' mono and stereo masters. Warm and round with gentle valve saturation and a soft top.",
               -2.0, 0.04, 1.25, 0.95, 0.85, 1.0,  0.9,  2.0, 1.2 },
+            { "None (bit-perfect)", "NO MACHINE", "No machine: the master is recorded bit-for-bit, whatever its tape.",
+              0, 0, 1, 1, 1, 0, 1, 0, 0 },
         };
         return m[juce::jlimit (0, numMasterMachines - 1, i)];
     }

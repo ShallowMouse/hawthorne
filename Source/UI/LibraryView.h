@@ -42,6 +42,7 @@ private:
     void updateSelection();
     void newSession();
     void newReel();
+    void importRecordings();
     void loadSelected();
     void archiveSelected();
     void deleteSelected();
@@ -61,6 +62,7 @@ private:
 
     juce::TextEditor search;
     juce::ToggleButton showArchived { "Show archived" };
+    juce::TextButton importButton { "IMPORT RECORDINGS..." };
     juce::TextButton newSessionButton { "NEW SESSION" }, backButton { "BACK TO DECK" }, folderButton { "CHANGE..." };
     juce::TextButton loadButton { "LOAD REEL" }, newReelButton { "NEW REEL" }, revealButton { "SHOW IN EXPLORER" },
                      archiveButton { "ARCHIVE" }, deleteButton { "DELETE" }, colourButton { "COLOUR" };

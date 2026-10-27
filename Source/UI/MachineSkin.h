@@ -90,8 +90,15 @@ struct MachineSkin
               Meter::vu, C (0xfffbe3a2), C (0xffe6ad48), C (0xff1d1a14), C (0xffb3261e), C (0xff9a9c98), C (0xffb4b6b2), C (0xff1e2226), C (0xff1d1a14),
               C (0xffc6c7c3), C (0xffb4b6b2), C (0xff9a9c98),
               C (0xffc6c7c3), C (0xff1e2226) },
+            // No machine (bit-perfect): Hawthorne's own deck
+            { "HAWTHORNE", "BIT-PERFECT", C (0xff252523), C (0xff1f1f1d), C (0xff3c3a35), C (0xffe8e2d0), C (0xff8a857a), false,
+              Keys::square, C (0xff302f2c), C (0xffe8e2d0),
+              Counter::amberLed, C (0xffd9a521), C (0xff0e0e0d),
+              Meter::vu, C (0xfff7e9bc), C (0xffe6c56a), C (0xff1d1a14), C (0xffc0392b), C (0xff0e0e0d), C (0xff151513), C (0xffd9a521), C (0xff1d1a14),
+              C (0xff1b1b1a), C (0xff121211), C (0xff3c3a35),
+              C (0xff0e0e0d), C (0xffd9a521) },
         };
-        return s[juce::jlimit (0, 5, i)];
+        return s[juce::jlimit (0, 6, i)];
     }
 
     /** The master meters, after the 2-track machine. */
@@ -124,8 +131,15 @@ struct MachineSkin
               Keys::bakelite, C (0xff1b1a18), C (0xffeee6cf), Counter::drum, C (0xfff3eedc), C (0xff121212),
               Meter::ppm, C (0xff151515), C (0xff0b0b0b), C (0xfff2f2ee), C (0xfff2f2ee), C (0xff2a2f2b), C (0xff1c201d), C (0xffe6e0cc), C (0xfff5f5f0),
               C (0xff7b927f), C (0xff6e8572), C (0xff5a6e5e), C (0xff1c201d), C (0xffd9e0d6) },
+            // No machine (bit-perfect): Hawthorne's own deck
+            { "HAWTHORNE", "BIT-PERFECT", C (0xff252523), C (0xff1f1f1d), C (0xff3c3a35), C (0xffe8e2d0), C (0xff8a857a), false,
+              Keys::square, C (0xff302f2c), C (0xffe8e2d0),
+              Counter::amberLed, C (0xffd9a521), C (0xff0e0e0d),
+              Meter::vu, C (0xfff7e9bc), C (0xffe6c56a), C (0xff1d1a14), C (0xffc0392b), C (0xff0e0e0d), C (0xff151513), C (0xffd9a521), C (0xff1d1a14),
+              C (0xff1b1b1a), C (0xff121211), C (0xff3c3a35),
+              C (0xff0e0e0d), C (0xffd9a521) },
         };
-        return s[juce::jlimit (0, 4, i)];
+        return s[juce::jlimit (0, 5, i)];
     }
 
     /** Meters: 0 = as the machine had them (auto), 1 = always VU, 2 = always PPM (SETTINGS). */

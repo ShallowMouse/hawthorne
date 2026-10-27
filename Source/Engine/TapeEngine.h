@@ -423,7 +423,7 @@ private:
     juce::HeapBlock<float> tapeRecBuf;
 public:
     /** The record path's added latency for this reel's stock (compensated when recording). */
-    int getTapeLatency() const noexcept { return tapeStock.load() != 0 ? tape::HalfBand::latency : 0; }
+    int getTapeLatency() const noexcept { return tapeStock.load() != 0 && machineA.load() != tape::noMultitrackMachine ? tape::HalfBand::latency : 0; }
     /** Machine models (changeable): the multitrack, and the 2-track for the master. */
     void setMachine (int multitrackMachine);
     void setMasterMachine (int twoTrackMachine);

@@ -379,7 +379,7 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     // Tape: the stock's settings for the speed the tape is really running at,
     // and transport wow & flutter while playing back (held steady while recording).
     const int stockNow = tapeStock.load (std::memory_order_relaxed);
-    const bool tapeOn = stockNow != 0;
+    const bool tapeOn = stockNow != 0 && machineA.load (std::memory_order_relaxed) != tape::noMultitrackMachine;   // no machine: bit-perfect
     if (tapeReset.exchange (false))
     {
         for (int t = 0; t < kMaxTracks; ++t)
@@ -416,7 +416,7 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
 
     // The 2-track master: its own tape and machine
     const int mStock = masterStockA.load (std::memory_order_relaxed);
-    const bool masterTapeOn = mStock != 0;
+    const bool masterTapeOn = mStock != 0 && masterMachineA.load (std::memory_order_relaxed) != tape::noMasterMachine;
     if (masterTapeOn)
     {
         const double sr = juce::jmax (1000.0, deviceSampleRate.load (std::memory_order_relaxed));
@@ -1734,7 +1734,8 @@ juce::String TapeEngine::beginRecordPass (bool pendingStart)
     p->latency = getRoundTrip() + getTapeLatency();     // the tape's record side adds a fixed delay
     p->masterLatency = getMasterBusLatency()
                      + (juce::isPositiveAndBelow (reel->activeMaster, (int) reel->masters.size())
-                          && reel->masters[(size_t) reel->activeMaster].stock != 0 ? tape::HalfBand::latency : 0);
+                          && reel->masters[(size_t) reel->activeMaster].stock != 0
+                          && reel->masterMachine != tape::noMasterMachine ? tape::HalfBand::latency : 0);
     p->rate = targetRate.load();
     p->crossfade = pendingStart || playing.load();
     p->rsChannel.fill (-1);

@@ -7,6 +7,13 @@ namespace hawthorne
 
 namespace
 {
+    const juce::Colour formInk { 0xff2b3f5c };      // the printer's ink on the form
+
+    inline juce::Font formFont (float size, bool bold = true)
+    {
+        return juce::Font (juce::FontOptions ("Arial", size, bold ? juce::Font::bold : juce::Font::plain)).withExtraKerningFactor (0.08f);
+    }
+
     /** Paper-coloured look for the sheet's widgets. */
     struct PaperLookAndFeel : public juce::LookAndFeel_V4
     {
@@ -45,8 +52,8 @@ namespace
         void drawTableHeaderColumn (juce::Graphics& g, juce::TableHeaderComponent&, const juce::String& name, int,
                                     int w, int h, bool, bool, int) override
         {
-            g.setColour (Paper::ink);
-            g.setFont (Paper::type (12.0f, true));
+            g.setColour (formInk);
+            g.setFont (formFont (10.5f));
             g.drawText (name, 6, 0, w - 8, h, juce::Justification::centredLeft);
             g.setColour (Paper::faint.withAlpha (0.5f));
             g.drawVerticalLine (w - 1, 0.0f, (float) h);
@@ -59,21 +66,115 @@ namespace
         return lnf;
     }
 
-    void paintPaper (juce::Graphics& g, juce::Rectangle<int> r, const juce::String& title, int firstRuleY, int ruleSpacing)
+    //--------------------------------------------------------------------------
+    // Period paperwork: a printed studio form (one-colour print, sans capitals)
+    // filled in on a typewriter (uneven ribbon, letters not quite on the line).
+
+    /** Typewritten text: each letter struck separately - a touch off the line, the ribbon uneven. */
+    inline void drawTyped (juce::Graphics& g, const juce::String& text, juce::Rectangle<float> area, float size,
+                           juce::Justification just = juce::Justification::centredLeft, juce::Colour ink = Paper::ink)
+    {
+        if (text.isEmpty()) return;
+        const auto font = Paper::type (size);
+        g.setFont (font);
+        const float cw = juce::GlyphArrangement::getStringWidth (font, "M");
+        const int n = text.length();
+        const float total = juce::GlyphArrangement::getStringWidth (font, text);
+        float x = area.getX();
+        if (just.testFlags (juce::Justification::horizontallyCentred)) x = area.getCentreX() - total * 0.5f;
+        else if (just.testFlags (juce::Justification::right))          x = area.getRight() - total;
+        const float y = area.getCentreY() - font.getHeight() * 0.5f;
+        juce::uint32 h = (juce::uint32) text.hashCode() * 2654435761u;
+        for (int i = 0; i < n && x < area.getRight() - cw * 0.3f; ++i)
+        {
+            h = h * 1664525u + 1013904223u;
+            const float jy = ((float) ((h >> 8) & 255) / 255.0f - 0.5f) * 1.1f;
+            const float jx = ((float) ((h >> 16) & 255) / 255.0f - 0.5f) * 0.5f;
+            const float a  = 0.68f + 0.32f * (float) ((h >> 24) & 255) / 255.0f;
+            const auto ch = juce::String::charToString (text[i]);
+            const juce::Rectangle<float> cell (x + jx, y + jy, cw * 1.5f, font.getHeight());
+            g.setColour (ink.withAlpha (a * 0.18f));                      // ink spread
+            g.drawText (ch, cell.translated (0.35f, 0.2f), juce::Justification::centredLeft, false);
+            g.setColour (ink.withAlpha (a));
+            g.drawText (ch, cell, juce::Justification::centredLeft, false);
+            x += juce::GlyphArrangement::getStringWidth (font, ch);   // (Courier is monospaced: one typewriter step)
+        }
+    }
+
+    /** Typewritten, wrapped onto the ruled lines of a notes box. */
+    inline void drawTypedLines (juce::Graphics& g, const juce::String& text, juce::Rectangle<float> area, float size, float lineH)
+    {
+        const auto font = Paper::type (size);
+        const float cw = juce::GlyphArrangement::getStringWidth (font, "M");
+        const int perLine = juce::jmax (8, (int) (area.getWidth() / cw) - 1);
+        float y = area.getY();
+        for (auto para : juce::StringArray::fromLines (text))
+        {
+            do
+            {
+                auto line = para.substring (0, perLine);
+                if (para.length() > perLine)
+                {
+                    const int sp = line.lastIndexOfChar (' ');
+                    if (sp > perLine / 2) line = para.substring (0, sp);
+                }
+                para = para.substring (line.length()).trimStart();
+                drawTyped (g, line, { area.getX(), y, area.getWidth(), lineH }, size);
+                y += lineH;
+            } while (para.isNotEmpty() && y < area.getBottom());
+            if (y >= area.getBottom()) break;
+        }
+    }
+
+    /** Aged paper with a little grain, punched for the binder, the form printed on it. */
+    inline void paintPaper (juce::Graphics& g, juce::Rectangle<int> r, const juce::String& title, int firstRuleY, int ruleSpacing)
     {
         g.setColour (Paper::paper);
         g.fillRect (r);
+
+        // grain and age
+        {
+            juce::Random rnd (4242);
+            const int dots = r.getWidth() * r.getHeight() / 900;
+            for (int i = 0; i < dots; ++i)
+            {
+                g.setColour ((rnd.nextBool() ? juce::Colour (0xff6b5a3a) : juce::Colours::white).withAlpha (0.035f + 0.04f * rnd.nextFloat()));
+                g.fillRect ((float) r.getX() + rnd.nextFloat() * (float) r.getWidth(), (float) r.getY() + rnd.nextFloat() * (float) r.getHeight(),
+                            1.0f + rnd.nextFloat() * 1.5f, 1.0f);
+            }
+            juce::ColourGradient age (juce::Colours::transparentBlack, (float) r.getCentreX(), (float) r.getCentreY(),
+                                      juce::Colour (0x28a07a30), (float) r.getX(), (float) r.getY(), true);
+            g.setGradientFill (age);
+            g.fillRect (r);
+        }
 
         g.setColour (Paper::rule.withAlpha (0.55f));
         for (int y = firstRuleY; y < r.getBottom(); y += ruleSpacing)
             g.drawHorizontalLine (y, (float) r.getX(), (float) r.getRight());
 
-        g.setColour (Paper::margin.withAlpha (0.6f));
+        g.setColour (Paper::margin.withAlpha (0.45f));
         g.drawVerticalLine (r.getX() + 36, (float) r.getY(), (float) r.getBottom());
 
-        g.setColour (Paper::ink);
-        g.setFont (Paper::type (20.0f, true));
-        g.drawText (title, r.getX() + 52, r.getY() + 12, r.getWidth() - 70, 28, juce::Justification::centredLeft);
+        // binder holes
+        for (float f : { 0.18f, 0.5f, 0.82f })
+        {
+            const auto c = juce::Point<float> ((float) r.getX() + 18.0f, (float) r.getY() + (float) r.getHeight() * f);
+            g.setColour (juce::Colour (0xff3a352b));
+            g.fillEllipse (juce::Rectangle<float> (11.0f, 11.0f).withCentre (c));
+            g.setColour (juce::Colour (0x30000000));
+            g.drawEllipse (juce::Rectangle<float> (13.0f, 13.0f).withCentre (c), 1.5f);
+        }
+
+        // the printed form: studio name, the form's title, a rule under it
+        g.setColour (formInk);
+        g.setFont (formFont (9.5f));
+        g.drawText ("H A W T H O R N E    R E C O R D I N G", r.getX() + 52, r.getY() + 6, r.getWidth() - 70, 12, juce::Justification::centredLeft);
+        g.setFont (formFont (19.0f));
+        g.drawText (title, r.getX() + 52, r.getY() + 17, r.getWidth() - 70, 24, juce::Justification::centredLeft);
+        g.fillRect ((float) r.getX() + 52.0f, (float) r.getY() + 42.0f, (float) r.getWidth() - 80.0f, 1.6f);
+        g.setFont (formFont (8.0f, false));
+        g.drawText ("FORM HR-" + juce::String (std::abs (title.hashCode()) % 90 + 10) + "   PRINTED IN NEW ZEALAND", r.getX() + 52, r.getBottom() - 14,
+                    r.getWidth() - 70, 10, juce::Justification::centredRight);
     }
 
     /** A cell / field you can type straight into. */
@@ -86,6 +187,36 @@ namespace
             setColour (juce::Label::textColourId, Paper::ink);
             setMinimumHorizontalScale (1.0f);
         }
+        void paint (juce::Graphics& g) override
+        {
+            if (isBeingEdited()) { juce::Label::paint (g); return; }
+            drawTyped (g, getText(), getLocalBounds().toFloat().reduced (4.0f, 0.0f), 14.0f);
+        }
+    };
+
+    /** A typed field: the typewriter look, a normal caret while you're typing in it. */
+    struct TypedEditor : public juce::TextEditor
+    {
+        using juce::TextEditor::TextEditor;
+        void focusGained (FocusChangeType t) override { typing = true; applyColour(); juce::TextEditor::focusGained (t); }
+        void focusLost (FocusChangeType t) override   { typing = false; applyColour(); juce::TextEditor::focusLost (t); }
+        void applyColour()
+        {
+            applyColourToAllText (typing ? Paper::ink : juce::Colours::transparentBlack, true);
+            setColour (juce::TextEditor::textColourId, typing ? Paper::ink : juce::Colours::transparentBlack);
+            repaint();
+        }
+        void paintOverChildren (juce::Graphics& g) override
+        {
+            juce::TextEditor::paintOverChildren (g);
+            if (typing) return;
+            const float size = getFont().getHeight() * 0.9f;
+            if (isMultiLine())
+                drawTypedLines (g, getText(), getLocalBounds().toFloat().reduced (3.0f, 2.0f), size, getFont().getHeight() * 1.25f);
+            else
+                drawTyped (g, getText(), getLocalBounds().toFloat().reduced (3.0f, 0.0f), size);
+        }
+        bool typing = false;
     };
 }
 
@@ -113,7 +244,7 @@ public:
 
         for (auto& key : fields)
         {
-            auto* ed = editors.add (new juce::TextEditor (key));
+            auto* ed = editors.add (new TypedEditor (key));
             ed->setFont (Paper::type (15.0f));
             ed->setTextToShowWhenEmpty (hints[key], Paper::faint.withAlpha (0.6f));
             ed->setIndents (2, 3);
@@ -126,6 +257,7 @@ public:
                 ed->setFont (Paper::type (15.0f));
                 ed->setLineSpacing (1.25f);
             }
+            static_cast<TypedEditor*> (ed)->applyColour();
 
             ed->onTextChange = [this, key, ed]
             {
@@ -154,15 +286,13 @@ public:
     {
         paintPaper (g, getLocalBounds(), title, 10000, 30);
 
-        g.setColour (Paper::faint);
-        g.setFont (Paper::type (13.0f, true));
-        g.drawText (getSubtitle(), getWidth() - 520, 14, 490, 26, juce::Justification::centredRight);
+        drawTyped (g, getSubtitle(), { (float) getWidth() - 560.0f, 16.0f, 530.0f, 24.0f }, 13.0f, juce::Justification::right);
 
-        g.setFont (Paper::type (12.0f, true));
+        g.setFont (formFont (9.5f));
         for (auto* ed : editors)
         {
             const auto b = ed->getBounds();
-            g.setColour (Paper::faint);
+            g.setColour (formInk);
             g.drawText (juce::String (ed->getName()).toUpperCase(), b.getX(), b.getY() - 15, b.getWidth(), 14,
                         juce::Justification::bottomLeft);
 

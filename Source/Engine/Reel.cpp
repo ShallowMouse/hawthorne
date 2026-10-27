@@ -452,9 +452,9 @@ bool Reel::fromXml (const juce::XmlElement& root, juce::String& error)
 
     auto validIps = [] (double v) { return v == 7.5 || v == 15.0 || v == 30.0; };
     tapeStock = juce::jlimit (0, 7, root.getIntAttribute ("stock", 0));   // older reels: clean
-    machine = juce::jlimit (0, 5, root.getIntAttribute ("machine", 0));
+    machine = juce::jlimit (0, 6, root.getIntAttribute ("machine", 0));
     flipped = root.getBoolAttribute ("flipped", false);
-    masterMachine = juce::jlimit (0, 4, root.getIntAttribute ("masterMachine", 0));
+    masterMachine = juce::jlimit (0, 5, root.getIntAttribute ("masterMachine", 0));
     ips = root.getDoubleAttribute ("ips", 0.0);
     if (! validIps (ips))
     {

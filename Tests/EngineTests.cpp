@@ -1080,6 +1080,34 @@ static void testTapeStock()
         }
     }
 
+    // No machine: bit-perfect, even on a tape stock
+    {
+        juce::String err;
+        auto reel = Reel::create (makeTempDir ("nomachine"), "NoMachine", kSR, kDefaultTracks, err, 15.0, 1);
+        reel->machine = tape::noMultitrackMachine;
+        auto sig = [] (int64 c) { return (float) (0.5 * std::sin (6.2831853 * 997.0 * (double) c / kSR)); };
+        TapeEngine e;
+        e.setReel (reel.get());
+        prepareEngine (e, 256);
+        e.setInput (0, 0);
+        e.setArmed (0, true);
+        SignalDevice dev (e, sig);
+        dev.startThread();
+        juce::Thread::sleep (50);
+        CHECK (e.record().isEmpty(), "record, no machine");
+        pump (e, (int) (1500 / testSpeed()));
+        e.stop();
+        dev.stopThread (5000);
+        const auto got = readTape (*reel, 0);
+        const int64 offset = dev.clockAt.load() - dev.posAt.load() + kLat;
+        int64 bad = 0, n = 0;
+        for (int64 q = 0; q < (int64) got.size(); ++q, ++n)
+            if (std::abs (got[(size_t) q] - sig (q + offset)) > 2.0e-7f) ++bad;
+        CHECK (n > (int64) kSR / 2 && bad == 0, "no machine records bit-for-bit (%lld of %lld samples differ)", (long long) bad, (long long) n);
+        std::printf ("    no machine on 456 tape: bit-perfect (%lld samples)\n", (long long) n);
+        e.setReel (nullptr);
+    }
+
     // Repro: hiss on a stock reel, silence on a clean one.
     for (int stock : { 0, 1 })
     {
@@ -2042,6 +2070,7 @@ int main()
     if (auto only = juce::SystemStats::getEnvironmentVariable ("HAWTHORNE_ONLY", {}); only.isNotEmpty())
     {
         // quick runs of the newest tests
+        if (only.contains ("18")) testTapeStock();
         if (only.contains ("20")) testLifterDefeat();
         if (only.contains ("21")) testAutoPunchAndCycle();
         if (only.contains ("22")) testImportExportFlip();

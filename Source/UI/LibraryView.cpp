@@ -3,6 +3,7 @@
 #include "SessionSheet.h"   // Paper colours
 #include "UIHelpers.h"
 #include "TapeChoice.h"
+#include "../Engine/TrackTransfer.h"
 
 namespace hawthorne
 {
@@ -502,6 +503,10 @@ LibraryView::LibraryView (juce::ApplicationProperties& p) : props (p)
     folderButton.onClick     = [this] { changeFolder(); };
     loadButton.onClick       = [this] { loadSelected(); };
     newReelButton.onClick    = [this] { newReel(); };
+    importButton.onClick     = [this] { importRecordings(); };
+    importButton.setTooltip ("Make a new reel from existing recordings (stems, multitracks): they're copied onto the tape - "
+                             "printed through the tape and machine you choose - and the originals are left as they are.");
+    addAndMakeVisible (importButton);
     revealButton.onClick     = [this] { revealSelected(); };
     archiveButton.onClick    = [this] { archiveSelected(); };
     deleteButton.onClick     = [this] { deleteSelected(); };
@@ -716,6 +721,179 @@ void LibraryView::newSession()
     }), true);
 }
 
+//==============================================================================
+// Import existing recordings onto a new reel (the originals are only read).
+void LibraryView::importRecordings()
+{
+    chooser = std::make_unique<juce::FileChooser> ("Import recordings onto a new reel - pick the files (stems / tracks)",
+                                                   juce::File::getSpecialLocation (juce::File::userMusicDirectory),
+                                                   "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles
+                            | juce::FileBrowserComponent::canSelectMultipleItems,
+                          [this] (const juce::FileChooser& fc)
+    {
+        auto files = fc.getResults();
+        if (files.isEmpty()) return;
+        files.sort();
+
+        struct Src { juce::File file; int channels; double rate; juce::int64 length; };
+        auto srcs = std::make_shared<std::vector<Src>>();
+        juce::AudioFormatManager fm;
+        fm.registerBasicFormats();
+        juce::StringArray bad;
+        int stereo = 0;
+        for (auto& f : files)
+        {
+            std::unique_ptr<juce::AudioFormatReader> rd (fm.createReaderFor (f));
+            if (rd == nullptr || rd->lengthInSamples <= 0) { bad.add (f.getFileName()); continue; }
+            srcs->push_back ({ f, (int) juce::jmin (2u, rd->numChannels), rd->sampleRate, rd->lengthInSamples });
+            if (rd->numChannels > 1) ++stereo;
+        }
+        if (srcs->empty()) { showError ("Import", "None of those files could be read (WAV, AIFF, FLAC, OGG or MP3)."); return; }
+
+        const double rate = srcs->front().rate;
+        double longest = 0.0;
+        for (auto& s : *srcs) longest = juce::jmax (longest, (double) s.length / s.rate);
+
+        juce::String msg;
+        msg << (int) srcs->size() << " file(s), " << juce::String (longest / 60.0, 1) << " min, " << juce::String (rate / 1000.0, 1) << " kHz"
+            << (bad.isEmpty() ? juce::String() : "\nSkipped (unreadable): " + bad.joinIntoString (", "))
+            << "\nThe originals aren't touched: they're copied onto the new reel, through the tape and machine you choose.";
+        auto* w = new ReelDialog ("Import recordings", msg, juce::MessageBoxIconType::NoIcon, this);
+
+        juce::StringArray sessionNames { "A new session" };
+        int sel = 0;
+        for (size_t i = 0; i < sessions.size(); ++i)
+        {
+            sessionNames.add (sessions[i].name);
+            if (sessions[i].file == selectedSessionFile) sel = (int) i + 1;
+        }
+        w->addComboBox ("session", sessionNames, "Into session:");
+        w->getComboBoxComponent ("session")->setSelectedItemIndex (sel);
+        w->addTextEditor ("name", files[0].getParentDirectory().getFileName(), "New session name:");
+        if (stereo > 0)
+        {
+            w->addComboBox ("stereo", { "Split left / right onto two tracks", "Mix to mono on one track" }, "Stereo files:");
+            w->getComboBoxComponent ("stereo")->setSelectedItemIndex (0);
+        }
+        w->addComboBox ("ips", { juce::String (juce::CharPointer_UTF8 ("7\xc2\xbd ips")), "15 ips", "30 ips" }, "Tape speed:");
+        w->getComboBoxComponent ("ips")->setSelectedItemIndex (1);
+        w->addStockPicker ("stock", "Tape (printed onto the copies; fixed for the reel):", tape::forMultitrack, 1);
+        w->addMachinePicker ("machine", "Machine (can be changed later):", false, 0);
+        w->addButton ("Import", 1, juce::KeyPress (juce::KeyPress::returnKey));
+        w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+        w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, srcs, rate, stereo] (int result)
+        {
+            if (result != 1) return;
+            const int sessionIdx = w->getComboBoxComponent ("session")->getSelectedItemIndex();
+            const bool split = stereo > 0 && w->getComboBoxComponent ("stereo")->getSelectedItemIndex() == 0;
+            const int stock = w->stockAt ("stock");
+            const int machine = w->getComboBoxComponent ("machine")->getSelectedItemIndex();
+            const double ips = w->getComboBoxComponent ("ips")->getSelectedItemIndex() == 0 ? 7.5
+                             : w->getComboBoxComponent ("ips")->getSelectedItemIndex() == 2 ? 30.0 : 15.0;
+
+            int needed = 0;
+            for (auto& s : *srcs) needed += (split && s.channels > 1) ? 2 : 1;
+            int tracks = 0;
+            for (int n : { 8, 16, 24, 32, 48, 64, 72, 96 }) if (n >= needed) { tracks = n; break; }
+            if (tracks == 0) { showError ("Import", juce::String (needed) + " tracks is more than a reel holds (96)."); return; }
+
+            juce::String err;
+            std::unique_ptr<Session> session;
+            if (sessionIdx <= 0)
+            {
+                auto name = w->getTextEditorContents ("name").trim();
+                if (name.isEmpty()) name = "Imported";
+                session = Session::create (getLibraryFolder(), name, err);
+            }
+            else
+                session = Session::load (sessions[(size_t) sessionIdx - 1].file, err);
+            if (session == nullptr) { showError ("Import", err); return; }
+
+            auto reel = session->createReel (tracks, rate, err, ips, stock);
+            if (reel == nullptr) { showError ("Import", err); return; }
+            reel->machine = machine;
+
+            // which file goes onto which track(s)
+            struct Job { juce::File src; juce::Array<juce::File> tapes; juce::String name; int first; };
+            auto jobs = std::make_shared<std::vector<Job>>();
+            int t = 0;
+            for (auto& s : *srcs)
+            {
+                Job j { s.file, {}, s.file.getFileNameWithoutExtension(), t };
+                j.tapes.add (reel->getTapeFile (t++));
+                if (split && s.channels > 1) j.tapes.add (reel->getTapeFile (t++));
+                jobs->push_back (j);
+            }
+            for (auto& j : *jobs)
+            {
+                if (j.tapes.size() == 2)
+                {
+                    reel->tracks[(size_t) j.first].name     = (j.name + " L").substring (0, 24);
+                    reel->tracks[(size_t) j.first + 1].name = (j.name + " R").substring (0, 24);
+                }
+                else
+                    reel->tracks[(size_t) j.first].name = j.name.substring (0, 24);
+            }
+            reel->info.set ("Reel Notes", "Imported recordings");
+            reel->save (err);
+
+            auto print = std::make_shared<tape::Shared>();
+            const bool printOn = stock != 0 && machine != tape::noMultitrackMachine;
+            if (printOn) print->set ((tape::Stock) stock, ips, rate, tape::multitrackMachine (machine));
+
+            struct ImportJob : juce::ThreadWithProgressWindow
+            {
+                ImportJob() : juce::ThreadWithProgressWindow ("Putting the recordings on tape...", true, true) {}
+                void run() override
+                {
+                    for (size_t i = 0; i < jobs->size() && error.isEmpty() && ! threadShouldExit(); ++i)
+                    {
+                        auto& j = (*jobs)[i];
+                        setStatusMessage (j.src.getFileName());
+                        error = transfer::importFile (j.src, j.tapes, rate, 0, printOn ? print.get() : nullptr,
+                                                      [&] (double p) { setProgress (((double) i + p) / (double) jobs->size()); return ! threadShouldExit(); });
+                    }
+                }
+                void threadComplete (bool cancelled) override { if (done) done (error, cancelled); delete this; }
+                std::shared_ptr<std::vector<Job>> jobs;
+                std::shared_ptr<tape::Shared> print;
+                bool printOn = false;
+                double rate = 48000.0;
+                juce::String error;
+                std::function<void (const juce::String&, bool)> done;
+            };
+            auto* job = new ImportJob();
+            job->jobs = jobs; job->print = print; job->printOn = printOn; job->rate = rate;
+            std::shared_ptr<Reel> keep (reel.release());
+            job->done = [this, keep, jobs] (const juce::String& error, bool cancelled)
+            {
+                juce::String e;
+                keep->equaliseTapeLengths (e);
+                for (auto& j : *jobs)
+                {
+                    TakeEntry te;
+                    te.take = keep->nextTake++;
+                    te.when = juce::Time::getCurrentTime().formatted ("%d %b %Y  %H:%M");
+                    te.start = 0;
+                    te.end = keep->getReelLength();
+                    te.tracks = j.tapes.size() == 2 ? juce::String (j.first + 1) + "-" + juce::String (j.first + 2) : juce::String (j.first + 1);
+                    te.comments = "Imported: " + j.src.getFileName();
+                    keep->takeLog.push_back (te);
+                }
+                keep->save (e);
+                const auto file = keep->getFile();
+                refresh();
+                select (file);
+                if (error.isNotEmpty()) showError ("Import", error);
+                else if (! cancelled && onLoadReel) onLoadReel (file);
+            };
+            job->launchThread();
+        }), true);
+    });
+}
+
 void LibraryView::newReel()
 {
     const auto* s = selectedSession();
@@ -876,6 +1054,8 @@ void LibraryView::resized()
             t.removeFromRight (10);
         }
         newSessionButton.setBounds (t.removeFromRight (140));
+        t.removeFromRight (10);
+        importButton.setBounds (t.removeFromRight (190));
         t.removeFromRight (16);
         showArchived.setBounds (t.removeFromRight (140));
         t.removeFromRight (10);
