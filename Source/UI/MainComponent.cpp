@@ -1,6 +1,7 @@
 #include "MainComponent.h"
 #include "UIHelpers.h"
 #include "TapeChoice.h"
+#include "MachineSkin.h"
 #include "../Engine/TrackTransfer.h"
 #include "BinaryData.h"
 
@@ -14,31 +15,108 @@ namespace hawthorne
 //==============================================================================
 void TransportKey::paintButton (juce::Graphics& g, bool highlighted, bool down)
 {
+    // Keys look like the machine's (MACHINE): rubber keys with LEDs, cream keys with
+    // coloured stripes, bakelite push buttons, illuminated keys, chrome-edged keys.
+    const auto& sk = MachineSkin::current();
     auto r = getLocalBounds().toFloat().reduced (1.0f);
-
-    // key body
-    juce::ColourGradient body (Colours::panelLight.brighter (0.15f), r.getX(), r.getY(),
-                               Colours::panelLight.darker (0.25f), r.getX(), r.getBottom(), false);
-    g.setGradientFill (body);
-    g.fillRoundedRectangle (r, 3.0f);
-    if (down)             { g.setColour (juce::Colour (0x40000000)); g.fillRoundedRectangle (r, 3.0f); }
-    else if (highlighted) { g.setColour (juce::Colour (0x12ffffff)); g.fillRoundedRectangle (r, 3.0f); }
-    g.setColour (Colours::black);
-    g.drawRoundedRectangle (r, 3.0f, 1.0f);
-
-    // lamp strip
-    auto lampRect = r.removeFromTop (5.0f).reduced (6.0f, 1.0f);
-    if (lit)
+    const bool isRec = getButtonText() == "REC";
+    const auto label = getButtonText();
+    auto text = [&] (juce::Colour c, juce::Rectangle<float> area, float size = 13.0f)
     {
-        g.setColour (lamp.withAlpha (0.35f));
-        g.fillRoundedRectangle (lampRect.expanded (2.0f, 2.0f), 2.0f);
-    }
-    g.setColour (lit ? lamp : lamp.darker (2.4f));
-    g.fillRoundedRectangle (lampRect, 1.5f);
+        g.setColour (c);
+        g.setFont (uiFont (size, true));
+        g.drawText (label, area, juce::Justification::centred);
+    };
+    auto pressed = [&] (float radius)
+    {
+        if (down)             { g.setColour (juce::Colour (0x40000000)); g.fillRoundedRectangle (r, radius); }
+        else if (highlighted) { g.setColour (juce::Colour (0x14ffffff)); g.fillRoundedRectangle (r, radius); }
+    };
 
-    g.setColour (getButtonText() == "REC" ? Colours::red.brighter (0.2f) : Colours::text);
-    g.setFont (uiFont (13.0f, true));
-    g.drawText (getButtonText(), r, juce::Justification::centred);
+    switch (sk.keys)
+    {
+        case MachineSkin::Keys::cream:
+        {
+            juce::ColourGradient body (sk.key.brighter (0.08f), r.getX(), r.getY(), sk.key.darker (0.12f), r.getX(), r.getBottom(), false);
+            g.setGradientFill (body);
+            g.fillRoundedRectangle (r, 2.0f);
+            pressed (2.0f);
+            g.setColour (sk.key.darker (0.5f));
+            g.drawRoundedRectangle (r, 2.0f, 1.0f);
+            auto stripe = r.removeFromBottom (6.0f).reduced (3.0f, 1.0f);
+            g.setColour (lit ? lamp : lamp.withSaturation (0.35f).withBrightness (0.75f));
+            g.fillRect (stripe);
+            if (lit) { g.setColour (lamp.withAlpha (0.25f)); g.fillRect (stripe.expanded (2.0f, 2.0f)); }
+            text (isRec ? juce::Colour (0xffb02a1e) : sk.keyText, r);
+            break;
+        }
+        case MachineSkin::Keys::bakelite:
+        {
+            const float rad = juce::jmin (r.getHeight(), r.getWidth()) * 0.22f;
+            juce::ColourGradient body (sk.key.brighter (0.35f), r.getCentreX(), r.getY(), sk.key, r.getCentreX(), r.getBottom(), false);
+            g.setGradientFill (body);
+            g.fillRoundedRectangle (r, rad);
+            g.setColour (juce::Colour (0x22ffffff));
+            g.fillRoundedRectangle (r.withHeight (r.getHeight() * 0.4f).reduced (3.0f, 2.0f), rad * 0.7f);
+            pressed (rad);
+            g.setColour (juce::Colours::black);
+            g.drawRoundedRectangle (r, rad, 1.2f);
+            // jewel lamp
+            auto j = juce::Rectangle<float> (7.0f, 7.0f).withCentre ({ r.getCentreX(), r.getY() + 7.0f });
+            if (lit) { g.setColour (lamp.withAlpha (0.35f)); g.fillEllipse (j.expanded (3.0f)); }
+            g.setColour (lit ? lamp : lamp.darker (2.6f));
+            g.fillEllipse (j);
+            text (isRec ? juce::Colour (0xffe0503c) : sk.keyText, r.withTrimmedTop (10.0f), 12.0f);
+            break;
+        }
+        case MachineSkin::Keys::illuminated:
+        {
+            const juce::Colour base = lit ? lamp.withMultipliedBrightness (0.95f) : sk.key;
+            juce::ColourGradient body (base.brighter (lit ? 0.25f : 0.12f), r.getX(), r.getY(), base.darker (0.3f), r.getX(), r.getBottom(), false);
+            g.setGradientFill (body);
+            g.fillRoundedRectangle (r, 3.0f);
+            if (lit) { g.setColour (lamp.withAlpha (0.25f)); g.drawRoundedRectangle (r.expanded (1.0f), 4.0f, 2.0f); }
+            pressed (3.0f);
+            g.setColour (juce::Colours::black);
+            g.drawRoundedRectangle (r, 3.0f, 1.0f);
+            text (lit ? juce::Colour (0xff141414) : (isRec ? juce::Colour (0xffe0503c) : sk.keyText), r);
+            break;
+        }
+        case MachineSkin::Keys::chrome:
+        {
+            juce::ColourGradient bevel (juce::Colour (0xffe6e6e2), r.getX(), r.getY(), juce::Colour (0xff6c6c68), r.getX(), r.getBottom(), false);
+            g.setGradientFill (bevel);
+            g.fillRoundedRectangle (r, 3.0f);
+            auto in = r.reduced (2.5f);
+            juce::ColourGradient body (sk.key.brighter (0.2f), in.getX(), in.getY(), sk.key, in.getX(), in.getBottom(), false);
+            g.setGradientFill (body);
+            g.fillRoundedRectangle (in, 2.0f);
+            pressed (3.0f);
+            auto lampRect = in.removeFromTop (5.0f).reduced (6.0f, 1.0f);
+            if (lit) { g.setColour (lamp.withAlpha (0.35f)); g.fillRoundedRectangle (lampRect.expanded (2.0f, 2.0f), 2.0f); }
+            g.setColour (lit ? lamp : lamp.darker (2.4f));
+            g.fillRoundedRectangle (lampRect, 1.5f);
+            text (isRec ? juce::Colour (0xffe0503c) : sk.keyText, in);
+            break;
+        }
+        case MachineSkin::Keys::square:
+        default:
+        {
+            juce::ColourGradient body (sk.key.brighter (0.15f), r.getX(), r.getY(), sk.key.darker (0.25f), r.getX(), r.getBottom(), false);
+            g.setGradientFill (body);
+            g.fillRoundedRectangle (r, 3.0f);
+            pressed (3.0f);
+            g.setColour (juce::Colours::black);
+            g.drawRoundedRectangle (r, 3.0f, 1.0f);
+            // LED in the key
+            auto led = juce::Rectangle<float> (12.0f, 4.0f).withCentre ({ r.getCentreX(), r.getY() + 6.0f });
+            if (lit) { g.setColour (lamp.withAlpha (0.35f)); g.fillRoundedRectangle (led.expanded (2.5f, 2.0f), 2.0f); }
+            g.setColour (lit ? lamp : lamp.darker (2.4f));
+            g.fillRoundedRectangle (led, 1.5f);
+            text (isRec ? juce::Colour (0xffe0503c) : sk.keyText, r.withTrimmedTop (5.0f));
+            break;
+        }
+    }
 }
 
 //==============================================================================
@@ -74,12 +152,13 @@ int MeterBridge::layoutForWidth (int width, int minHeight)
 
 void MeterBridge::paint (juce::Graphics& g)
 {
-    g.fillAll (Colours::bg);
+    const auto& sk = MachineSkin::current();
+    g.fillAll (sk.bridge);
     for (auto& p : rowPanels)
     {
-        g.setColour (Colours::black.brighter (0.04f));
+        g.setColour (sk.bridgeRow);
         g.fillRoundedRectangle (p.toFloat(), 4.0f);
-        g.setColour (Colours::edge.withAlpha (0.6f));
+        g.setColour (sk.bridgeEdge);
         g.drawRoundedRectangle (p.toFloat().reduced (0.5f), 4.0f, 1.0f);
     }
 }
@@ -133,23 +212,24 @@ void TempoBox::paint (juce::Graphics& g)
     auto* r = getReel ? getReel() : nullptr;
     const bool has = r != nullptr && r->tempoBpm > 0.0;
 
+    const auto& sk = MachineSkin::current();
     for (auto a : { bpmArea, sigArea })
     {
-        g.setColour (Colours::black);
+        g.setColour (sk.counterBg);
         g.fillRoundedRectangle (a.toFloat(), 3.0f);
-        g.setColour (Colours::edge);
+        g.setColour (sk.deckEdge);
         g.drawRoundedRectangle (a.toFloat(), 3.0f, 1.0f);
     }
 
-    g.setColour (has ? Colours::mustard : Colours::textDim);
+    g.setColour (has ? sk.counterInk : sk.counterInk.withAlpha (0.45f));
     g.setFont (monoFont (16.0f, true));
     auto b = bpmArea.reduced (6, 0);
     g.drawText (has ? juce::String (r->tempoBpm, 2) : juce::String ("---.--"), b, juce::Justification::centredLeft);
     g.setFont (monoFont (9.0f, true));
-    g.setColour (Colours::textDim);
+    g.setColour (sk.counterInk.withAlpha (0.5f));
     g.drawText ("BPM", b, juce::Justification::centredRight);
 
-    g.setColour (has ? Colours::text : Colours::textDim);
+    g.setColour (has ? sk.counterInk : sk.counterInk.withAlpha (0.45f));
     g.setFont (monoFont (15.0f, true));
     g.drawText (juce::String (r != nullptr ? r->beatsPerBar : 4) + "/4", sigArea, juce::Justification::centred);
 }
@@ -306,6 +386,8 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     bridgeView.setScrollBarThickness (10);
     addAndMakeVisible (bridgeView);
 
+    masterL.setMaster (true);
+    masterR.setMaster (true);
     masterL.setTooltip ("Master L");
     masterR.setTooltip ("Master R");
     addAndMakeVisible (masterL);
@@ -688,7 +770,9 @@ void MainComponent::setReel (std::unique_ptr<Reel> r, std::unique_ptr<Session> s
     }
 
     pushReelSync();
+    MachineSkin::select (reel != nullptr ? reel->machine : 0, reel != nullptr ? reel->masterMachine : 0);
     rebuildModules();
+    applySkin();
     refreshMasterSection();
     refreshSpeedSection();
     for (auto* w : { tempoWindow.get(), timecodeWindow.get() }) if (w != nullptr) w->getPanel().refresh();
@@ -1018,6 +1102,7 @@ void MainComponent::newMaster (std::function<void()> then)
         auto name = w->getTextEditorContents ("name").trim();
         const int idx = reel->addMaster (name.isNotEmpty() ? name : reel->nextMasterName(), w->stockAt ("stock"));
         engine.setMasterMachine (w->getComboBoxComponent ("machine")->getSelectedItemIndex());
+        applySkin();
         engine.mastersChanged();
         engine.setActiveMaster (idx);
         refreshMasterSection();
@@ -1027,6 +1112,17 @@ void MainComponent::newMaster (std::function<void()> then)
 
 //==============================================================================
 // Tape jobs: import, export, flip
+
+void MainComponent::applySkin()
+{
+    MachineSkin::select (reel != nullptr ? reel->machine : 0, reel != nullptr ? reel->masterMachine : 0);
+    for (auto* m : bridge.modules) { m->getMeter().skinChanged(); m->repaint(); }
+    masterL.skinChanged();
+    masterR.skinChanged();
+    bridge.repaint();
+    tempoBox.repaint();
+    repaint();
+}
 
 void MainComponent::showManual()
 {
@@ -1319,7 +1415,7 @@ void MainComponent::showMachines()
         if (result != 1 || reel == nullptr) return;
         engine.setMachine (w->getComboBoxComponent ("machine")->getSelectedItemIndex());
         engine.setMasterMachine (w->getComboBoxComponent ("master")->getSelectedItemIndex());
-        repaint();
+        applySkin();
     }), true);
 }
 
@@ -2036,19 +2132,37 @@ void MainComponent::paint (juce::Graphics& g)
                   + juce::String (reel != nullptr ? reel->numTracks : 0) + "-TRACK  v" HAWTHORNE_VERSION,
                 sessionArea, juce::Justification::centredRight);
 
-    // Transport deck
-    g.setColour (Colours::panel);
-    g.fillRect (deckArea);
-    g.setColour (Colours::edge);
-    g.drawHorizontalLine (deckArea.getY(), 0.0f, (float) getWidth());
+    // Transport deck, styled after the machine
+    const auto& sk = MachineSkin::current();
+    {
+        juce::ColourGradient deckGrad (sk.deck, 0.0f, (float) deckArea.getY(), sk.deckLow, 0.0f, (float) deckArea.getBottom(), false);
+        g.setGradientFill (deckGrad);
+        g.fillRect (deckArea);
+        if (sk.brushed)
+        {
+            juce::Random rnd (1234);
+            for (int y = deckArea.getY(); y < deckArea.getBottom(); ++y)
+            {
+                g.setColour ((rnd.nextBool() ? juce::Colours::white : juce::Colours::black).withAlpha (0.02f + 0.04f * rnd.nextFloat()));
+                g.drawHorizontalLine (y, (float) deckArea.getX(), (float) deckArea.getRight());
+            }
+        }
+        g.setColour (sk.deckEdge);
+        g.drawHorizontalLine (deckArea.getY(), 0.0f, (float) getWidth());
+        g.setColour (sk.deck.brighter (0.25f).withAlpha (0.5f));
+        g.drawHorizontalLine (deckArea.getY() + 1, 0.0f, (float) getWidth());
+    }
 
-    g.setColour (Colours::black);
+    // counter window
+    const bool drum = sk.counter == MachineSkin::Counter::drum;
+    g.setColour (sk.deckEdge.darker (0.4f));
+    g.fillRoundedRectangle (counterArea.toFloat().expanded (2.0f), 5.0f);
+    g.setColour (sk.counterBg);
     g.fillRoundedRectangle (counterArea.toFloat(), 4.0f);
-    g.setColour (Colours::edge);
-    g.drawRoundedRectangle (counterArea.toFloat(), 4.0f, 1.0f);
 
     const bool rec = engine.isRecording();
-    g.setColour (rec ? Colours::red : Colours::mustard);
+    const juce::Colour ink = sk.counterInk;
+    g.setColour (rec && ! drum ? Colours::red : ink);
     {
         // top: state and which readout is big.  middle: the chosen readout (click the clock to
         // choose).  bottom: the other two.
@@ -2064,35 +2178,87 @@ void MainComponent::paint (juce::Graphics& g)
         const int mode = (counterMode == 1 && bbt.isEmpty()) ? 0 : counterMode;
         const juce::String big = mode == 1 ? bbt : (mode == 2 ? tc : ms);
 
-        g.setFont (monoFont (juce::jmin ((float) c.getHeight() * 0.95f, (float) c.getWidth() / 7.6f), true));
-        g.drawText (big, c, juce::Justification::centred);
+        const auto bigFont = monoFont (juce::jmin ((float) c.getHeight() * 0.95f, (float) c.getWidth() / 7.6f), true);
+        if (drum)
+        {
+            // mechanical counter: white figures on turning drums
+            const float cw = (float) c.getWidth() / (float) juce::jmax (1, big.length()) * 0.98f;
+            const float ch = (float) c.getHeight() * 0.92f;
+            auto cell = juce::Rectangle<float> (cw * (float) big.length(), ch).withCentre (c.toFloat().getCentre());
+            g.setFont (bigFont.withHeight (ch * 0.86f));
+            for (int i = 0; i < big.length(); ++i)
+            {
+                auto d = cell.removeFromLeft (cw);
+                const auto chr = juce::String::charToString (big[i]);
+                if (juce::CharacterFunctions::isDigit (big[i]))
+                {
+                    juce::ColourGradient drumGrad (juce::Colour (0xff0b0b0b), d.getX(), d.getY(), juce::Colour (0xff0b0b0b), d.getX(), d.getBottom(), false);
+                    drumGrad.addColour (0.5, juce::Colour (0xff2c2c2a));
+                    g.setGradientFill (drumGrad);
+                    g.fillRect (d.reduced (1.0f, 0.0f));
+                }
+                g.setColour (ink);
+                g.drawText (chr, d, juce::Justification::centred, false);
+            }
+            g.setColour (juce::Colour (0x30000000));
+            g.fillRect (c.toFloat().withHeight ((float) c.getHeight() * 0.18f));
+            g.fillRect (c.toFloat().withTrimmedTop ((float) c.getHeight() * 0.82f));
+        }
+        else
+        {
+            // LED / fluorescent display: unlit segments behind, a glow around the lit ones
+            g.setFont (bigFont);
+            juce::String ghost;
+            for (auto ch : big) ghost << (juce::CharacterFunctions::isDigit (ch) ? juce::juce_wchar ('8') : ch);
+            g.setColour (ink.withAlpha (0.08f));
+            g.drawText (ghost, c, juce::Justification::centred);
+            const auto lit = rec ? Colours::red : ink;
+            g.setColour (lit.withAlpha (0.22f));
+            g.drawText (big, c.translated (1, 0), juce::Justification::centred);
+            g.drawText (big, c.translated (-1, 0), juce::Justification::centred);
+            g.setColour (lit);
+            g.drawText (big, c, juce::Justification::centred);
+        }
 
         g.setFont (monoFont (10.0f, true));
-        g.setColour (rec ? Colours::red : (engine.isPlaying() ? Colours::mustard : Colours::textDim));
+        g.setColour (rec ? Colours::red : (engine.isPlaying() ? ink : ink.withAlpha (0.5f)));
         const int wd = engine.getWindDirection();
         g.drawText (rec ? "REC" : (engine.isPlaying() ? "PLAY" : wd < 0 ? "REW" : wd > 0 ? "F FWD" : "STOP"), top, juce::Justification::centredLeft);
-        g.setColour (Colours::textDim);
+        g.setColour (ink.withAlpha (0.5f));
         g.drawText (mode == 1 ? juce::String ("BARS . BEATS") : (mode == 2 ? "TIMECODE  " + timecode::name (rate) : juce::String ("MIN : SEC")),
                     top, juce::Justification::centredRight);
 
         g.setFont (monoFont (13.0f, true));
         const juce::String bbtLine = bbt.isNotEmpty() ? "BAR " + bbt : juce::String ("NO TEMPO");
-        g.setColour (Colours::mustardDim.brighter (0.5f));
+        g.setColour (ink.withAlpha (0.7f));
         g.drawText (mode == 0 ? bbtLine : ms, bottom, juce::Justification::centredLeft);
-        g.setColour (Colours::textDim);
+        g.setColour (ink.withAlpha (0.5f));
         g.drawText (mode == 2 ? bbtLine : "TC " + tc, bottom, juce::Justification::centredRight);
     }
 
     if (reel != nullptr)
     {
-        g.setColour (Colours::textDim);
+        // the maker's badge
+        {
+            g.setFont (juce::Font (juce::FontOptions ("Arial", 15.0f, juce::Font::bold)));
+            const juce::String badgeText = juce::String (sk.brand) + "  " + sk.model;
+            const int bw = juce::jmin (reelInfoArea.getWidth(), (int) juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), badgeText) + 22);
+            auto badge = juce::Rectangle<int> (bw, 22).withPosition (reelInfoArea.getRight() - bw, deckArea.getY() + 8);
+            g.setColour (sk.badge);
+            g.fillRoundedRectangle (badge.toFloat(), 3.0f);
+            g.setColour (sk.badgeText.withAlpha (0.35f));
+            g.drawRoundedRectangle (badge.toFloat().reduced (1.5f), 2.0f, 1.0f);
+            g.setColour (sk.badgeText);
+            g.drawText (badgeText, badge, juce::Justification::centred, false);
+        }
+        g.setColour (sk.deckTextDim);
         g.setFont (monoFont (12.0f, true));
         g.drawFittedText ("REEL  " + formatTime (engine.getReelLength(), sessionRate()).dropLastCharacters (4)
                               + "\n" + juce::String (reel->numTracks) + " TRACKS  -  "
                               + juce::String (reel->sampleRate / 1000.0, 1) + " kHz / 24-bit"
                               + "\n" + speedText(),
-                          reelInfoArea, juce::Justification::centredLeft, 3);
-        g.setColour (Colours::textDim);
+                          reelInfoArea.withTrimmedTop (24), juce::Justification::centredLeft, 3);
+        g.setColour (sk.deckTextDim);
         g.setFont (monoFont (10.0f, true));
         g.drawText ("SPEED", speedLabelArea, juce::Justification::centredLeft);
     }

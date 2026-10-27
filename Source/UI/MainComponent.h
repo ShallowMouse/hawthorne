@@ -144,6 +144,8 @@ private:
     void showTrackMenu (int track);
     void showMachineMenu();
     void showManual();
+    /** Style the deck and meters after the reel's machines. */
+    void applySkin();
     void importAudio (int track);
     void exportTracks (juce::Array<int> tracks);
     void flipReel();

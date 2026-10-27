@@ -35,11 +35,13 @@ void ChannelModule::setArmed (bool armed, bool recording, bool flashPhase)
 void ChannelModule::paint (juce::Graphics& g)
 {
     // control strip under the meter
+    const auto& sk = MachineSkin::current();
     auto strip = getLocalBounds().removeFromBottom (controlsHeight).toFloat().reduced (1.0f, 1.0f);
-    g.setColour (isArmed ? Colours::redDim : Colours::black.brighter (0.05f));
+    g.setColour (isArmed ? Colours::redDim : sk.bridgeRow.darker (0.25f));
     g.fillRoundedRectangle (strip, 3.0f);
 
-    g.setColour (Colours::text);
+    const bool lightStrip = ! isArmed && sk.bridgeRow.darker (0.25f).getPerceivedBrightness() > 0.5f;
+    g.setColour (lightStrip ? juce::Colour (0xff1d1a14) : Colours::text);
     g.setFont (uiFont ((float) numberArea.getHeight() * 0.95f, true));
     g.drawText (juce::String (index + 1), numberArea, juce::Justification::centredRight);
 }

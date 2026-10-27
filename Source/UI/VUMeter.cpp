@@ -12,10 +12,9 @@ namespace
 
     float posForVu (float vu) { return zeroVuPos * std::pow (10.0f, vu / 20.0f); }
 
-    const juce::Colour faceTop    { 0xfff7e9bc };
-    const juce::Colour faceBottom { 0xffe6c56a };
-    const juce::Colour ink        { 0xff1d1a14 };
-    const juce::Colour redInk     { 0xffc0392b };
+    float vuForPos (float pos) { return 20.0f * std::log10 (juce::jmax (1.0e-4f, pos / zeroVuPos)); }
+    constexpr float ledMinVu = -20.0f, ledMaxVu = 3.0f;
+    constexpr int ledSegments = 24;
 }
 
 VUMeter::VUMeter (const juce::String& l) : label (l)
@@ -56,7 +55,13 @@ void VUMeter::update (float rms, float peak, float dt)
     else
         peakHold = juce::jmax (0.0f, peakHold - dt);
 
-    if (std::abs (needle - drawnNeedle) > 0.0015f || wasPeak != (peakHold > 0.0f))
+    // LED meters: a fast peak bar on top of the VU level
+    const float pkVu = 20.0f * std::log10 (juce::jmax (1.0e-6f, peak)) - referenceDbfs - 3.0f;
+    if (pkVu > ledPeakDb) { ledPeakDb = pkVu; ledPeakHold = 0.8f; }
+    else if ((ledPeakHold -= dt) <= 0.0f) ledPeakDb = juce::jmax (-60.0f, ledPeakDb - 26.0f * dt);
+
+    if (std::abs (needle - drawnNeedle) > 0.0015f || wasPeak != (peakHold > 0.0f)
+        || (skin().meter == MachineSkin::Meter::ledBar && ledPeakDb > ledMinVu - 1.0f))
         repaint();
 }
 
@@ -114,6 +119,14 @@ void VUMeter::renderFace()
     juce::Graphics g (faceCache);
     g.addTransform (juce::AffineTransform::scale (scale));
 
+    if (skin().meter == MachineSkin::Meter::ledBar)
+    {
+        renderLedFace (g);
+        return;
+    }
+
+    const auto& sk = skin();
+    const juce::Colour faceTop = sk.faceTop, faceBottom = sk.faceBottom, ink = sk.meterInk, redInk = sk.meterRed;
     auto outer = getLocalBounds().toFloat().reduced (1.0f);
     auto face = faceArea();
     const auto P = pivot();
@@ -121,7 +134,7 @@ void VUMeter::renderFace()
     const float fh = face.getHeight();
 
     // Bezel
-    g.setColour (Colours::black);
+    g.setColour (sk.bezel);
     g.fillRoundedRectangle (outer, 5.0f);
     g.setGradientFill (juce::ColourGradient (Colours::edge.brighter (0.3f), outer.getX(), outer.getY(),
                                              Colours::black, outer.getX(), outer.getBottom(), false));
@@ -224,17 +237,86 @@ void VUMeter::renderFace()
 }
 
 //==============================================================================
+juce::Rectangle<float> VUMeter::ledArea() const
+{
+    auto face = faceArea();
+    const float fh = face.getHeight();
+    auto a = face.withBottom (face.getBottom() - fh * plateFrac).reduced (face.getWidth() * 0.06f, fh * 0.1f);
+    return a.withTrimmedTop (a.getHeight() * 0.42f);
+}
+
+void VUMeter::renderLedFace (juce::Graphics& g)
+{
+    const auto& sk = skin();
+    auto outer = getLocalBounds().toFloat().reduced (1.0f);
+    auto face = faceArea();
+    const float fh = face.getHeight();
+
+    g.setColour (sk.bezel);
+    g.fillRoundedRectangle (outer, 4.0f);
+    g.setColour (sk.faceTop);
+    g.fillRoundedRectangle (face, 2.0f);
+
+    // unlit segments and the scale
+    auto bar = ledArea();
+    const float segW = bar.getWidth() / (float) ledSegments;
+    for (int i = 0; i < ledSegments; ++i)
+    {
+        const float vu = ledMinVu + (ledMaxVu - ledMinVu) * ((float) i + 0.5f) / (float) ledSegments;
+        const auto col = vu >= 0.0f ? juce::Colour (0xffff3b2e) : vu >= -6.0f ? juce::Colour (0xffffc928) : juce::Colour (0xff3dff6a);
+        g.setColour (col.withAlpha (0.12f));
+        g.fillRect (juce::Rectangle<float> (bar.getX() + (float) i * segW + 1.0f, bar.getY(), segW - 2.0f, bar.getHeight()));
+    }
+    const float numSize = juce::jmax (6.0f, fh * 0.12f);
+    g.setFont (uiFont (numSize, true));
+    for (float vu : { -20.0f, -10.0f, -5.0f, -3.0f, 0.0f, 3.0f })
+    {
+        const float x = bar.getX() + bar.getWidth() * (vu - ledMinVu) / (ledMaxVu - ledMinVu);
+        g.setColour (vu > 0.0f ? sk.meterRed : sk.meterInk);
+        g.drawText (vu > 0.0f ? "+" + juce::String ((int) vu) : juce::String ((int) vu),
+                    juce::Rectangle<float> (numSize * 3.0f, numSize * 1.2f).withCentre ({ x, bar.getY() - numSize * 0.9f }),
+                    juce::Justification::centred, false);
+    }
+    g.setColour (sk.meterInk.withAlpha (0.6f));
+    g.setFont (uiFont (numSize * 0.8f, true));
+    g.drawText ("dB VU", face.withHeight (fh * 0.22f).reduced (4.0f, 0.0f), juce::Justification::centredRight, false);
+}
+
+void VUMeter::paintLed (juce::Graphics& g)
+{
+    auto bar = ledArea();
+    const float segW = bar.getWidth() / (float) ledSegments;
+    const float level = vuForPos (needle);
+    for (int i = 0; i < ledSegments; ++i)
+    {
+        const float vu = ledMinVu + (ledMaxVu - ledMinVu) * ((float) i + 0.5f) / (float) ledSegments;
+        const bool on = vu <= level || (std::abs (vu - ledPeakDb) < (ledMaxVu - ledMinVu) / (float) ledSegments * 0.5f);
+        if (! on) continue;
+        const auto col = vu >= 0.0f ? juce::Colour (0xffff3b2e) : vu >= -6.0f ? juce::Colour (0xffffc928) : juce::Colour (0xff3dff6a);
+        auto seg = juce::Rectangle<float> (bar.getX() + (float) i * segW + 1.0f, bar.getY(), segW - 2.0f, bar.getHeight());
+        g.setColour (col.withAlpha (0.3f));
+        g.fillRect (seg.expanded (1.0f));
+        g.setColour (col);
+        g.fillRect (seg);
+    }
+}
+
 void VUMeter::paint (juce::Graphics& g)
 {
     if (faceCache.isValid())
         g.drawImage (faceCache, getLocalBounds().toFloat());
+    const auto& sk = skin();
+    const bool led = sk.meter == MachineSkin::Meter::ledBar;
 
     auto face = faceArea();
     const auto P = pivot();
     const float fh = face.getHeight();
     auto plate = face.withTop (face.getBottom() - fh * plateFrac);
 
+    if (led) paintLed (g);
+
     // Needle (with a soft shadow on the face)
+    if (! led)
     {
         g.saveState();
         g.reduceClipRegion (face.withBottom (plate.getY()).toNearestInt());
@@ -246,7 +328,7 @@ void VUMeter::paint (juce::Graphics& g)
 
         g.setColour (juce::Colour (0x26000000));
         g.drawLine (juce::Line<float> (P.translated (2.0f, 1.5f), tip.translated (2.0f, 1.5f)), wNeedle * 1.4f);
-        g.setColour (ink);
+        g.setColour (sk.needle);
         g.drawLine (juce::Line<float> (P, tip), wNeedle);
 
         // Glass sheen
@@ -258,7 +340,7 @@ void VUMeter::paint (juce::Graphics& g)
     }
 
     // Cover plate with label and lamps
-    g.setColour (juce::Colour (0xff151513));
+    g.setColour (sk.plate);
     g.fillRect (plate);
     g.setColour (Colours::edge);
     g.drawHorizontalLine ((int) plate.getY(), plate.getX(), plate.getRight());
@@ -281,7 +363,7 @@ void VUMeter::paint (juce::Graphics& g)
     lamp (juce::Rectangle<float> (lampD, lampD).withCentre ({ plate.getRight() - lampD * 1.1f, plate.getCentreY() }),
           peakHold > 0.0f, juce::Colour (0xffff7a1a));
 
-    g.setColour (Colours::mustard);
+    g.setColour (sk.plateText);
     g.setFont (monoFont (juce::jmin (plate.getHeight() * 0.75f, 14.0f), true));
     g.drawText (label, plate.reduced (lampD * 2.2f, 0.0f), juce::Justification::centred, true);
 

@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "HawthorneLookAndFeel.h"
+#include "MachineSkin.h"
 
 namespace hawthorne
 {
@@ -27,6 +28,10 @@ public:
     enum class RecLamp { off, armed, recording };
     void setRecLamp (RecLamp, bool flashPhase);
     void setLabel (const juce::String&);
+    /** Styled after the 2-track (master) machine instead of the multitrack. */
+    void setMaster (bool m) { isMaster = m; skinChanged(); }
+    /** The machine changed: redraw the face in its style. */
+    void skinChanged() { renderFace(); repaint(); }
 
     static constexpr float referenceDbfs = -18.0f;   // level that reads 0 VU
 
@@ -47,6 +52,12 @@ private:
     juce::String label;
     juce::Image faceCache;
 
+    const MachineSkin& skin() const { return isMaster ? MachineSkin::currentMaster() : MachineSkin::current(); }
+    void renderLedFace (juce::Graphics&);
+    void paintLed (juce::Graphics&);
+    juce::Rectangle<float> ledArea() const;
+    bool isMaster = false;
+    float ledPeakDb = -60.0f, ledPeakHold = 0.0f;
     float needle = 0.0f, velocity = 0.0f;
     float drawnNeedle = -1.0f;
     float peakHold = 0.0f;
