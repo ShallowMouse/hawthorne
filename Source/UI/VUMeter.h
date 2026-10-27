@@ -52,7 +52,7 @@ private:
     juce::String label;
     juce::Image faceCache;
 
-    const MachineSkin& skin() const { return isMaster ? MachineSkin::currentMaster() : MachineSkin::current(); }
+    MachineSkin skin() const { return MachineSkin::forMeters (isMaster ? MachineSkin::currentMaster() : MachineSkin::current()); }
     void renderLedFace (juce::Graphics&);
     void renderPpmFace (juce::Graphics&);
     float ppmPos() const;

@@ -570,6 +570,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
 
     counterMode = juce::jlimit (0, 2, props.getUserSettings()->getIntValue ("counterMode", 0));
     engine.setWindPhysics (props.getUserSettings()->getBoolValue ("windPhysics", true));
+    MachineSkin::meterChoice() = juce::jlimit (0, 2, props.getUserSettings()->getIntValue ("meterStyle", 0));
     engine.setLifterDefeat (props.getUserSettings()->getBoolValue ("lifterDefeat", false));
     setSize (1600, 900);
     startTimerHz (30);
@@ -675,9 +676,19 @@ namespace
     /** Settings: the audio device, plus transport options. */
     struct SettingsPanel : juce::Component
     {
-        SettingsPanel (juce::AudioDeviceManager& dm, TapeEngine& e, juce::PropertiesFile& p)
-            : selector (dm, 0, 256, 2, 256, false, false, false, false), engine (e), props (p)
+        SettingsPanel (juce::AudioDeviceManager& dm, TapeEngine& e, juce::PropertiesFile& p, std::function<void()> metersChanged)
+            : selector (dm, 0, 256, 2, 256, false, false, false, false), engine (e), props (p), onMeters (std::move (metersChanged))
         {
+            meters.addItemList ({ "Auto - as the machine had them (VU, or PPM on the EMI machines)", "VU", "PPM" }, 1);
+            meters.setSelectedItemIndex (MachineSkin::meterChoice(), juce::dontSendNotification);
+            meters.onChange = [this]
+            {
+                MachineSkin::meterChoice() = meters.getSelectedItemIndex();
+                props.setValue ("meterStyle", MachineSkin::meterChoice());
+                props.saveIfNeeded();
+                if (onMeters) onMeters();
+            };
+            addAndMakeVisible (meters);
             addAndMakeVisible (selector);
             windToggle.setToggleState (engine.getWindPhysics(), juce::dontSendNotification);
             windToggle.setTooltip ("On: locating (RTZ, markers, REW / FFW) spools the tape there like a real machine - "
@@ -700,20 +711,22 @@ namespace
             }
             preRoll.setValue (engine.getPreRoll(), juce::dontSendNotification);
             postRoll.setValue (engine.getPostRoll(), juce::dontSendNotification);
-            setSize (560, 700);
+            setSize (560, 736);
         }
         void paint (juce::Graphics& g) override
         {
             g.setColour (Colours::textDim);
             g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-            g.drawText ("TRANSPORT", 16, getHeight() - 118, 200, 16, juce::Justification::centredLeft);
+            g.drawText ("TRANSPORT", 16, getHeight() - 152, 200, 16, juce::Justification::centredLeft);
             g.setFont (juce::FontOptions (13.0f));
             g.drawText ("Pre-roll (auto punch)", preRoll.getBounds().withX (16).withWidth (170), juce::Justification::centredLeft);
             g.drawText ("Post-roll", postRoll.getBounds().withX (16).withWidth (170), juce::Justification::centredLeft);
+            g.drawText ("Meters", meters.getBounds().withX (16).withWidth (170), juce::Justification::centredLeft);
         }
         void resized() override
         {
             auto b = getLocalBounds();
+            meters.setBounds (b.removeFromBottom (36).reduced (16, 5).withTrimmedLeft (180));
             postRoll.setBounds (b.removeFromBottom (30).reduced (16, 4).withTrimmedLeft (180));
             preRoll.setBounds (b.removeFromBottom (30).reduced (16, 4).withTrimmedLeft (180));
             windToggle.setBounds (b.removeFromBottom (36).reduced (16, 4));
@@ -722,6 +735,8 @@ namespace
         }
         juce::AudioDeviceSelectorComponent selector;
         juce::ToggleButton windToggle { "Tape wind physics: spool to locate points (realistic FFWD / REW)" };
+        juce::ComboBox meters;
+        std::function<void()> onMeters;
         juce::Slider preRoll { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight },
                      postRoll { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
         TapeEngine& engine;
@@ -731,7 +746,7 @@ namespace
 
 void MainComponent::showAudioSettings()
 {
-    auto* selector = new SettingsPanel (deviceManager, engine, *props.getUserSettings());
+    auto* selector = new SettingsPanel (deviceManager, engine, *props.getUserSettings(), [this] { applySkin(); });
 
     juce::DialogWindow::LaunchOptions o;
     o.content.setOwned (selector);
@@ -2317,6 +2332,20 @@ void MainComponent::paint (juce::Graphics& g)
     g.setColour (Colours::mustard);
     g.setFont (monoFont (15.0f, true));
     g.drawText ("MASTER", masterLabelArea, juce::Justification::centredLeft);
+    {
+        // the 2-track the master is on
+        const auto& ms = MachineSkin::currentMaster();
+        const juce::String t = juce::String (ms.brand) + "  " + ms.model;
+        g.setFont (juce::Font (juce::FontOptions ("Arial", 11.0f, juce::Font::bold)));
+        const int bw = (int) juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), t) + 14;
+        auto badge = juce::Rectangle<int> (masterLabelArea.getRight() - bw, masterLabelArea.getCentreY() - 9, bw, 18);
+        g.setColour (ms.badge);
+        g.fillRoundedRectangle (badge.toFloat(), 3.0f);
+        g.setColour (ms.badgeText.withAlpha (0.35f));
+        g.drawRoundedRectangle (badge.toFloat().reduced (1.0f), 2.0f, 1.0f);
+        g.setColour (ms.badgeText);
+        g.drawText (t, badge, juce::Justification::centred, false);
+    }
 
     // Autolocator
     g.setColour (Colours::panel);

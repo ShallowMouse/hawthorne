@@ -128,6 +128,29 @@ struct MachineSkin
         return s[juce::jlimit (0, 4, i)];
     }
 
+    /** Meters: 0 = as the machine had them (auto), 1 = always VU, 2 = always PPM (SETTINGS). */
+    static int& meterChoice() { static int m = 0; return m; }
+
+    /** A skin with the meter style chosen in SETTINGS applied. */
+    static MachineSkin forMeters (const MachineSkin& base)
+    {
+        auto s = base;
+        const int choice = meterChoice();
+        if (choice == 1 && s.meter != Meter::vu)
+        {
+            s.meter = Meter::vu;
+            s.faceTop = juce::Colour (0xfff7e9bc); s.faceBottom = juce::Colour (0xffe6c56a);
+            s.meterInk = juce::Colour (0xff1d1a14); s.meterRed = juce::Colour (0xffc0392b); s.needle = juce::Colour (0xff1d1a14);
+        }
+        else if (choice == 2 && s.meter != Meter::ppm)
+        {
+            s.meter = Meter::ppm;
+            s.faceTop = juce::Colour (0xff151515); s.faceBottom = juce::Colour (0xff0b0b0b);
+            s.meterInk = juce::Colour (0xfff2f2ee); s.meterRed = juce::Colour (0xfff2f2ee); s.needle = juce::Colour (0xfff5f5f0);
+        }
+        return s;
+    }
+
     // The skins in use (set when the reel or its machines change)
     static const MachineSkin*& currentPtr()       { static const MachineSkin* p = &multitrack (0); return p; }
     static const MachineSkin*& currentMasterPtr() { static const MachineSkin* p = &master (0); return p; }
