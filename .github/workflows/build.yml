@@ -80,6 +80,13 @@ jobs:
           done
           exit $status
 
+      - name: Hawthorne Route driver test
+        if: hashFiles('build/route/Release/HawthorneRouteTest.exe') != ''
+        shell: bash
+        run: |
+          cd build/route/Release
+          ./HawthorneRouteTest.exe
+
       - name: Build installer (Inno Setup)
         shell: pwsh
         run: |

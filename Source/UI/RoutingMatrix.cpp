@@ -193,7 +193,8 @@ void RoutingMatrix::paint (juce::Graphics& g)
             while (j + 1 < (int) netInputs.size() && netInputs[(size_t) j + 1].slot == netInputs[(size_t) i].slot) ++j;
             const int x0 = colX ({ ColKind::network, i }), x1 = colX ({ ColKind::network, j }) + cell;
             g.setColour (Colours::mustard);
-            g.drawText ("NET " + juce::String (netInputs[(size_t) i].slot + 1), x0, 2, juce::jmax (x1 - x0, cell * 3), titleH - 4,
+            g.drawText (netInputs[(size_t) i].slot < 0 ? juce::String ("ROUTE") : "NET " + juce::String (netInputs[(size_t) i].slot + 1),
+                        x0, 2, juce::jmax (x1 - x0, cell * 3), titleH - 4,
                         juce::Justification::centredLeft, true);
             g.drawHorizontalLine (titleH - 2, (float) x0, (float) x1 - 2.0f);
             i = j + 1;

@@ -690,6 +690,21 @@ namespace
                 if (onMeters) onMeters();
             };
             addAndMakeVisible (meters);
+
+            routeButton.onClick = [this]
+            {
+                const bool installed = RouteHost::isDriverInstalled();
+                const auto err = installed ? RouteHost::uninstallDriver() : RouteHost::installDriver();
+                if (err.isNotEmpty())
+                    juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Hawthorne Route", err);
+                else if (! installed)
+                    juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Hawthorne Route",
+                        "Installed. In the other program (Reaper...), choose \"Hawthorne Route\" as the ASIO device.\n"
+                        "Its outputs 1-32 arrive here as inputs ROUTE 1-32 - patch them in ROUTING. Its inputs 1-2 are Hawthorne's master.");
+                refreshRoute();
+            };
+            addAndMakeVisible (routeButton);
+            refreshRoute();
             addAndMakeVisible (selector);
             windToggle.setToggleState (engine.getWindPhysics(), juce::dontSendNotification);
             windToggle.setTooltip ("On: locating (RTZ, markers, REW / FFW) spools the tape there like a real machine - "
@@ -712,21 +727,27 @@ namespace
             }
             preRoll.setValue (engine.getPreRoll(), juce::dontSendNotification);
             postRoll.setValue (engine.getPostRoll(), juce::dontSendNotification);
-            setSize (560, 736);
+            setSize (560, 780);
         }
         void paint (juce::Graphics& g) override
         {
             g.setColour (Colours::textDim);
             g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-            g.drawText ("TRANSPORT", 16, getHeight() - 152, 200, 16, juce::Justification::centredLeft);
+            g.drawText ("TRANSPORT", 16, getHeight() - 192, 200, 16, juce::Justification::centredLeft);
             g.setFont (juce::FontOptions (13.0f));
             g.drawText ("Pre-roll (auto punch)", preRoll.getBounds().withX (16).withWidth (170), juce::Justification::centredLeft);
             g.drawText ("Post-roll", postRoll.getBounds().withX (16).withWidth (170), juce::Justification::centredLeft);
             g.drawText ("Meters", meters.getBounds().withX (16).withWidth (170), juce::Justification::centredLeft);
+            g.drawText ("Hawthorne Route", routeButton.getBounds().withX (16).withWidth (170), juce::Justification::centredLeft);
+            g.setColour (Colours::textDim);
+            g.setFont (juce::FontOptions (12.0f));
+            g.drawText (routeStatus, routeButton.getBounds().withX (routeButton.getRight() + 10).withRight (getWidth() - 10),
+                        juce::Justification::centredLeft);
         }
         void resized() override
         {
             auto b = getLocalBounds();
+            routeButton.setBounds (b.removeFromBottom (40).reduced (16, 7).withTrimmedLeft (180).withWidth (150));
             meters.setBounds (b.removeFromBottom (36).reduced (16, 5).withTrimmedLeft (180));
             postRoll.setBounds (b.removeFromBottom (30).reduced (16, 4).withTrimmedLeft (180));
             preRoll.setBounds (b.removeFromBottom (30).reduced (16, 4).withTrimmedLeft (180));
@@ -737,6 +758,17 @@ namespace
         juce::AudioDeviceSelectorComponent selector;
         juce::ToggleButton windToggle { "Tape wind physics: spool to locate points (realistic FFWD / REW)" };
         juce::ComboBox meters;
+        juce::TextButton routeButton;
+        juce::String routeStatus;
+        void refreshRoute()
+        {
+            const bool installed = RouteHost::isDriverInstalled();
+            routeButton.setButtonText (installed ? "UNINSTALL" : "INSTALL DRIVER");
+            routeStatus = ! installed ? juce::String ("virtual ASIO device for other programs")
+                        : engine.isRouteConnected() ? juce::String ("installed - a program is playing in")
+                                                    : juce::String ("installed - pick it in the other program");
+            repaint();
+        }
         std::function<void()> onMeters;
         juce::Slider preRoll { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight },
                      postRoll { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
@@ -1810,6 +1842,20 @@ void MainComponent::updateNetworkInputs()
             inputs.push_back ({ NetReceiver::inputId (slot, ch),
                                 "NET " + juce::String (slot + 1) + " " + st.name + " ch " + juce::String (ch + 1), slot, ch, live });
         key << slot << ":" << st.channels << (live ? "L" : "-") << st.name << "|";
+    }
+
+    // Hawthorne Route: another program's outputs, while it plays into the driver
+    // (or while a track is patched to one, so the patch stays visible)
+    bool routeUsed = false;
+    if (reel != nullptr)
+        for (int t = 0; t < reel->numTracks; ++t)
+            routeUsed = routeUsed || route::isRouteInput (reel->tracks[(size_t) t].input);
+    const bool routeLive = engine.isRouteConnected();
+    if (routeLive || routeUsed)
+    {
+        for (int ch = 0; ch < route::toHawthorneChannels; ++ch)
+            inputs.push_back ({ route::inputBase + ch, "ROUTE " + juce::String (ch + 1) + " (Hawthorne Route)", -1, ch, routeLive });
+        key << "route" << (routeLive ? "L" : "-");
     }
 
     if (key != netInputsKey)

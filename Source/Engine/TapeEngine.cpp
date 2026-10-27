@@ -130,6 +130,7 @@ void TapeEngine::prepare (double sampleRate, int maxBlockSize,
     tapePosBuf.calloc ((size_t) vsChunk);
     tapeRecBuf.calloc ((size_t) juce::jmax (vsChunk, maxBlock));
     spoolBuf.calloc ((size_t) juce::jmax (vsChunk, maxBlock));
+    route.open (sampleRate, juce::jmax (vsChunk, maxBlock));
     rawRing.calloc ((size_t) kMaxTracks * (size_t) ringLen);
     ringValid = 0;
     fadeLen = juce::jmax (16, (int) (sampleRate * 0.010));
@@ -541,8 +542,13 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         net->publishTape (tapeAtStart, rate, flags);
     }
 
+    route.beginBlock (n);      // Hawthorne Route: what another program is playing into the driver
+
     auto inputFor = [&] (int absCh) -> const float*
     {
+        if (route::isRouteInput (absCh))
+            return route.channel (route::channelOf (absCh));
+
         if (NetReceiver::isNetworkInput (absCh))
             return net != nullptr ? net->getChannel (NetReceiver::slotOf (absCh), NetReceiver::channelOf (absCh)) : nullptr;
 
@@ -685,6 +691,7 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     const bool recMaster = rp != nullptr && rp->masterStreams[0] != nullptr;
     const bool monitorTape = monitorMasterFlag.load (std::memory_order_relaxed) && ! recMaster;
 
+    std::array<const float*, 2> masterOutSig { nullptr, nullptr };
     for (int side = 0; side < 2; ++side)
     {
         float* bus = side == 0 ? mixL : mixR;
@@ -727,7 +734,9 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         masterEnergy[(size_t) side].add (outSig, n);
         if (rt != nullptr)
             sendToOutputs (outSig, rt->masterOut[(size_t) side]);
+        masterOutSig[(size_t) side] = outSig;
     }
+    route.endBlock (masterOutSig[0], masterOutSig[1], n);   // the master back to Hawthorne Route; its clock ticks
 
     if (recMaster && resampledRec)
     {
@@ -1701,6 +1710,14 @@ juce::String TapeEngine::beginRecordPass (bool pendingStart)
 
         ++numArmed;
         const int ch = reel->tracks[(size_t) t].input;
+
+        if (route::isRouteInput (ch))
+        {
+            if (! route.isConnected())
+                return reel->tracks[(size_t) t].name + " is armed on a Hawthorne Route input, but no program is playing into Hawthorne Route.\n"
+                       "Choose \"Hawthorne Route\" as the ASIO device in the other program and start it.";
+            continue;
+        }
 
         if (NetReceiver::isNetworkInput (ch))
         {

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(Hawthorne VERSION 1.18.0)
+project(Hawthorne VERSION 1.19.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,6 +20,7 @@ set(ENGINE_SOURCES
     Source/Engine/RecordingStream.h
     Source/Engine/RecordingStream.cpp
     Source/Engine/Varispeed.cpp
+    Source/Engine/RouteHost.cpp
     Source/Engine/Mtc.cpp
     Source/Network/NetReceiver.cpp
     Source/Network/NetSender.cpp
@@ -151,4 +152,31 @@ if(HAWTHORNE_BUILD_TESTS)
         juce::juce_events
         juce::juce_recommended_config_flags
     )
+endif()
+
+#------------------------------------------------------------------------------
+# Hawthorne Route: the virtual ASIO driver (Windows, needs the ASIO SDK headers)
+if(WIN32 AND HAWTHORNE_ASIO_SDK AND EXISTS "${HAWTHORNE_ASIO_SDK}/common/iasiodrv.h")
+    add_library(HawthorneRoute SHARED Source/RouteDriver/HawthorneRouteDriver.cpp Source/RouteDriver/HawthorneRoute.def)
+    target_include_directories(HawthorneRoute PRIVATE "${HAWTHORNE_ASIO_SDK}/common")
+    target_compile_features(HawthorneRoute PRIVATE cxx_std_17)
+    target_compile_definitions(HawthorneRoute PRIVATE NOMINMAX UNICODE _UNICODE)
+    target_link_libraries(HawthorneRoute PRIVATE ole32 uuid advapi32 avrt user32)
+    set_target_properties(HawthorneRoute PROPERTIES
+        OUTPUT_NAME "HawthorneRoute"
+        MSVC_RUNTIME_LIBRARY "MultiThreaded"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/route"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/route")
+
+    if(HAWTHORNE_BUILD_TESTS)
+        add_executable(HawthorneRouteTest Tests/RouteDriverTest.cpp)
+        target_include_directories(HawthorneRouteTest PRIVATE "${HAWTHORNE_ASIO_SDK}/common")
+        target_compile_features(HawthorneRouteTest PRIVATE cxx_std_17)
+        target_compile_definitions(HawthorneRouteTest PRIVATE NOMINMAX)
+        target_link_libraries(HawthorneRouteTest PRIVATE ole32 uuid)
+        set_target_properties(HawthorneRouteTest PROPERTIES
+            MSVC_RUNTIME_LIBRARY "MultiThreaded"
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/route")
+        add_dependencies(HawthorneRouteTest HawthorneRoute)
+    endif()
 endif()

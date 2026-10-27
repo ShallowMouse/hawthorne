@@ -8,6 +8,7 @@
 #include "Timecode.h"
 #include "TapeStock.h"
 #include "SpoolMonitor.h"
+#include "RouteHost.h"
 #include "../Network/NetReceiver.h"
 #include <map>
 
@@ -53,6 +54,9 @@ public:
     void setLifterDefeat (bool on);
     bool getLifterDefeat() const noexcept  { return lifterDefeat.load(); }
     bool isSpoolOverviewReady() const noexcept { return spool.isReady(); }
+    /** Hawthorne Route: another program is playing into the virtual ASIO driver (inputs ROUTE 1-32). */
+    bool isRouteConnected() const noexcept     { return route.isConnected(); }
+    int getRouteLatency() const noexcept       { return route.getLatency(); }
     bool getWindPhysics() const noexcept   { return windPhysics; }
     /** -1 rewinding, +1 fast forwarding, 0 not spooling. */
     int getWindDirection() const noexcept  { return wind.active ? (wind.vel < 0.0 ? -1 : wind.vel > 0.0 ? 1 : (wind.target < wind.pos ? -1 : 1)) : 0; }
@@ -372,6 +376,7 @@ private:
     std::atomic<bool> lifterDefeat { false }, windActiveA { false };
     std::atomic<double> windPosA { 0.0 }, windVelA { 0.0 };
     SpoolMonitor spool;
+    RouteHost route;
     juce::HeapBlock<float> spoolBuf;
     void requestSpool();
     void windStep();

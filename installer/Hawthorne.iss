@@ -29,6 +29,8 @@ SolidCompression=yes
 WizardStyle=modern
 SetupIconFile=..\Resources\hawthorne.ico
 CloseApplications=yes
+; only programs: the Route driver DLL may be loaded in another program (Reaper...) - never close that
+CloseApplicationsFilter=*.exe
 ; (Hawthorne Link is closed too while updating)
 RestartApplications=no
 
@@ -38,6 +40,9 @@ Name: "desktopicon"; Description: "Put a Hawthorne shortcut on the desktop"; Gro
 [Files]
 Source: "..\build\Hawthorne_artefacts\Release\Hawthorne.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\build\HawthorneLink_artefacts\Release\Hawthorne Link.exe"; DestDir: "{app}"; Flags: ignoreversion
+; Hawthorne Route (virtual ASIO driver). Shipped as .new: Hawthorne puts it in place and
+; registers it (with Windows' permission) from SETTINGS, so an update never touches a driver in use.
+Source: "..\build\route\Release\HawthorneRoute.dll"; DestDir: "{app}"; DestName: "HawthorneRoute.new.dll"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
 Name: "{autoprograms}\Hawthorne"; Filename: "{app}\Hawthorne.exe"
