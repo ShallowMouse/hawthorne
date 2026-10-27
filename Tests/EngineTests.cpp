@@ -1896,6 +1896,51 @@ static void testAutoPunchAndCycle()
     CHECK (outside <= (int64) (jumps + 1) * 512, "stayed in the loop (%lld samples outside)", (long long) outside);
     CHECK (wrong == 0, "seamless: every sample after the jumps is the tape (%lld wrong)", (long long) wrong);
     std::printf ("    cycle: %d loops of %.1f s, every sample from tape, no gaps at the jump\n", jumps, (double) (out - in) / kSR);
+    e.stop();
+    pump (e, 50);
+
+    // with wind physics the transport spools back to the loop start, like a real autolocator
+    e.setWindPhysics (true);
+    e.locate (in);
+    e.play();
+    int rewinds = 0, wasDir = 0; int64 maxPos = 0;
+    const auto t2 = juce::Time::getMillisecondCounter();
+    while (juce::Time::getMillisecondCounter() - t2 < 6000)
+    {
+        pump (e, 10);
+        const int d = e.getWindDirection();
+        if (d < 0 && wasDir >= 0) ++rewinds;
+        wasDir = d;
+        maxPos = juce::jmax (maxPos, e.getPosition());
+    }
+    e.stop();
+    pump (e, 50);
+    CHECK (rewinds >= 2, "cycle spooled back %d times", rewinds);
+    CHECK (maxPos < out + (int64) (0.2 * kSR), "never ran far past OUT (%.3f s)", (double) maxPos / kSR);
+    std::printf ("    cycle with wind physics: spooled back to IN %d times\n", rewinds);
+
+    // auto punch round and round, spooling back each time
+    e.setArmed (0, true);
+    e.setAutoPunch (true);
+    const auto takesBefore = reel->takeLog.size();
+    CHECK (e.autoRecord().isEmpty(), "auto punch cycle");
+    pump (e, 7000);
+    e.stop();
+    pump (e, 100);
+    const auto passes = reel->takeLog.size() - takesBefore;
+    const auto looped = readTape (*reel, 0);
+    CHECK (passes >= 2 && looped.size() == after.size(), "punched %zu times while cycling, tape length kept", passes);
+    {
+        int64 changed = 0;
+        for (int64 k = 0; k < in; ++k) if (looped[(size_t) k] != after[(size_t) k]) ++changed;
+        for (int64 k = out + fade; k < (int64) looped.size(); ++k) if (looped[(size_t) k] != after[(size_t) k]) ++changed;
+        CHECK (changed == 0, "cycling punches leave the rest of the tape alone (%lld changed)", (long long) changed);
+    }
+    std::printf ("    auto punch + cycle + wind: %zu passes, each recorded over the last\n", passes);
+    e.setAutoPunch (false);
+    e.setArmed (0, false);
+    e.setWindPhysics (false);
+
     e.setCycle (false);
     dev.stopThread (5000);
     e.setReel (nullptr);

@@ -901,7 +901,12 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
                     fadeOutActive = false;
                     passEnded = true;
                 }
-                if (position.compare_exchange_strong (p, ls))
+                if (windPhysicsA.load (std::memory_order_relaxed) && chaseSource.load (std::memory_order_relaxed) == 0)
+                {
+                    // like a real autolocator: the transport spools back to the loop start and plays again
+                    loopWindReq = true;
+                }
+                else if (position.compare_exchange_strong (p, ls))
                 {
                     posFrac = 0.0;
                     const juce::SpinLock::ScopedTryLockType sl (graphSwapLock);
@@ -1230,6 +1235,7 @@ void TapeEngine::windTo (juce::int64 target, bool rollAfter)
         windPosA.store (wind.pos);
         windVelA.store (0.0);
     }
+    if (rollAfter) wind.rollAfter = true;     // (also when re-aiming a wind already braking from STOP)
     windActiveA = true;
     wind.active = true;
     wind.braking = false;
@@ -2140,12 +2146,14 @@ void TapeEngine::tick()
     {
         endRecordPass();
         // cycling a punch: the next pass waits for the next time round
-        if (apSession && cycleOn && reel != nullptr && ! reel->rehearse && playing)
+        if (apSession && cycleOn && reel != nullptr && ! reel->rehearse && (playing || wind.active))
             if (beginRecordPass (true).isNotEmpty())
                 apSession = false;
     }
     if (apSession && playing && ! cycleOn && apPostStop >= 0 && position.load() >= apPostStop)
         stop();
+    if (loopWindReq.exchange (false) && playing && ! wind.active && cycleOn && loopS.load() >= 0)
+        windTo (loopS.load(), true);       // spools back (with CUE you hear it), then rolls again
     if (loopJumps.load() != loopJumpsSeen)
     {
         loopJumpsSeen = loopJumps.load();

@@ -48,7 +48,7 @@ public:
         a little overshoot, creep back). Instant if wind physics is off, or while
         chasing. If the tape was playing, it plays again on arrival. */
     void windTo (juce::int64 samplePos, bool rollAfter = false);
-    void setWindPhysics (bool on) noexcept { windPhysics = on; }
+    void setWindPhysics (bool on) noexcept { windPhysics = on; windPhysicsA = on; }
     /** Lifter defeat: hear the tape (the "chatter") while it spools. Monitor only. */
     void setLifterDefeat (bool on);
     bool getLifterDefeat() const noexcept  { return lifterDefeat.load(); }
@@ -339,6 +339,7 @@ private:
     std::unique_ptr<PlaybackGraph> ownedGraphB;
     juce::SpinLock graphSwapLock;
     std::atomic<int> loopJumps { 0 };
+    std::atomic<bool> windPhysicsA { false }, loopWindReq { false };   // cycle with wind physics: spool back, don't jump
     int loopJumpsSeen = 0;
     juce::int64 apPostStop = -1;
     void updateLoopRegion();
