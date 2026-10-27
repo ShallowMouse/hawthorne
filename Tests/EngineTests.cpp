@@ -1891,7 +1891,9 @@ static void testAutoPunchAndCycle()
         }
     }
     CHECK (jumps >= 2, "cycled %d times", jumps);
-    CHECK (outside < 600, "stayed in the loop (%lld samples outside)", (long long) outside);
+    // (the fake device numbers a whole device block from its start, so the part of the
+    //  block after a mid-block jump reads as "past OUT": at most one block per jump)
+    CHECK (outside <= (int64) (jumps + 1) * 512, "stayed in the loop (%lld samples outside)", (long long) outside);
     CHECK (wrong == 0, "seamless: every sample after the jumps is the tape (%lld wrong)", (long long) wrong);
     std::printf ("    cycle: %d loops of %.1f s, every sample from tape, no gaps at the jump\n", jumps, (double) (out - in) / kSR);
     e.setCycle (false);
