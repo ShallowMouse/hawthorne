@@ -90,6 +90,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
+    void mouseMove (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
 
     /** Called before quitting: stops and saves cleanly. */
@@ -221,7 +222,7 @@ private:
                  recKey  { "REC",  "Record / punch in-out (R)",       Colours::red },
                  markKey { "MARK", "Drop a marker here (M)",          Colours::mustard },
                  clickKey { "CLICK", "Click on / off (needs a tempo - TEMPO)", Colours::mustard },
-                 liftKey { "CUE", "Lifter defeat: keep the tape on the heads while it spools, so you hear it wind (the chatter). Monitor only.", Colours::mustard };
+                 liftKey { "CUE", "Lifter defeat: keep the tape on the heads while it spools, so you hear it wind (the chatter) - on the meters and outputs, never recorded.", Colours::mustard };
 
     juce::Viewport bridgeView;
     MeterBridge bridge;
@@ -229,6 +230,7 @@ private:
     juce::TextButton masterButton;
     TransportKey masterArmKey { "ARM",  "Arm the master: record the mix onto this reel, in step with the tracks", Colours::red },
                  monitorKey   { "TAPE", "Master monitoring: hear the master tape instead of the live mix",       Colours::mustard };
+    juce::Rectangle<int> deckBadgeArea, masterBadgeArea;
     juce::Rectangle<int> masterLabelArea, masterPanelArea, locatorArea, locatorLabelArea, inTimeArea, outTimeArea;
     TransportKey inKey   { "IN",   "Punch IN point: click to set it here. Shift-click to go there.", Colours::mustard },
                  outKey  { "OUT",  "Punch OUT point: click to set it here. Shift-click to go there.", Colours::mustard },

@@ -574,6 +574,13 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     const bool rehearsing = isRolling && apSession.load (std::memory_order_relaxed) && rehearseOn.load (std::memory_order_relaxed)
                             && pos >= apInB.load (std::memory_order_relaxed) && pos < apOutB.load (std::memory_order_relaxed);
 
+    // Lifter defeat: while the tape spools, each track's repro head hears it (the chatter),
+    // so it goes through the track: its meter, the mix, the master and the outputs.
+    const bool spoolOn = ! isRolling
+        && spool.beginBlock (n, lifterDefeat.load (std::memory_order_relaxed) && windActiveA.load (std::memory_order_relaxed),
+                             windPosA.load (std::memory_order_relaxed), windVelA.load (std::memory_order_relaxed),
+                             juce::jmax (1000.0, deviceSampleRate.load (std::memory_order_relaxed)));
+
     for (int t = 0; t < nt; ++t)
     {
         const float* src = rt != nullptr ? inputFor (rt->input[(size_t) t]) : nullptr;
@@ -629,7 +636,8 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
 
         // --- Tape-style auto input: armed tracks hear the input when stopped or
         //     recording (or rehearsing a punch), and hear tape when just playing back.
-        const float* mon = (isArmed && (! isRolling || isRec || rehearsing)) ? src : (hasTape ? tb : nullptr);
+        const bool spoolHeard = spoolOn && spool.renderTrack (t, tb, n);
+        const float* mon = (isArmed && (! isRolling || isRec || rehearsing)) ? src : ((hasTape || spoolHeard) ? tb : nullptr);
 
         trackEnergy[(size_t) t].add (mon, n);
 
@@ -647,6 +655,8 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
                 sendToOutputs (mon, rt->outputs[(size_t) t]);
         }
     }
+
+    if (spoolOn) spool.endBlock();
 
     if (ringOk)
     {
@@ -782,17 +792,6 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     {
         clickWasRolling = false;
         clickEnv = 0.0;
-    }
-
-    // --- Lifter defeat: the tape heard while it spools (master outs, monitor only)
-    if (rt != nullptr && spoolBuf != nullptr)
-    {
-        const bool spooling = ! isRolling && lifterDefeat.load (std::memory_order_relaxed) && windActiveA.load (std::memory_order_relaxed);
-        juce::FloatVectorOperations::clear (spoolBuf.get(), n);
-        spool.render (spoolBuf.get(), n, spooling, windPosA.load (std::memory_order_relaxed), windVelA.load (std::memory_order_relaxed),
-                      juce::jmax (1000.0, deviceSampleRate.load (std::memory_order_relaxed)));
-        for (int side = 0; side < 2; ++side)
-                sendToOutputs (spoolBuf.get(), rt->masterOut[(size_t) side]);
     }
 
     // --- LTC out: timecode of the tape position, while it rolls
@@ -1470,8 +1469,7 @@ void TapeEngine::requestSpool()
     if (reel == nullptr || recording) return;
     juce::Array<juce::File> files;
     for (int t = 0; t < reel->numTracks; ++t)
-        if (reel->getTapeFile (t).existsAsFile())
-            files.add (reel->getTapeFile (t));
+        files.add (reel->getTapeFile (t));        // one per track, in order (missing = silent)
     spool.request (files);
 }
 

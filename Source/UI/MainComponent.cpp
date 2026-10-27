@@ -2,6 +2,7 @@
 #include "UIHelpers.h"
 #include "TapeChoice.h"
 #include "MachineSkin.h"
+#include "MachinePicker.h"
 #include "../Engine/TrackTransfer.h"
 #include "BinaryData.h"
 
@@ -1461,22 +1462,22 @@ void MainComponent::flipReel()
 
 void MainComponent::showMachines()
 {
-    if (reel == nullptr) return;
-    auto* w = new ReelDialog ("Machines", juce::String ("The machines this reel plays on. The tape is ")
-                                  + tape::info ((tape::Stock) reel->tapeStock).name
-                                  + ".\nThe record side is printed onto the tape; playback follows the machine, so switching changes how the tape sounds back.",
-                              juce::MessageBoxIconType::NoIcon, this);
-    w->addMachinePicker ("machine", "Multitrack:", false, reel->machine);
-    w->addMachinePicker ("master", "2-track (master):", true, reel->masterMachine);
-    w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-    w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int result)
+    if (reel == nullptr || engine.isRecording()) return;
+    auto* picker = new MachinePicker (reel->machine, reel->masterMachine, [this] (int mt, int ms)
     {
-        if (result != 1 || reel == nullptr) return;
-        engine.setMachine (w->getComboBoxComponent ("machine")->getSelectedItemIndex());
-        engine.setMasterMachine (w->getComboBoxComponent ("master")->getSelectedItemIndex());
+        if (reel == nullptr || engine.isRecording()) return;
+        engine.setMachine (mt);
+        engine.setMasterMachine (ms);
         applySkin();
-    }), true);
+    });
+    juce::DialogWindow::LaunchOptions o;
+    o.content.setOwned (picker);
+    o.dialogTitle = "Machines - click one to put the reel on it";
+    o.dialogBackgroundColour = Colours::bg;
+    o.escapeKeyTriggersCloseButton = true;
+    o.useNativeTitleBar = true;
+    o.resizable = true;
+    o.launchAsync();
 }
 
 void MainComponent::renameMaster()
@@ -1697,11 +1698,21 @@ void MainComponent::showCounterMenu()
     });
 }
 
+void MainComponent::mouseMove (const juce::MouseEvent& e)
+{
+    const bool overBadge = deckBadgeArea.contains (e.getPosition()) || masterBadgeArea.contains (e.getPosition());
+    setMouseCursor (overBadge || counterArea.contains (e.getPosition()) ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+}
+
 void MainComponent::mouseUp (const juce::MouseEvent& e)
 {
     // (on release, so the release doesn't pick an item from the menu it opened)
     if (counterArea.contains (e.getPosition()) && counterArea.contains (e.getMouseDownPosition()))
         showCounterMenu();
+    // the machine badges: change machines
+    for (auto b : { deckBadgeArea, masterBadgeArea })
+        if (b.contains (e.getPosition()) && b.contains (e.getMouseDownPosition()))
+            showMachines();
 }
 
 void MainComponent::tempoEdited()
@@ -2304,6 +2315,7 @@ void MainComponent::paint (juce::Graphics& g)
             const juce::String badgeText = juce::String (sk.brand) + "  " + sk.model;
             const int bw = juce::jmin (reelInfoArea.getWidth(), (int) juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), badgeText) + 22);
             auto badge = juce::Rectangle<int> (bw, 22).withPosition (reelInfoArea.getRight() - bw, deckArea.getY() + 8);
+            deckBadgeArea = badge;
             g.setColour (sk.badge);
             g.fillRoundedRectangle (badge.toFloat(), 3.0f);
             g.setColour (sk.badgeText.withAlpha (0.35f));
@@ -2339,6 +2351,7 @@ void MainComponent::paint (juce::Graphics& g)
         g.setFont (juce::Font (juce::FontOptions ("Arial", 11.0f, juce::Font::bold)));
         const int bw = (int) juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), t) + 14;
         auto badge = juce::Rectangle<int> (masterLabelArea.getRight() - bw, masterLabelArea.getCentreY() - 9, bw, 18);
+        masterBadgeArea = badge;
         g.setColour (ms.badge);
         g.fillRoundedRectangle (badge.toFloat(), 3.0f);
         g.setColour (ms.badgeText.withAlpha (0.35f));

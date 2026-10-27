@@ -1773,11 +1773,12 @@ static void testLifterDefeat()
         e.windTo (lifter ? (juce::int64) (60 * kSR) : 0);
         juce::AudioBuffer<float> in (8, 512), out (4, 512);
         in.clear();
-        double ss = 0; juce::int64 count = 0; int zc = 0; float prev = 0.0f; double fastSs = 0; juce::int64 fastN = 0;
+        double ss = 0; juce::int64 count = 0; int zc = 0; float prev = 0.0f; double fastSs = 0; juce::int64 fastN = 0; float trackMeter = 0.0f;
         const auto t0 = juce::Time::getMillisecondCounter();
         while (e.getWindDirection() != 0 && juce::Time::getMillisecondCounter() - t0 < 20000)
         {
             e.process (in.getArrayOfReadPointers(), 8, out.getArrayOfWritePointers(), 4, 512);
+            trackMeter = juce::jmax (trackMeter, e.popTrackPeak (0));
             e.tick();
             for (int k = 0; k < 512; ++k)
             {
@@ -1791,7 +1792,7 @@ static void testLifterDefeat()
         juce::ignoreUnused (fastSs, fastN);
         const double db = 10.0 * std::log10 (juce::jmax (1.0e-30, ss / juce::jmax ((juce::int64) 1, count)));
         const double avgHz = 0.5 * zc / ((double) count / kSR);
-        if (lifter) CHECK (db > -40.0 && avgHz > 300.0, "lifter defeat: %.1f dB, ~%.0f Hz", db, avgHz);
+        if (lifter) CHECK (db > -40.0 && avgHz > 300.0 && trackMeter > 0.01f, "lifter defeat: %.1f dB, ~%.0f Hz, track meter peak %.3f", db, avgHz, trackMeter);
         else        CHECK (db < -50.0, "lifters in: silent (%.1f dB, only the previous wind's 20 ms fade)", db);
         std::printf ("    lifter %-4s: %s\n", lifter ? "out" : "in", lifter ? juce::String::formatted ("chatter %.1f dB rms, average pitch ~%.0f Hz (100 Hz tone sped up)", db, avgHz).toRawUTF8() : "silent while spooling");
     }
@@ -2041,6 +2042,7 @@ int main()
     if (auto only = juce::SystemStats::getEnvironmentVariable ("HAWTHORNE_ONLY", {}); only.isNotEmpty())
     {
         // quick runs of the newest tests
+        if (only.contains ("20")) testLifterDefeat();
         if (only.contains ("21")) testAutoPunchAndCycle();
         if (only.contains ("22")) testImportExportFlip();
         if (only.contains ("3"))  testTapeMachine();
