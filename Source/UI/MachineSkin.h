@@ -136,18 +136,15 @@ struct MachineSkin
     {
         auto s = base;
         const int choice = meterChoice();
+        // Keep the machine's own face (colours, lighting, needle); only the scale and the
+        // ballistics change.
         if (choice == 1 && s.meter != Meter::vu)
         {
             s.meter = Meter::vu;
-            s.faceTop = juce::Colour (0xfff7e9bc); s.faceBottom = juce::Colour (0xffe6c56a);
-            s.meterInk = juce::Colour (0xff1d1a14); s.meterRed = juce::Colour (0xffc0392b); s.needle = juce::Colour (0xff1d1a14);
+            if (s.meterRed == s.meterInk) s.meterRed = juce::Colour (0xffe0503c);   // a red zone that shows on a dark face
         }
         else if (choice == 2 && s.meter != Meter::ppm)
-        {
             s.meter = Meter::ppm;
-            s.faceTop = juce::Colour (0xff151515); s.faceBottom = juce::Colour (0xff0b0b0b);
-            s.meterInk = juce::Colour (0xfff2f2ee); s.meterRed = juce::Colour (0xfff2f2ee); s.needle = juce::Colour (0xfff5f5f0);
-        }
         return s;
     }
 
