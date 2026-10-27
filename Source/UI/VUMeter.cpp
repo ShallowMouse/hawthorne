@@ -269,7 +269,7 @@ void VUMeter::renderLedFace (juce::Graphics& g)
     }
     const float numSize = juce::jmax (6.0f, fh * 0.12f);
     g.setFont (uiFont (numSize, true));
-    for (float vu : { -20.0f, -10.0f, -5.0f, -3.0f, 0.0f, 3.0f })
+    for (float vu : { -20.0f, -10.0f, -5.0f, 0.0f, 3.0f })
     {
         const float x = bar.getX() + bar.getWidth() * (vu - ledMinVu) / (ledMaxVu - ledMinVu);
         g.setColour (vu > 0.0f ? sk.meterRed : sk.meterInk);

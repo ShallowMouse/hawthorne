@@ -523,6 +523,10 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     loadSyncSettings();
     showLibrary (true);   // the tape library is the first thing you see
 
+    // (development: open a reel straight away, for screenshots)
+    if (auto open = juce::SystemStats::getEnvironmentVariable ("HAWTHORNE_OPEN_REEL", {}); open.isNotEmpty())
+        juce::MessageManager::callAsync ([this, open] { loadReel (juce::File (open)); });
+
     counterMode = juce::jlimit (0, 2, props.getUserSettings()->getIntValue ("counterMode", 0));
     engine.setWindPhysics (props.getUserSettings()->getBoolValue ("windPhysics", true));
     engine.setLifterDefeat (props.getUserSettings()->getBoolValue ("lifterDefeat", false));
