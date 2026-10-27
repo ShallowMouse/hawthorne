@@ -13,9 +13,9 @@ namespace hawthorne
 */
 struct MachineSkin
 {
-    enum class Keys    { square, cream, bakelite, illuminated, chrome };
+    enum class Keys    { square, cream, bakelite, illuminated, chrome, coloured, ivory };
     enum class Counter { redLed, greenVfd, amberLed, drum };
-    enum class Meter   { vu, ledBar };
+    enum class Meter   { vu, ledBar, ppm };
 
     const char* brand;          // badge on the deck
     const char* model;
@@ -41,48 +41,55 @@ struct MachineSkin
     {
         using C = juce::Colour;
         static const MachineSkin s[] = {
-            // Studer A800 / A827: anthracite, rubber keys with LEDs, red LED locator, LED bar meters
-            { "STUDER", "A800", C (0xff2a2c2e), C (0xff1d1f21), C (0xff4a4d50), C (0xffe9ecef), C (0xff8d949a), false,
+            // Studer A800: brushed-silver deck on an anthracite cabinet, dark keys with orange lamps,
+            // red LED locator; anthracite meter bridge of amber-backlit VU meters.
+            { "STUDER", "A800", C (0xffbfc2c3), C (0xffa3a6a8), C (0xff2d3033), C (0xff1b1d1f), C (0xff4c5055), true,
               Keys::square, C (0xff3a3d40), C (0xffe9ecef),
               Counter::redLed, C (0xffff3b2e), C (0xff120605),
-              Meter::ledBar, C (0xff0c0d0e), C (0xff0c0d0e), C (0xffb9c2c9), C (0xffff3b2e), C (0xff1a1c1e), C (0xff15171a), C (0xffd0d6db), C (0xff000000),
-              C (0xff222426), C (0xff16181a), C (0xff3f4245),
-              C (0xff0f1011), C (0xffe9ecef) },
-            // MCI JH-24: putty / beige, cream keys with coloured stripes, red LED autolocator, cream VUs
-            { "MCI", "JH-24", C (0xffcfc6ae), C (0xffb8ae94), C (0xff8e8570), C (0xff2b261d), C (0xff6a614e), false,
-              Keys::cream, C (0xffeee8d6), C (0xff2b261d),
+              Meter::vu, C (0xfffbe3a2), C (0xffe8b04c), C (0xff1d1a14), C (0xffc0392b), C (0xff23262a), C (0xff1c1f22), C (0xffe9ecef), C (0xff1d1a14),
+              C (0xff2e3134), C (0xff26292c), C (0xff45494d),
+              C (0xff1b1d1f), C (0xffd8dcdf) },
+            // MCI JH-24: warm taupe-brown panels, small colour-coded square keys, red LED autolocator;
+            // taupe meter bridge of white-faced VU meters.
+            { "MCI", "JH-24", C (0xff6f675c), C (0xff5c554b), C (0xff3f3a33), C (0xffefe9dc), C (0xffc4bba9), false,
+              Keys::coloured, C (0xffe7e2d6), C (0xff221f1a),
               Counter::redLed, C (0xffff3326), C (0xff1a0907),
-              Meter::vu, C (0xfffaf0c8), C (0xffeed58a), C (0xff1d1a14), C (0xffc0392b), C (0xff2b261d), C (0xff3a3328), C (0xffeee8d6), C (0xff1d1a14),
-              C (0xffc4bba2), C (0xffb3a98e), C (0xff8e8570),
-              C (0xff2b261d), C (0xffeee8d6) },
-            // Ampex MM1200: blue-grey, black keys with lit labels, amber locator, white-faced VUs
-            { "AMPEX", "MM1200", C (0xff5c666e), C (0xff4a535a), C (0xff3a4147), C (0xfff0f2f2), C (0xffb3bcc2), false,
-              Keys::illuminated, C (0xff1e2124), C (0xfff0f2f2),
-              Counter::amberLed, C (0xffffb020), C (0xff140d02),
-              Meter::vu, C (0xfffdfcf6), C (0xffe9e6d8), C (0xff15171a), C (0xffd0312d), C (0xff1e2124), C (0xff2b3035), C (0xfff0f2f2), C (0xff15171a),
-              C (0xff4c555c), C (0xff3f474d), C (0xff2d3338),
-              C (0xff1e2124), C (0xffd9dee2) },
-            // Otari MTR-90: warm off-white, big dark keys, green VFD locator, white-faced VUs
-            { "OTARI", "MTR-90", C (0xffdedbd2), C (0xffc9c5b9), C (0xffa19c8f), C (0xff222222), C (0xff6e6a60), false,
-              Keys::square, C (0xff3b3d3f), C (0xfff2f2f0),
-              Counter::greenVfd, C (0xff5effc8), C (0xff031410),
-              Meter::vu, C (0xfffafaf6), C (0xffeceade), C (0xff111111), C (0xffd8342a), C (0xff2a2a2a), C (0xff303030), C (0xfff2f2f0), C (0xff111111),
-              C (0xff2c2d2e), C (0xff222324), C (0xff47494b),
-              C (0xff2c2d2e), C (0xffdedbd2) },
-            // Studer J37: grey-green hammertone, bakelite push buttons, mechanical counter, big cream VUs
-            { "STUDER", "J37", C (0xff68736a), C (0xff535d55), C (0xff3d453f), C (0xffeef0e6), C (0xffb7bfb2), false,
-              Keys::bakelite, C (0xff1b1a18), C (0xffeee6cf),
+              Meter::vu, C (0xfffcfbf6), C (0xffeceadf), C (0xff15171a), C (0xffd0312d), C (0xff3f3a33), C (0xff4a443b), C (0xffefe9dc), C (0xff15171a),
+              C (0xff6a6257), C (0xff5f584e), C (0xff4a443b),
+              C (0xff2e2a24), C (0xffefe9dc) },
+            // Ampex MM1200: off-white deck, illuminated push buttons, red LED timer;
+            // black meter strip of warm, backlit VU meters.
+            { "AMPEX", "MM1200", C (0xffe4e1d8), C (0xffd1cdc2), C (0xffa8a396), C (0xff222222), C (0xff6e6a60), false,
+              Keys::illuminated, C (0xff2a2b2d), C (0xfff0f0ec),
+              Counter::redLed, C (0xffff3b2e), C (0xff140605),
+              Meter::vu, C (0xfffbe3a2), C (0xffe6ad48), C (0xff1d1a14), C (0xffb3261e), C (0xff141414), C (0xff1a1a1a), C (0xfff0e6cc), C (0xff1d1a14),
+              C (0xff1a1a1a), C (0xff141414), C (0xff2e2e2e),
+              C (0xff1a1a1a), C (0xffe4e1d8) },
+            // Otari MTR-90: off-white cabinet, dark grey transport strip with amber-lamp keys, red LED
+            // counter; black meter panel of warm, backlit VU meters.
+            { "OTARI", "MTR-90", C (0xff3c3e41), C (0xff303235), C (0xffb9b6ad), C (0xffeceae4), C (0xffa4a29b), false,
+              Keys::square, C (0xff505357), C (0xfff2f2f0),
+              Counter::redLed, C (0xffff3b2e), C (0xff140605),
+              Meter::vu, C (0xfffbe5a8), C (0xffe9b456), C (0xff1d1a14), C (0xffc0392b), C (0xff0f0f0f), C (0xff141414), C (0xffe9e6dc), C (0xff1d1a14),
+              C (0xff111111), C (0xff0c0c0c), C (0xff2a2a2a),
+              C (0xffdedbd2), C (0xff2a2a2a) },
+            // Studer J37: light grey hammertone, ivory push keys with an orange record key and an
+            // amber-lit key when engaged, mechanical counter. The J37 had no meters of its own -
+            // Abbey Road read levels on the EMI desk's PPMs: black faces, white marks 1-7.
+            { "STUDER", "J37", C (0xffa2a49e), C (0xff8e908a), C (0xff6c6e69), C (0xff1c1d1b), C (0xff4a4c48), false,
+              Keys::ivory, C (0xfff1ead6), C (0xff1c1d1b),
               Counter::drum, C (0xfff3eedc), C (0xff121212),
-              Meter::vu, C (0xfff9e6b2), C (0xffe8bf5c), C (0xff1d1a14), C (0xffb3261e), C (0xff3d453f), C (0xff262b27), C (0xffeee6cf), C (0xff1d1a14),
-              C (0xff5d685f), C (0xff4f5951), C (0xff3d453f),
-              C (0xff2a2f2b), C (0xffd9cfaa) },
-            // 3M M23: brushed aluminium, black keys, mechanical counter, black-faced VUs
-            { "3M", "M23", C (0xffb9bab6), C (0xff9fa09b), C (0xff6f706c), C (0xff171717), C (0xff4f504c), true,
-              Keys::chrome, C (0xff151515), C (0xfff1f1ee),
+              Meter::ppm, C (0xff151515), C (0xff0b0b0b), C (0xfff2f2ee), C (0xfff2f2ee), C (0xff5a5c58), C (0xff2a2b29), C (0xfff1ead6), C (0xfff5f5f0),
+              C (0xff8e908a), C (0xff80827c), C (0xff6c6e69),
+              C (0xff1c1d1b), C (0xffe6e0cc) },
+            // 3M M23: pale grey, a dark blue-grey front panel, light grey keys, mechanical counter;
+            // pale grey electronics drawers each with an amber-backlit VU meter.
+            { "3M", "M23", C (0xff3e4f5b), C (0xff33424d), C (0xffb8bab6), C (0xffe9ecee), C (0xffa9b4bc), false,
+              Keys::cream, C (0xffd9dbd8), C (0xff1e2226),
               Counter::drum, C (0xfff1f1ee), C (0xff101010),
-              Meter::vu, C (0xff1c1c1c), C (0xff0e0e0e), C (0xffeeeeea), C (0xffff5a40), C (0xff2c2c2c), C (0xff111111), C (0xffeeeeea), C (0xfff5f5f0),
-              C (0xff1f1f1f), C (0xff171717), C (0xff3a3a3a),
-              C (0xff151515), C (0xffd8d8d4) },
+              Meter::vu, C (0xfffbe3a2), C (0xffe6ad48), C (0xff1d1a14), C (0xffb3261e), C (0xff9a9c98), C (0xffb4b6b2), C (0xff1e2226), C (0xff1d1a14),
+              C (0xffc6c7c3), C (0xffb4b6b2), C (0xff9a9c98),
+              C (0xffc6c7c3), C (0xff1e2226) },
         };
         return s[juce::jlimit (0, 5, i)];
     }
@@ -92,31 +99,31 @@ struct MachineSkin
     {
         using C = juce::Colour;
         static const MachineSkin s[] = {
-            // Ampex ATR-102: cream VUs, dark grey
-            { "AMPEX", "ATR-102", C (0xff3a3b3d), C (0xff2c2d2f), C (0xff4c4e50), C (0xffecebe6), C (0xff9c9a94), false,
-              Keys::square, C (0xff2a2b2d), C (0xffecebe6), Counter::redLed, C (0xffff3b2e), C (0xff120605),
-              Meter::vu, C (0xfffaefc4), C (0xffecd17e), C (0xff1d1a14), C (0xffc0392b), C (0xff1d1e20), C (0xff1a1b1d), C (0xffecebe6), C (0xff1d1a14),
-              C (0xff2c2d2f), C (0xff222325), C (0xff444648), C (0xff1a1b1d), C (0xffecebe6) },
-            // Studer A80: grey with white-faced VUs
-            { "STUDER", "A80", C (0xff4d5257), C (0xff3d4246), C (0xff5e6368), C (0xffeef0f2), C (0xffa4abb1), false,
+            // Ampex ATR-102: black meter panel, orange-backlit VU meters
+            { "AMPEX", "ATR-102", C (0xffe2d9c2), C (0xffcfc5ab), C (0xff1a1a1a), C (0xff1a1a1a), C (0xff6a634f), false,
+              Keys::cream, C (0xffeee3c6), C (0xff1a1a1a), Counter::redLed, C (0xffff3b2e), C (0xff120605),
+              Meter::vu, C (0xfffcd78a), C (0xffeea23a), C (0xff1d1a14), C (0xffb3261e), C (0xff141414), C (0xff1a1a1a), C (0xffeee3c6), C (0xff1d1a14),
+              C (0xff1a1a1a), C (0xff141414), C (0xff333333), C (0xff1a1a1a), C (0xffeee3c6) },
+            // Studer A80: black modules, pale cream VU faces
+            { "STUDER", "A80", C (0xffbfc2c3), C (0xffa3a6a8), C (0xff2d3033), C (0xff1b1d1f), C (0xff4c5055), true,
               Keys::square, C (0xff2f3337), C (0xffeef0f2), Counter::redLed, C (0xffff3b2e), C (0xff120605),
-              Meter::vu, C (0xfffbfbf6), C (0xffe9e8dd), C (0xff15171a), C (0xffd0312d), C (0xff25292c), C (0xff1e2124), C (0xffeef0f2), C (0xff15171a),
-              C (0xff3d4246), C (0xff32363a), C (0xff52575c), C (0xff1e2124), C (0xffeef0f2) },
-            // Otari MTR-12: LED bars
-            { "OTARI", "MTR-12", C (0xffdedbd2), C (0xffc9c5b9), C (0xffa19c8f), C (0xff222222), C (0xff6e6a60), false,
-              Keys::square, C (0xff3b3d3f), C (0xfff2f2f0), Counter::greenVfd, C (0xff5effc8), C (0xff031410),
-              Meter::ledBar, C (0xff0c0d0e), C (0xff0c0d0e), C (0xffb9c2c9), C (0xffff3b2e), C (0xff2a2a2a), C (0xff15171a), C (0xffd0d6db), C (0xff000000),
-              C (0xff2c2d2e), C (0xff222324), C (0xff47494b), C (0xff2c2d2e), C (0xffdedbd2) },
-            // Ampex 351: valve-era, deep amber-lit VUs
-            { "AMPEX", "351", C (0xff4a4640), C (0xff3a3732), C (0xff5c574f), C (0xffefe6d2), C (0xffa89f8e), false,
+              Meter::vu, C (0xfffaf4dc), C (0xffece2bf), C (0xff15171a), C (0xffc0392b), C (0xff1c1e21), C (0xff1f2225), C (0xffeef0f2), C (0xff15171a),
+              C (0xff222528), C (0xff1c1e21), C (0xff3a3e42), C (0xff1e2124), C (0xffeef0f2) },
+            // Otari MTR-12: light grey, white-faced VU meters
+            { "OTARI", "MTR-12", C (0xffd8d6d0), C (0xffc5c2bb), C (0xff9e9b93), C (0xff222222), C (0xff6e6a60), false,
+              Keys::coloured, C (0xffe6e4de), C (0xff222222), Counter::redLed, C (0xffff3b2e), C (0xff140605),
+              Meter::vu, C (0xfffcfbf6), C (0xffeceadf), C (0xff15171a), C (0xffd0312d), C (0xff3a3a3a), C (0xff2c2c2c), C (0xfff2f2f0), C (0xff15171a),
+              C (0xffc5c2bb), C (0xffb5b2ab), C (0xff9e9b93), C (0xff2c2c2c), C (0xffdedbd2) },
+            // Ampex 351: brushed-aluminium valve electronics, cream VU faces
+            { "AMPEX", "351", C (0xffc4c5c1), C (0xffadaeaa), C (0xff1b1b1b), C (0xff1b1b1b), C (0xff4f504c), true,
               Keys::bakelite, C (0xff1b1a18), C (0xffeee6cf), Counter::drum, C (0xfff3eedc), C (0xff121212),
-              Meter::vu, C (0xfff7dc98), C (0xffdca63e), C (0xff1d1a14), C (0xffa8231b), C (0xff2a2723), C (0xff221f1c), C (0xffeee6cf), C (0xff1d1a14),
-              C (0xff3a3732), C (0xff302d29), C (0xff4c4842), C (0xff221f1c), C (0xffd9cfaa) },
-            // EMI BTR2: EMI grey-green, big cream VUs
-            { "EMI", "BTR2", C (0xff66706a), C (0xff535c56), C (0xff3d453f), C (0xffeef0e6), C (0xffb7bfb2), false,
+              Meter::vu, C (0xfff9e3ae), C (0xffe9bf62), C (0xff1d1a14), C (0xffa8231b), C (0xff9fa09c), C (0xff1b1b1b), C (0xffeee6cf), C (0xff1d1a14),
+              C (0xff1b1b1b), C (0xff141414), C (0xff333333), C (0xff1b1b1b), C (0xffd9d9d4) },
+            // EMI BTR2: EMI sage green, black-faced meter
+            { "EMI", "BTR2", C (0xff8ea692), C (0xff7b927f), C (0xff5a6e5e), C (0xff1a1f1b), C (0xff3d4a40), false,
               Keys::bakelite, C (0xff1b1a18), C (0xffeee6cf), Counter::drum, C (0xfff3eedc), C (0xff121212),
-              Meter::vu, C (0xfff9e6b2), C (0xffe8bf5c), C (0xff1d1a14), C (0xffb3261e), C (0xff3d453f), C (0xff262b27), C (0xffeee6cf), C (0xff1d1a14),
-              C (0xff5d685f), C (0xff4f5951), C (0xff3d453f), C (0xff2a2f2b), C (0xffd9cfaa) },
+              Meter::ppm, C (0xff151515), C (0xff0b0b0b), C (0xfff2f2ee), C (0xfff2f2ee), C (0xff2a2f2b), C (0xff1c201d), C (0xffe6e0cc), C (0xfff5f5f0),
+              C (0xff7b927f), C (0xff6e8572), C (0xff5a6e5e), C (0xff1c201d), C (0xffd9e0d6) },
         };
         return s[juce::jlimit (0, 4, i)];
     }

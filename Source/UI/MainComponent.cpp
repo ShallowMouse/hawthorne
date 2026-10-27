@@ -99,6 +99,47 @@ void TransportKey::paintButton (juce::Graphics& g, bool highlighted, bool down)
             text (isRec ? juce::Colour (0xffe0503c) : sk.keyText, in);
             break;
         }
+        case MachineSkin::Keys::coloured:
+        {
+            // MCI-style colour-coded caps
+            const auto cap = isRec ? juce::Colour (0xffc8322a)
+                           : label == "PLAY" ? juce::Colour (0xff2f8f4e)
+                           : label == "STOP" ? juce::Colour (0xffe9e6dc)
+                           : (label == "<<" || label == ">>") ? juce::Colour (0xff2f5f9e)
+                           : label == "RTZ" ? juce::Colour (0xffd98a2b)
+                           : sk.key;
+            auto capR = r.reduced (2.0f);
+            juce::ColourGradient body (cap.brighter (0.2f), capR.getX(), capR.getY(), cap.darker (0.25f), capR.getX(), capR.getBottom(), false);
+            g.setColour (juce::Colour (0xff1b1916));
+            g.fillRoundedRectangle (r, 3.0f);
+            g.setGradientFill (body);
+            g.fillRoundedRectangle (capR, 2.0f);
+            pressed (2.0f);
+            if (lit)
+            {
+                g.setColour (cap.brighter (0.6f).withAlpha (0.5f));
+                g.drawRoundedRectangle (capR.expanded (1.0f), 3.0f, 2.0f);
+                g.setColour (juce::Colours::white.withAlpha (0.18f));
+                g.fillRoundedRectangle (capR, 2.0f);
+            }
+            const bool darkCap = cap.getPerceivedBrightness() < 0.55f;
+            text (darkCap ? juce::Colours::white : juce::Colour (0xff1b1916), capR);
+            break;
+        }
+        case MachineSkin::Keys::ivory:
+        {
+            // J37: ivory push keys, the record key orange, an engaged key lit amber around its edge
+            const auto cap = isRec ? juce::Colour (0xffd9682c) : sk.key;
+            juce::ColourGradient body (cap.brighter (0.1f), r.getX(), r.getY(), cap.darker (0.15f), r.getX(), r.getBottom(), false);
+            g.setGradientFill (body);
+            g.fillRoundedRectangle (r, 2.0f);
+            pressed (2.0f);
+            g.setColour (lit ? lamp.brighter (0.3f) : juce::Colour (0xff3a3b38));
+            g.drawRoundedRectangle (r.reduced (0.5f), 2.0f, lit ? 2.5f : 1.0f);
+            if (lit) { g.setColour (lamp.withAlpha (0.3f)); g.drawRoundedRectangle (r.expanded (1.5f), 3.0f, 2.0f); }
+            text (sk.keyText, r);
+            break;
+        }
         case MachineSkin::Keys::square:
         default:
         {

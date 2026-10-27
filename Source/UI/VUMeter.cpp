@@ -60,6 +60,14 @@ void VUMeter::update (float rms, float peak, float dt)
     if (pkVu > ledPeakDb) { ledPeakDb = pkVu; ledPeakHold = 0.8f; }
     else if ((ledPeakHold -= dt) <= 0.0f) ledPeakDb = juce::jmax (-60.0f, ledPeakDb - 26.0f * dt);
 
+    // PPM (EMI desks): fast rise, slow fall (24 dB in 2.8 s)
+    const float pkRel = 20.0f * std::log10 (juce::jmax (1.0e-6f, peak)) - referenceDbfs;
+    const float oldPpm = ppmDb;
+    ppmDb = juce::jmax (pkRel, ppmDb - 8.6f * dt);
+    ppmDb = juce::jlimit (-40.0f, 20.0f, ppmDb);
+    if (skin().meter == MachineSkin::Meter::ppm && std::abs (ppmDb - oldPpm) > 0.05f)
+        repaint();
+
     if (std::abs (needle - drawnNeedle) > 0.0015f || wasPeak != (peakHold > 0.0f)
         || (skin().meter == MachineSkin::Meter::ledBar && ledPeakDb > ledMinVu - 1.0f))
         repaint();
@@ -122,6 +130,11 @@ void VUMeter::renderFace()
     if (skin().meter == MachineSkin::Meter::ledBar)
     {
         renderLedFace (g);
+        return;
+    }
+    if (skin().meter == MachineSkin::Meter::ppm)
+    {
+        renderPpmFace (g);
         return;
     }
 
@@ -237,6 +250,57 @@ void VUMeter::renderFace()
 }
 
 //==============================================================================
+// PPM scale: marks 1..7, 4 = reference level, 4 dB a mark (6 dB between 1 and 2)
+static float ppmMarkPos (float mark) { return 0.06f + (mark - 1.0f) / 6.0f * 0.88f; }
+
+float VUMeter::ppmPos() const
+{
+    const float mark = ppmDb >= -8.0f ? 4.0f + ppmDb / 4.0f : 2.0f + (ppmDb + 8.0f) / 6.0f;
+    return juce::jlimit (0.0f, 1.06f, mark < 1.0f ? ppmMarkPos (1.0f) * juce::jmax (0.0f, mark) : ppmMarkPos (mark));
+}
+
+void VUMeter::renderPpmFace (juce::Graphics& g)
+{
+    const auto& sk = skin();
+    auto outer = getLocalBounds().toFloat().reduced (1.0f);
+    auto face = faceArea();
+    const auto P = pivot();
+    const float R = radius();
+    const float fh = face.getHeight();
+
+    g.setColour (sk.bezel);
+    g.fillRoundedRectangle (outer, 5.0f);
+    juce::ColourGradient grad (sk.faceTop, face.getCentreX(), face.getY(), sk.faceBottom, face.getCentreX(), face.getBottom(), false);
+    g.setGradientFill (grad);
+    g.fillRoundedRectangle (face, 2.0f);
+
+    g.saveState();
+    g.reduceClipRegion (face.toNearestInt());
+    auto pointAt = [&] (float pos, float r)
+    {
+        const float a = angleFor (pos);
+        return juce::Point<float> (P.x + r * std::sin (a), P.y - r * std::cos (a));
+    };
+    const float lineW = juce::jmax (0.8f, fh * 0.014f);
+    const float numSize = juce::jmax (6.0f, fh * 0.15f);
+    g.setFont (uiFont (numSize, true));
+    g.setColour (sk.meterInk);
+    for (int m = 1; m <= 7; ++m)
+    {
+        const float pos = ppmMarkPos ((float) m);
+        g.drawLine (juce::Line<float> (pointAt (pos, R), pointAt (pos, R + fh * 0.08f)), lineW * 1.4f);
+        g.drawText (juce::String (m), juce::Rectangle<float> (numSize * 1.6f, numSize * 1.2f).withCentre (pointAt (pos, R + fh * 0.08f + numSize * 0.8f)),
+                    juce::Justification::centred, false);
+        if (m < 7)
+            g.drawLine (juce::Line<float> (pointAt (ppmMarkPos ((float) m + 0.5f), R), pointAt (ppmMarkPos ((float) m + 0.5f), R + fh * 0.04f)), lineW);
+    }
+    g.setFont (juce::Font (juce::FontOptions ("Times New Roman", fh * 0.13f, juce::Font::bold)));
+    g.drawText ("PPM", juce::Rectangle<float> (face.getWidth(), fh * 0.16f)
+                           .withCentre ({ face.getCentreX(), face.getY() + fh * (1.0f - plateFrac) - fh * 0.13f }),
+                juce::Justification::centred, false);
+    g.restoreState();
+}
+
 juce::Rectangle<float> VUMeter::ledArea() const
 {
     auto face = faceArea();
@@ -321,7 +385,7 @@ void VUMeter::paint (juce::Graphics& g)
         g.saveState();
         g.reduceClipRegion (face.withBottom (plate.getY()).toNearestInt());
 
-        const float a = angleFor (needle);
+        const float a = angleFor (sk.meter == MachineSkin::Meter::ppm ? ppmPos() : needle);
         const float len = radius() + fh * 0.06f;
         const juce::Point<float> tip (P.x + len * std::sin (a), P.y - len * std::cos (a));
         const float wNeedle = juce::jmax (1.0f, fh * 0.016f);

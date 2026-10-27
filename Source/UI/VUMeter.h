@@ -54,6 +54,9 @@ private:
 
     const MachineSkin& skin() const { return isMaster ? MachineSkin::currentMaster() : MachineSkin::current(); }
     void renderLedFace (juce::Graphics&);
+    void renderPpmFace (juce::Graphics&);
+    float ppmPos() const;
+    float ppmDb = -40.0f;
     void paintLed (juce::Graphics&);
     juce::Rectangle<float> ledArea() const;
     bool isMaster = false;
