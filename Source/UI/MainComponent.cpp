@@ -167,7 +167,7 @@ int MeterBridge::layoutForWidth (int width, int minHeight)
     const int pad = 10, gap = 8;
     const float moduleW = ((float) (width - 2 * pad) - (float) (perRow - 1) * gap) / (float) perRow;
     const int meterH = (int) (moduleW / ChannelModule::meterAspect);
-    const int moduleH = meterH + ChannelModule::controlsHeight + 4;
+    const int moduleH = meterH + ChannelModule::controlsHeight + (nrStrip ? ChannelModule::nrHeight : 0) + 4;
     const int rows = (modules.size() + perRow - 1) / perRow;
     const int needed = pad + rows * (moduleH + 2 * gap);
     const int top = juce::jmax (0, (minHeight - needed) / 2);   // centre when there's room
@@ -960,9 +960,11 @@ void MainComponent::rebuildModules()
         };
         m->onRenameRequest = [this] (int track) { renameTrack (track); };
         m->onMenuRequest   = [this] (int track) { showTrackMenu (track); };
+        m->onNrMode        = [this] (int track, int mode) { engine.setTrackNr (track, mode); };
         bridge.addAndMakeVisible (m);
     }
 
+    bridge.nrStrip = engine.getNoiseReduction() != nr::none;
     refreshTrackNames();
     refreshInputChoices();
     layoutBridge();
@@ -1232,6 +1234,15 @@ void MainComponent::showMachineMenu()
     const bool rec = engine.isRecording();
     juce::PopupMenu m;
     m.addItem (1, juce::String ("Machines...   (") + tape::multitrackMachine (reel->machine).name + ")", ! rec);
+    {
+        juce::PopupMenu nrMenu;
+        for (int s = 0; s < nr::numSystems; ++s)
+            nrMenu.addItem (100 + s, nr::info (s).name, ! rec, reel->noiseReduction == s);
+        nrMenu.addSeparator();
+        for (int md = 0; md < nr::numModes; ++md)
+            nrMenu.addItem (200 + md, juce::String ("All tracks: ") + nr::modeName (md), ! rec && reel->noiseReduction != nr::none);
+        m.addSubMenu (juce::String ("Noise reduction   (") + nr::info (reel->noiseReduction).name + ")", nrMenu);
+    }
     m.addSeparator();
     m.addItem (2, "Import audio onto a track...", ! rec);
     m.addItem (3, "Export all tracks (stems)...", ! rec);
@@ -1244,7 +1255,21 @@ void MainComponent::showMachineMenu()
         else if (r == 2) importAudio (0);
         else if (r == 3) { juce::Array<int> all; for (int t = 0; t < reel->numTracks; ++t) all.add (t); exportTracks (all); }
         else if (r == 4) flipReel();
+        else if (r >= 100 && r < 100 + nr::numSystems) setNoiseReduction (r - 100);
+        else if (r >= 200 && r < 200 + nr::numModes)
+            for (int t = 0; t < reel->numTracks; ++t) engine.setTrackNr (t, r - 200);
     });
+}
+
+void MainComponent::setNoiseReduction (int system)
+{
+    if (reel == nullptr || engine.isRecording()) return;
+    engine.setNoiseReduction (system);
+    bridge.nrStrip = system != nr::none;
+    layoutBridge();
+    for (auto* m : bridge.modules) m->resized();
+    if (sheetWindow != nullptr) sheetWindow->getSheet().refresh();
+    repaint();
 }
 
 void MainComponent::showTrackMenu (int track)
@@ -1256,6 +1281,14 @@ void MainComponent::showTrackMenu (int track)
     m.addItem (1, "Import audio onto this track...");
     m.addItem (2, "Export this track...", reel->getTapeFile (track).existsAsFile());
     m.addItem (3, "Export all tracks (stems)...");
+    if (reel->noiseReduction != nr::none)
+    {
+        m.addSeparator();
+        juce::PopupMenu nrMenu;
+        for (int md = 0; md < nr::numModes; ++md)
+            nrMenu.addItem (200 + md, nr::modeName (md), true, engine.getTrackNr (track) == md);
+        m.addSubMenu (juce::String (nr::info (reel->noiseReduction).name) + "  (" + nr::modeLabel (engine.getTrackNr (track)) + ")", nrMenu);
+    }
     m.addSeparator();
     m.addItem (4, "Rename...");
     m.showMenuAsync ({}, [this, track] (int r)
@@ -1265,6 +1298,7 @@ void MainComponent::showTrackMenu (int track)
         else if (r == 2) exportTracks ({ track });
         else if (r == 3) { juce::Array<int> all; for (int t = 0; t < reel->numTracks; ++t) all.add (t); exportTracks (all); }
         else if (r == 4) renameTrack (track);
+        else if (r >= 200 && r < 200 + nr::numModes) engine.setTrackNr (track, r - 200);
     });
 }
 
@@ -1363,10 +1397,11 @@ void MainComponent::importAudio (int track)
             if (print) sh->set ((tape::Stock) reel->tapeStock, reel->ips, reel->sampleRate, tape::multitrackMachine (reel->machine));
             const double rate = reel->sampleRate;
             const auto len = (juce::int64) ((double) srcLen * rate / srcRate);
+            const int nrEnc = nr::encodes (reel->tracks[(size_t) t0].nrMode) ? reel->noiseReduction : nr::none;
 
             runTapeJob ("Importing " + src.getFileName() + "...",
-                        [src, files, rate, at, sh, print] (std::function<bool (double)> progress)
-                        { return transfer::importFile (src, files, rate, at, print ? sh.get() : nullptr, progress); },
+                        [src, files, rate, at, sh, print, nrEnc] (std::function<bool (double)> progress)
+                        { return transfer::importFile (src, files, rate, at, print ? sh.get() : nullptr, progress, nrEnc); },
                         [this, src, t0, two, at, len] (bool ok)
                         {
                             if (! ok || reel == nullptr) return;
@@ -1403,11 +1438,12 @@ void MainComponent::exportTracks (juce::Array<int> tracks)
             const auto length = engine.getReelLength();
             const double rate = reel->sampleRate;
             const auto prefix = juce::File::createLegalFileName ((session != nullptr ? session->getName() + " - " : juce::String()) + reel->getName());
-            struct Item { juce::File src, dest; };
+            struct Item { juce::File src, dest; int nrDecode; };
             std::vector<Item> items;
             for (auto t : withTape)
                 items.push_back ({ reel->getTapeFile (t), folder.getChildFile (prefix + " - " + juce::String (t + 1).paddedLeft ('0', 2) + " "
-                                                                          + juce::File::createLegalFileName (reel->tracks[(size_t) t].name) + ".wav") });
+                                                                          + juce::File::createLegalFileName (reel->tracks[(size_t) t].name) + ".wav"),
+                                   nr::decodes (reel->tracks[(size_t) t].nrMode) ? reel->noiseReduction : nr::none });
             auto sh = std::make_shared<tape::Shared>();
             if (repro) sh->set ((tape::Stock) reel->tapeStock, reel->ips * reel->getSpeedRatio(), rate, tape::multitrackMachine (reel->machine));
 
@@ -1416,7 +1452,8 @@ void MainComponent::exportTracks (juce::Array<int> tracks)
                 for (size_t i = 0; i < items.size(); ++i)
                 {
                     auto err = transfer::exportTrack (items[i].src, items[i].dest, rate, length, repro ? sh.get() : nullptr,
-                                                      [&] (double p) { return progress (((double) i + p) / (double) items.size()); });
+                                                      [&] (double p) { return progress (((double) i + p) / (double) items.size()); },
+                                                      items[i].nrDecode);
                     if (err.isNotEmpty()) return err;
                 }
                 return juce::String();
@@ -2146,6 +2183,17 @@ void MainComponent::timerCallback()
     {
         auto* m = bridge.modules[t];
         m->setArmed (engine.isArmed (t), rec, flash);
+        {
+            const int sys = engine.getNoiseReduction(), mode = engine.getTrackNr (t);
+            const bool armedT = engine.isArmed (t);
+            int lamp = 0;
+            if (sys != nr::none)
+            {
+                if (armedT && rec)                         lamp = nr::encodes (mode) ? 1 : 0;
+                else if (rolling && ! (armedT && rec))     lamp = nr::decodes (mode) ? 2 : 0;
+            }
+            m->setNr (sys, mode, lamp);
+        }
         m->getMeter().update (engine.popTrackRms (t), engine.popTrackPeak (t), dt);
     }
 
@@ -2374,7 +2422,7 @@ void MainComponent::paint (juce::Graphics& g)
         g.drawFittedText ("REEL  " + formatTime (engine.getReelLength(), sessionRate()).dropLastCharacters (4)
                               + "\n" + juce::String (reel->numTracks) + " TRACKS  -  "
                               + juce::String (reel->sampleRate / 1000.0, 1) + " kHz / 24-bit"
-                              + "\n" + speedText(),
+                              + "\n" + speedText() + (reel->noiseReduction != nr::none ? juce::String ("  -  ") + nr::info (reel->noiseReduction).label : juce::String()),
                           reelInfoArea.withTrimmedTop (24), juce::Justification::centredLeft, 3);
         g.setColour (sk.deckTextDim);
         g.setFont (monoFont (10.0f, true));

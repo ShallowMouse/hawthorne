@@ -7,6 +7,7 @@
 #include "Varispeed.h"
 #include "Timecode.h"
 #include "TapeStock.h"
+#include "NoiseReduction.h"
 #include "SpoolMonitor.h"
 #include "RouteHost.h"
 #include "../Network/NetReceiver.h"
@@ -432,7 +433,18 @@ public:
     /** Machine models (changeable): the multitrack, and the 2-track for the master. */
     void setMachine (int multitrackMachine);
     void setMasterMachine (int twoTrackMachine);
+    /** Noise reduction (nr::System) for the reel, and each track's NR switch (nr::Mode). */
+    void setNoiseReduction (int system);
+    int  getNoiseReduction() const noexcept { return nrSystemA.load(); }
+    void setTrackNr (int track, int mode);
+    int  getTrackNr (int track) const noexcept { return juce::isPositiveAndBelow (track, kMaxTracks) ? nrModeA[(size_t) track].load() : 0; }
 private:
+    std::atomic<int> nrSystemA { 0 };
+    std::array<std::atomic<int>, kMaxTracks> nrModeA {};
+    nr::Settings nrSettings;                            // audio thread
+    std::unique_ptr<std::array<nr::Channel, kMaxTracks>> nrEnc, nrDec;
+    std::array<bool, kMaxTracks> nrDecLive {};
+    juce::HeapBlock<float> nrBuf;
 
     juce::HeapBlock<double> tapePosBuf;                 // tape position of every sample in a block
     juce::AudioBuffer<float> clickBuf;

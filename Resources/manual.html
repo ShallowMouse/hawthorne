@@ -57,6 +57,7 @@ th { background:#ece2c8; font:700 13px "Courier New", monospace; }
   <a href="#importexport">Import and export</a>
   <div class="h">STUDIO</div>
   <a href="#routing">Routing</a>
+  <a href="#nr">Noise reduction</a>
   <a href="#latency">Latency and outboard</a>
   <a href="#tempo">Tempo and click</a>
   <a href="#timecode">Timecode and sync</a>
@@ -180,6 +181,22 @@ th { background:#ece2c8; font:700 13px "Courier New", monospace; }
 </table>
 
 <p><b>No machine (bit-perfect)</b> is in both columns too: with it, nothing is added on playback or recording &mdash; no saturation, EQ, hiss or wow &mdash; whatever tape the reel is on. The machine room lists the machines oldest first.</p>
+
+<h2 id="nr">Noise reduction (Dolby A, Dolby SR, dbx)</h2>
+<p>Each reel can use a noise-reduction system, chosen when it's made (New Reel, New Session, Import recordings) and changeable from <b>MACHINE &rarr; Noise reduction</b>. Like the real racks, it <b>encodes</b> what you record (printed into the tape files) and <b>decodes</b> on playback, after the tape and its hiss &mdash; so the programme comes back as it went in and the hiss is pushed down.</p>
+<ul>
+  <li><b>Dolby A</b> (1966): four bands, about 10 dB less hiss (15 dB at the top). The studio standard.</li>
+  <li><b>Dolby SR</b> (1986): five bands, about 20 dB less hiss.</li>
+  <li><b>dbx Type I</b>: wideband 2:1 compression and emphasis, about 30 dB less hiss &mdash; but it can breathe and pump on sparse material.</li>
+</ul>
+<p>With noise reduction on, every track gets an <b>NR strip</b> under its meter: the system's badge, a lamp (green while encoding a recording, amber while decoding playback) and a four-way switch:</p>
+<ul>
+  <li><span class="key">NR</span> normal: encode on record, decode on playback.</li>
+  <li><span class="key">ENC</span> encode only: records encoded, plays back undecoded &mdash; the bright, breathy "Dolby trick" on vocals.</li>
+  <li><span class="key">DEC</span> decode only: records plain, decodes on playback &mdash; dull and expanded; also the setting for a track that arrived already encoded.</li>
+  <li><span class="key">OUT</span> bypass: neither.</li>
+</ul>
+<p>The switch is also in a track's right-click menu, and MACHINE &rarr; Noise reduction sets all tracks at once. Switching a track after recording changes how it plays back (it's what's on the tape that counts). Imports are encoded and exports decoded following each track's switch. Varispeed, tape saturation and flipping the reel make the decoder mistrack a little, as on the real thing.</p>
 
 <h2 id="masters">Masters</h2>
 <p>A master is a stereo mix recorded onto the reel, sample-aligned with its tracks &mdash; the 2-track. In the sidebar:</p>

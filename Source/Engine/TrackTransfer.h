@@ -3,6 +3,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include "Reel.h"
 #include "TapeStock.h"
+#include "NoiseReduction.h"
 
 namespace hawthorne
 {
@@ -100,7 +101,8 @@ namespace transfer
 
     /** Import: 1 tape file = mono (stereo summed), 2 = left / right. */
     inline juce::String importFile (const juce::File& src, const juce::Array<juce::File>& tapes, double reelRate,
-                                    juce::int64 at, const tape::Shared* print, const Progress& progress)
+                                    juce::int64 at, const tape::Shared* print, const Progress& progress,
+                                    int nrEncode = nr::none)
     {
         juce::AudioFormatManager fm;
         fm.registerBasicFormats();
@@ -123,6 +125,10 @@ namespace transfer
         const int outs = (int) out.size();
         std::vector<tape::RecordChannel> rec ((size_t) outs);
         for (int i = 0; i < outs; ++i) rec[(size_t) i].reset (0xC0FFEEu + (uint32_t) i);
+        nr::Settings nrs;
+        nrs.set (nrEncode, reelRate);
+        std::vector<nr::Channel> enc ((size_t) outs);
+        for (auto& e : enc) e.reset();
         const int skip = print != nullptr ? tape::HalfBand::latency : 0;   // the print's delay, taken off
         int toSkip = skip;
 
@@ -162,6 +168,8 @@ namespace transfer
                 else
                     juce::FloatVectorOperations::copy (m, buf.getReadPointer (juce::jmin (i, source.channels - 1)), got);
 
+                if (nrEncode != nr::none)
+                    enc[(size_t) i].encode (nrs, m, m, got);         // the reel's noise reduction, as if recorded
                 if (print != nullptr)
                     rec[(size_t) i].process (*print, m, m, got);
             }
@@ -184,7 +192,8 @@ namespace transfer
 
     /** Export one tape file (padded to `length`) as a 24-bit WAV. */
     inline juce::String exportTrack (const juce::File& tapeFile, const juce::File& dest, double rate, juce::int64 length,
-                                     const tape::Shared* repro, const Progress& progress)
+                                     const tape::Shared* repro, const Progress& progress,
+                                     int nrDecode = nr::none)
     {
         juce::AudioFormatManager fm;
         fm.registerBasicFormats();
@@ -200,6 +209,10 @@ namespace transfer
 
         tape::PlaybackChannel play;
         play.reset (0xBEEFu);
+        nr::Settings nrs;
+        nrs.set (nrDecode, rate);
+        nr::Channel dec;
+        dec.reset();
         juce::AudioBuffer<float> buf (1, 65536);
         for (juce::int64 pos = 0; pos < length;)
         {
@@ -211,6 +224,7 @@ namespace transfer
                 r->read (&d, 1, pos, (int) juce::jmin ((juce::int64) n, r->lengthInSamples - pos));
             }
             if (repro != nullptr) play.process (*repro, buf.getWritePointer (0), n);
+            if (nrDecode != nr::none) dec.decode (nrs, buf.getWritePointer (0), n);
             if (! w->writeFromAudioSampleBuffer (buf, 0, n)) { w.reset(); tmp.deleteFile(); return "Write failed (disk full?)"; }
             pos += n;
             if (progress && ! progress ((double) pos / (double) length)) { w.reset(); tmp.deleteFile(); return {}; }

@@ -2063,6 +2063,130 @@ static void testImportExportFlip()
     std::printf ("    flip: reversed exactly, and back; markers follow\n");
 }
 
+static void testNoiseReduction()
+{
+    std::printf ("[23] noise reduction: Dolby A, Dolby SR, dbx\n");
+    const int n = (int) kSR * 2;
+    auto tone = [] (double f, double db, int k) { return (float) (std::pow (10.0, db / 20.0) * std::sin (2.0 * juce::MathConstants<double>::pi * f * k / kSR)); };
+    auto rms = [] (const std::vector<float>& v, int from) { double s = 0; for (size_t k = (size_t) from; k < v.size(); ++k) s += (double) v[k] * v[k]; return 10.0 * std::log10 (s / (double) (v.size() - (size_t) from) + 1e-30); };
+
+    for (int sys = nr::dolbyA; sys <= nr::dbx; ++sys)
+    {
+        nr::Settings st;
+        st.set (sys, kSR);
+        // programme: quiet passages, loud bursts, all over the spectrum
+        std::vector<float> x ((size_t) n), y ((size_t) n), z ((size_t) n);
+        for (int k = 0; k < n; ++k)
+        {
+            const bool loud = (k / 12000) % 3 == 1;
+            x[(size_t) k] = tone (220.0, loud ? -12.0 : -50.0, k) + tone (3100.0, loud ? -20.0 : -55.0, k) + tone (11000.0, -60.0, k);
+        }
+        nr::Channel enc, dec;
+        enc.reset(); dec.reset();
+        for (int k = 0; k < n; k += 256)
+        {
+            const int m = juce::jmin (256, n - k);
+            enc.encode (st, x.data() + k, y.data() + k, m);
+            std::copy (y.begin() + k, y.begin() + k + m, z.begin() + k);
+            dec.decode (st, z.data() + k, m);
+        }
+        double err = 0, ref = 0;
+        for (int k = 0; k < n; ++k) { err += (double) (z[(size_t) k] - x[(size_t) k]) * (z[(size_t) k] - x[(size_t) k]); ref += (double) x[(size_t) k] * x[(size_t) k]; }
+        const double resid = 10.0 * std::log10 (err / ref + 1e-30);
+        CHECK (resid < -90.0, "%s: decode is the exact inverse of encode (%.1f dB)", nr::info (sys).name, resid);
+
+        // hiss alone through the decoder: how much quieter it gets
+        std::vector<float> h ((size_t) n), hd;
+        tape::Noise noise;
+        for (auto& v : h) v = 0.001f * noise.next();       // -60 dBFS-ish white hiss
+        hd = h;
+        nr::Channel d2; d2.reset();
+        d2.decode (st, hd.data(), n);
+        const double red = rms (h, n / 2) - rms (hd, n / 2);
+
+        // a quiet tone is lifted by the encoder; a loud one passes
+        std::vector<float> q ((size_t) n), qe ((size_t) n), l ((size_t) n), le ((size_t) n);
+        for (int k = 0; k < n; ++k) { q[(size_t) k] = tone (1000.0, -55.0, k); l[(size_t) k] = tone (1000.0, -12.0, k); }
+        nr::Channel e2, e3; e2.reset(); e3.reset();
+        e2.encode (st, q.data(), qe.data(), n);
+        e3.encode (st, l.data(), le.data(), n);
+        const double lift = rms (qe, n / 2) - rms (q, n / 2), loudLift = rms (le, n / 2) - rms (l, n / 2);
+        std::printf ("    %-10s round trip %.0f dB, hiss -%.1f dB, quiet 1 kHz +%.1f dB, loud 1 kHz %+.1f dB\n",
+                     nr::info (sys).name, resid, red, lift, loudLift);
+        const double minRed = sys == nr::dolbyA ? 7.0 : sys == nr::dolbySR ? 10.0 : 20.0;
+        CHECK (red > minRed, "%s: hiss reduced by %.1f dB", nr::info (sys).name, red);
+        CHECK (lift > 6.0, "%s: quiet signals lifted (%.1f dB)", nr::info (sys).name, lift);
+        if (sys != nr::dbx) CHECK (std::abs (loudLift) < 1.5, "%s: loud signals pass (%.1f dB)", nr::info (sys).name, loudLift);
+    }
+
+    // through the transfer: import encodes, export decodes
+    juce::String err;
+    auto dir = makeTempDir ("nr");
+    auto reel = Reel::create (dir, "NR", kSR, 8, err);
+    auto src = dir.getChildFile ("source.wav");
+    std::vector<float> s0 ((size_t) kSR);
+    {
+        std::unique_ptr<juce::OutputStream> os (src.createOutputStream().release());
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (os.get(), kSR, 1, 24, {}, 0));
+        os.release();
+        juce::AudioBuffer<float> b (1, (int) kSR);
+        for (int k = 0; k < (int) kSR; ++k) b.setSample (0, k, s0[(size_t) k] = tone (500.0, -40.0, k) + tone (7000.0, -50.0, k));
+        w->writeFromAudioSampleBuffer (b, 0, (int) kSR);
+    }
+    CHECK (transfer::importFile (src, { reel->getTapeFile (0) }, kSR, 0, nullptr, {}, nr::dolbyA).isEmpty(), "import with Dolby A");
+    auto onTape = readTape (*reel, 0);
+    auto out = dir.getChildFile ("t1.wav");
+    CHECK (transfer::exportTrack (reel->getTapeFile (0), out, kSR, (int64) kSR, nullptr, {}, nr::dolbyA).isEmpty(), "export decoded");
+    auto ex = readFile (out);
+    double e = 0, r = 0, te = 0;
+    for (size_t k = 0; k < juce::jmin (ex.size(), s0.size()); ++k) { e += (ex[k] - s0[k]) * (ex[k] - s0[k]); r += s0[k] * s0[k]; te += onTape[k] * onTape[k]; }
+    const double rt = 10.0 * std::log10 (e / r + 1e-30), encLift = 10.0 * std::log10 (te / r);
+    CHECK (encLift > 2.0 && rt < -60.0, "tape holds it encoded (+%.1f dB), export decodes it back (%.1f dB)", encLift, rt);
+    std::printf ("    import -> tape encoded (+%.1f dB), export decoded (residual %.0f dB, 24-bit)\n", encLift, rt);
+
+    // recording through the engine: track 1 NR (encoded onto tape), track 2 OUT (bit-for-bit)
+    {
+        auto r2 = Reel::create (makeTempDir ("nrrec"), "NRrec", kSR, kDefaultTracks, err, 15.0, 0);
+        r2->noiseReduction = nr::dolbyA;
+        r2->tracks[1].nrMode = nr::bypass;
+        auto sig = [] (int64 c) { const double t = (double) c / kSR; return (float) (0.003 * std::sin (6.2831853 * 997.0 * t) + 0.002 * std::sin (6.2831853 * 5003.0 * t)); };
+        TapeEngine eng;
+        eng.setReel (r2.get());
+        CHECK (eng.getNoiseReduction() == nr::dolbyA && eng.getTrackNr (1) == nr::bypass, "engine takes the reel's NR");
+        prepareEngine (eng, 256);
+        eng.setInput (0, 0); eng.setInput (1, 0);
+        eng.setArmed (0, true); eng.setArmed (1, true);
+        SignalDevice dev (eng, sig);
+        dev.startThread();
+        juce::Thread::sleep (50);
+        CHECK (eng.record().isEmpty(), "record with NR");
+        pump (eng, (int) (2000 / testSpeed()));
+        eng.stop();
+        dev.stopThread (5000);
+        const auto t0 = readTape (*r2, 0), t1 = readTape (*r2, 1);
+        const int64 offset = dev.clockAt.load() - dev.posAt.load() + kLat;
+        int64 bad = 0;
+        for (int64 q = 0; q < (int64) t1.size(); ++q) if (std::abs (t1[(size_t) q] - sig (q + offset)) > 2.0e-7f) ++bad;
+        CHECK (t1.size() > (size_t) kSR / 2 && bad == 0, "NR OUT track records bit-for-bit (%lld differ)", (long long) bad);
+        // decode track 1's tape offline: the input comes back
+        std::vector<float> d (t0);
+        nr::Settings st; st.set (nr::dolbyA, kSR);
+        nr::Channel dc; dc.reset();
+        dc.decode (st, d.data(), (int) d.size());
+        double es = 0, ss = 0, ts = 0;
+        for (size_t q = (size_t) kSR / 4; q < d.size(); ++q)
+        {
+            const double x = sig ((int64) q + offset);
+            es += (d[q] - x) * (d[q] - x); ss += x * x; ts += (double) t0[q] * t0[q];
+        }
+        const double lift = 10.0 * std::log10 (ts / ss), back = 10.0 * std::log10 (es / ss);
+        CHECK (lift > 5.0 && back < -60.0, "NR track: tape encoded +%.1f dB, decodes back to the input (%.1f dB)", lift, back);
+        std::printf ("    recorded: NR track encoded on tape (+%.1f dB), decodes to the input (%.0f dB); OUT track bit-perfect\n", lift, back);
+        eng.setReel (nullptr);
+    }
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -2074,6 +2198,7 @@ int main()
         if (only.contains ("20")) testLifterDefeat();
         if (only.contains ("21")) testAutoPunchAndCycle();
         if (only.contains ("22")) testImportExportFlip();
+        if (only.contains ("23")) testNoiseReduction();
         if (only.contains ("3"))  testTapeMachine();
         std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURE(S)\n", failures);
         return failures == 0 ? 0 : 1;
@@ -2096,6 +2221,7 @@ int main()
     testLifterDefeat();
     testAutoPunchAndCycle();
     testImportExportFlip();
+    testNoiseReduction();
    #if JUCE_LINUX || JUCE_MAC
     testCrashRecovery();
    #endif

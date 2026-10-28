@@ -26,6 +26,8 @@ struct TrackInfo
     // Track sheet (recall)
     juce::String instrument, mic, notes;
     juce::String micPos, preamp, eq, dynamics, outboard;
+
+    int nrMode = 0;           // the track's noise-reduction switch (nr::Mode)
 };
 
 /** The master is a stereo bus: the mix of the tracks plus any patched-in inputs. */
@@ -142,6 +144,7 @@ public:
     int    tapeStock = 0;          // tape::Stock, chosen when the reel is made, fixed for life (0 = clean)
     int    machine = 0;            // multitrack machine model (tape::multitrackMachine), changeable
     int    masterMachine = 0;      // 2-track machine model for the master (tape::masterMachine), changeable
+    int    noiseReduction = 0;     // nr::System for the reel (0 = none), changeable
     bool   flipped = false;        // turned over: playing backwards (reverse tape)
 
     /** Turning the reel over: every position on it mirrors about `length`

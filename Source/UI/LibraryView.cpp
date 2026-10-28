@@ -668,6 +668,7 @@ void LibraryView::newSession()
     w->getComboBoxComponent ("ips")->setSelectedItemIndex (1);
     w->addStockPicker ("stock", "Tape stock (fixed for the life of the reel):", tape::forMultitrack, 1);
     w->addMachinePicker ("machine", "Machine (can be changed later):", false, 0);
+    w->addNrPicker ("nr", 0);
     w->addButton ("Create", 1, juce::KeyPress (juce::KeyPress::returnKey));
     w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
@@ -712,6 +713,7 @@ void LibraryView::newSession()
         auto reel = s->createReel (tracks, getSampleRate ? getSampleRate() : 48000.0, err, ips, stock);
         if (reel == nullptr) { showError ("New Session", err); return; }
         reel->machine = w->getComboBoxComponent ("machine")->getSelectedItemIndex();
+        w->applyNr ("nr", *reel);
         reel->save (err);
 
         const auto file = reel->getFile();
@@ -780,6 +782,7 @@ void LibraryView::importRecordings()
         w->getComboBoxComponent ("ips")->setSelectedItemIndex (1);
         w->addStockPicker ("stock", "Tape (printed onto the copies; fixed for the reel):", tape::forMultitrack, 1);
         w->addMachinePicker ("machine", "Machine (can be changed later):", false, 0);
+        w->addNrPicker ("nr", 0);
         w->addButton ("Import", 1, juce::KeyPress (juce::KeyPress::returnKey));
         w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
@@ -814,6 +817,8 @@ void LibraryView::importRecordings()
             auto reel = session->createReel (tracks, rate, err, ips, stock);
             if (reel == nullptr) { showError ("Import", err); return; }
             reel->machine = machine;
+            w->applyNr ("nr", *reel);
+            const int nrSys = reel->noiseReduction;
 
             // which file goes onto which track(s)
             struct Job { juce::File src; juce::Array<juce::File> tapes; juce::String name; int first; };
@@ -853,19 +858,21 @@ void LibraryView::importRecordings()
                         auto& j = (*jobs)[i];
                         setStatusMessage (j.src.getFileName());
                         error = transfer::importFile (j.src, j.tapes, rate, 0, printOn ? print.get() : nullptr,
-                                                      [&] (double p) { setProgress (((double) i + p) / (double) jobs->size()); return ! threadShouldExit(); });
+                                                      [&] (double p) { setProgress (((double) i + p) / (double) jobs->size()); return ! threadShouldExit(); },
+                                                      nrSys);
                     }
                 }
                 void threadComplete (bool cancelled) override { if (done) done (error, cancelled); delete this; }
                 std::shared_ptr<std::vector<Job>> jobs;
                 std::shared_ptr<tape::Shared> print;
                 bool printOn = false;
+                int nrSys = 0;
                 double rate = 48000.0;
                 juce::String error;
                 std::function<void (const juce::String&, bool)> done;
             };
             auto* job = new ImportJob();
-            job->jobs = jobs; job->print = print; job->printOn = printOn; job->rate = rate;
+            job->jobs = jobs; job->print = print; job->printOn = printOn; job->rate = rate; job->nrSys = nrSys;
             std::shared_ptr<Reel> keep (reel.release());
             job->done = [this, keep, jobs] (const juce::String& error, bool cancelled)
             {
@@ -903,6 +910,7 @@ void LibraryView::newReel()
     const double lastIps = s->reels.empty() ? 15.0 : s->reels.back().ips;
     const int lastStock = s->reels.empty() ? 1 : s->reels.back().tapeStock;
     const int lastMachine = s->reels.empty() ? 0 : s->reels.back().machine;
+    const int lastNr = s->reels.empty() ? 0 : s->reels.back().noiseReduction;
     const auto sessionFile = s->file;
 
     auto* w = new ReelDialog ("New Reel", "Add a reel to \"" + s->name + "\".\nThe track count can't be changed later.",
@@ -914,6 +922,7 @@ void LibraryView::newReel()
     w->getComboBoxComponent ("ips")->setSelectedItemIndex (lastIps == 7.5 ? 0 : lastIps == 30.0 ? 2 : 1);
     w->addStockPicker ("stock", "Tape stock (fixed for the life of the reel):", tape::forMultitrack, lastStock);
     w->addMachinePicker ("machine", "Machine (can be changed later):", false, lastMachine);
+    w->addNrPicker ("nr", lastNr);
     w->addButton ("Create", 1, juce::KeyPress (juce::KeyPress::returnKey));
     w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
@@ -929,6 +938,7 @@ void LibraryView::newReel()
         auto reel = session != nullptr ? session->createReel (tracks, getSampleRate ? getSampleRate() : 48000.0, err, ips, stock) : nullptr;
         if (reel == nullptr) { showError ("New Reel", err); return; }
         reel->machine = w->getComboBoxComponent ("machine")->getSelectedItemIndex();
+        w->applyNr ("nr", *reel);
         reel->save (err);
 
         const auto file = reel->getFile();

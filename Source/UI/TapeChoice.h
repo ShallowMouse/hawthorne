@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../Engine/TapeStock.h"
+#include "../Engine/NoiseReduction.h"
 #include "HawthorneLookAndFeel.h"
 
 namespace hawthorne
@@ -84,6 +85,23 @@ struct ReelDialog : juce::AlertWindow
         {
             return juce::String ((twoTrack ? tape::masterMachine (i) : tape::multitrackMachine (i)).description);
         }, 64);
+    }
+
+    void addNrPicker (const juce::String& id, int current)
+    {
+        juce::StringArray names;
+        for (int i = 0; i < nr::numSystems; ++i) names.add (nr::info (i).name);
+        addPicker (id, "Noise reduction (can be changed later):", names, current,
+                   [] (int i) { return juce::String (nr::info (i).description); }, 64);
+    }
+
+    /** Puts the chosen NR on a new reel (and its tape box field). */
+    template <typename ReelT>
+    void applyNr (const juce::String& id, ReelT& reel)
+    {
+        const int s = getComboBoxComponent (id) != nullptr ? getComboBoxComponent (id)->getSelectedItemIndex() : 0;
+        reel.noiseReduction = juce::jlimit (0, nr::numSystems - 1, s);
+        if (s != nr::none) reel.info.set ("Noise Reduction", nr::info (s).name);
     }
 
     std::map<juce::String, std::vector<int>> stockLists;

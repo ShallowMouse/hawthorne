@@ -270,6 +270,7 @@ void Reel::flipMetadata (juce::int64 length, bool swapTracks)
             std::swap (x.eq, y.eq);
             std::swap (x.dynamics, y.dynamics);
             std::swap (x.outboard, y.outboard);
+            std::swap (x.nrMode, y.nrMode);
         }
     flipped = ! flipped;
 }
@@ -340,6 +341,7 @@ std::unique_ptr<juce::XmlElement> Reel::toXml() const
     root->setAttribute ("machine", machine);
     root->setAttribute ("masterMachine", masterMachine);
     root->setAttribute ("flipped", flipped);
+    root->setAttribute ("nr", noiseReduction);
     auto* deck = root->createNewChildElement ("Deck");
     deck->setAttribute ("ips", deckIps);
     deck->setAttribute ("vari", variOn);
@@ -370,6 +372,7 @@ std::unique_ptr<juce::XmlElement> Reel::toXml() const
         if (tr.eq.isNotEmpty())         te->setAttribute ("eq", tr.eq);
         if (tr.dynamics.isNotEmpty())   te->setAttribute ("dynamics", tr.dynamics);
         if (tr.outboard.isNotEmpty())   te->setAttribute ("outboard", tr.outboard);
+        if (tr.nrMode != 0)             te->setAttribute ("nr", tr.nrMode);
     }
 
     auto* me = root->createNewChildElement ("Master");
@@ -454,6 +457,7 @@ bool Reel::fromXml (const juce::XmlElement& root, juce::String& error)
     tapeStock = juce::jlimit (0, 7, root.getIntAttribute ("stock", 0));   // older reels: clean
     machine = juce::jlimit (0, 6, root.getIntAttribute ("machine", 0));
     flipped = root.getBoolAttribute ("flipped", false);
+    noiseReduction = juce::jlimit (0, 3, root.getIntAttribute ("nr", 0));
     masterMachine = juce::jlimit (0, 5, root.getIntAttribute ("masterMachine", 0));
     ips = root.getDoubleAttribute ("ips", 0.0);
     if (! validIps (ips))
@@ -514,6 +518,7 @@ bool Reel::fromXml (const juce::XmlElement& root, juce::String& error)
         tr.eq         = te->getStringAttribute ("eq");
         tr.dynamics   = te->getStringAttribute ("dynamics");
         tr.outboard   = te->getStringAttribute ("outboard");
+        tr.nrMode     = juce::jlimit (0, 3, te->getIntAttribute ("nr", 0));
     }
 
     if (auto* me = root.getChildByName ("Master"))

@@ -40,6 +40,7 @@ class MeterBridge : public juce::Component
 public:
     juce::OwnedArray<ChannelModule> modules;
     static constexpr int perRow = 8;
+    bool nrStrip = false;          // the reel uses noise reduction: a strip under each meter
 
     /** Lays out for a given width; returns the height needed. */
     int layoutForWidth (int width, int minHeight);
@@ -142,6 +143,7 @@ private:
     void deleteMaster();
     void exportMaster (juce::int64 start, juce::int64 end, const juce::String& suggestedName);
     // Tape jobs (transport stopped, files let go while they run)
+    void setNoiseReduction (int system);
     void showTrackMenu (int track);
     void showMachineMenu();
     void showManual();

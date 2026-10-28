@@ -48,6 +48,7 @@ ReelSummary Library::summarise (const juce::File& reelFile)
         r.ips = v;
     r.tapeStock = juce::jlimit (0, 7, xml->getIntAttribute ("stock", 0));
     r.machine = juce::jlimit (0, 6, xml->getIntAttribute ("machine", 0));
+    r.noiseReduction = juce::jlimit (0, 3, xml->getIntAttribute ("nr", 0));
 
     if (auto* ms = xml->getChildByName ("Masters"))
         for (auto* e : ms->getChildWithTagNameIterator ("Mix"))
