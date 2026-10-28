@@ -42,6 +42,7 @@ struct MasterInfo
 {
     juce::String name;
     int stock = 0;            // tape::Stock of this master tape, fixed when it's made
+    int nr = 0;               // noise reduction on the 2-track (nr::System)
 };
 
 struct Marker
@@ -109,7 +110,7 @@ public:
     juce::Array<juce::File> equaliseTapeLengths (juce::String& error);
 
     // Masters
-    int  addMaster (const juce::String& name, int stock = 0);                     // returns its index
+    int  addMaster (const juce::String& name, int stock = 0, int nr = 0);                     // returns its index
     bool renameMaster (int index, const juce::String& newName, juce::String& error);
     bool removeMaster (int index, juce::String& error);            // files go to the Recycle Bin
     juce::String uniqueMasterName (const juce::String& wanted) const;
@@ -144,6 +145,8 @@ public:
     int    tapeStock = 0;          // tape::Stock, chosen when the reel is made, fixed for life (0 = clean)
     int    machine = 0;            // multitrack machine model (tape::multitrackMachine), changeable
     int    masterMachine = 0;      // 2-track machine model for the master (tape::masterMachine), changeable
+    int    alignLevel = 0;         // alignment: operating level, dB over 185 nWb/m (0 / 3 / 6 / 9)
+    double alignBias = 3.0;        // alignment: record bias, dB of overbias at 10 kHz
     int    noiseReduction = 0;     // nr::System for the reel (0 = none), changeable
     bool   flipped = false;        // turned over: playing backwards (reverse tape)
 

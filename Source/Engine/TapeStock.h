@@ -74,6 +74,34 @@ namespace tape
         return stocks[juce::jlimit (0, numStocks - 1, (int) s)];
     }
 
+    /** Alignment: the operating level (dB over 185 nWb/m) and record bias (dB of overbias
+        at 10 kHz) each stock is made for. Hawthorne's 0 VU is -18 dBFS. */
+    inline int recommendedLevel (Stock s)
+    {
+        switch (s)
+        {
+            case Stock::us456:        return 6;
+            case Stock::highOutput:   return 9;
+            case Stock::european:     return 9;
+            case Stock::mastering499: return 9;
+            case Stock::sm900:        return 12;
+            default:                  return 0;     // standard-level tapes (250, Emitape) and clean
+        }
+    }
+    inline double recommendedBias (Stock s)
+    {
+        switch (s)
+        {
+            case Stock::vintage:      return 2.5;
+            case Stock::emitape:      return 2.0;
+            case Stock::highOutput:   return 3.5;
+            case Stock::sm900:        return 3.5;
+            default:                  return 3.0;
+        }
+    }
+    /** Operating levels offered on the alignment panel, and their fluxivity. */
+    inline int levelFluxivity (int levelDb) { return levelDb >= 12 ? 740 : levelDb >= 9 ? 520 : levelDb >= 6 ? 370 : levelDb >= 3 ? 260 : 185; }
+
     //==========================================================================
     /** Tape machine models: their electronics and heads colour the stock.
         Record side (headroom, asymmetry) is printed; repro side is live, so
@@ -271,7 +299,7 @@ namespace tape
         Stock stock = Stock::clean;
         double ips = 15.0, sr = 48000.0;
         // record
-        Biquad preEmph, deEmph;
+        Biquad preEmph, deEmph, biasEq;
         float drive = 1.0f, bias = 0.0f, biasOut = 0.0f, modNoise = 0.0f;
         // playback
         Biquad bump, dip, lowCut, hfLoss, hfSoft;
@@ -282,7 +310,11 @@ namespace tape
 
         static inline float sat (float u) noexcept { return u / std::sqrt (1.0f + u * u); }
 
-        void set (Stock s, double tapeIps, double sampleRate, const MachineInfo& mc = neutralMachine)
+        /** levelOffset / biasOffset: the reel's alignment against what the stock is made for
+            (hotter level = less headroom, less hiss; over-bias = darker, smoother; under-bias =
+            brighter, grittier, noisier). */
+        void set (Stock s, double tapeIps, double sampleRate, const MachineInfo& mc = neutralMachine,
+                  double levelOffset = 0.0, double biasOffset = 0.0)
         {
             stock = s;
             ips = juce::jlimit (1.0, 60.0, tapeIps);
@@ -296,22 +328,25 @@ namespace tape
             deEmph  = Biquad::firstOrder (sr, tau / 6.0, tau);    // exact inverse after it
 
             // Saturation: ~3 % third harmonic at the stock's headroom above 0 VU (= -18 dBFS)
-            const double peakAtHeadroom = std::pow (10.0, (-18.0 + in.headroomDb + mc.headroomDb) / 20.0) * std::sqrt (2.0);
+            const double d = biasOffset;
+            const double biasHeadroom = d < 0.0 ? 2.0 * d : 0.6 * d - 0.15 * d * d;
+            const double peakAtHeadroom = std::pow (10.0, (-18.0 + in.headroomDb + mc.headroomDb - levelOffset + biasHeadroom) / 20.0) * std::sqrt (2.0);
             drive = (float) (0.49 / peakAtHeadroom);
             bias = (float) (in.asymmetry + mc.asymmetry);
             biasOut = sat (bias);
-            modNoise = (float) std::pow (10.0, in.modNoiseDb / 20.0);
+            modNoise = (float) std::pow (10.0, (in.modNoiseDb + (d < 0.0 ? -2.5 * d : 0.0)) / 20.0);
+            biasEq = Biquad::highShelf (sr, juce::jmin (0.4 * sr, 6000.0 * ips / 15.0), -1.5 * d);   // printed: over-bias dulls the top
 
             // Playback: the head bump moves with the tape speed
             const double fb = 4.0 * ips * mc.bumpFreq;
             const double speedFactor = std::log2 (15.0 / ips);       // slower tape = bigger bump, earlier top loss
-            bump   = Biquad::peak (sr, fb, 1.1, in.bumpDb * mc.bumpScale * (1.0 + 0.25 * speedFactor));
+            bump   = Biquad::peak (sr, fb, 1.1, in.bumpDb * mc.bumpScale * (1.0 + 0.25 * speedFactor) * (1.0 + 0.04 * d));
             dip    = Biquad::peak (sr, fb * 2.2, 1.4, -0.4 * in.bumpDb * mc.bumpScale);
             lowCut = Biquad::highpass (sr, fb / 2.6 * mc.lowCut, 0.65);
             const double hfCorner = juce::jmin (0.45 * sr, 18000.0 * ips / 15.0 * mc.hfScale);
             hfLoss = Biquad::firstOrder (sr, 1.0 / (juce::MathConstants<double>::twoPi * hfCorner * 3.0), 1.0 / (juce::MathConstants<double>::twoPi * hfCorner));
             hfSoft = Biquad::highShelf (sr, juce::jmin (0.4 * sr, 9000.0 * ips / 15.0), -(in.hfSoftDb + mc.hfSoftDb));
-            hiss = (float) (std::pow (10.0, (-18.0 + in.hissDb + mc.hissDb + 3.0 * speedFactor) / 20.0) * 1.7);
+            hiss = (float) (std::pow (10.0, (-18.0 + in.hissDb + mc.hissDb + 3.0 * speedFactor - levelOffset) / 20.0) * 1.7);
             hissHp = Biquad::highpass (sr, 250.0, 0.7);
             hissLp = Biquad::firstOrder (sr, 0.0, 1.0 / (juce::MathConstants<double>::twoPi * juce::jmin (0.45 * sr, 11000.0)));
         }
@@ -321,11 +356,11 @@ namespace tape
     struct RecordChannel
     {
         HalfBand os;
-        BiquadState pre, de;
+        BiquadState pre, de, biasSt;
         Noise noise;
         float env = 0.0f;
 
-        void reset (uint32_t seed) noexcept { os.reset(); pre.reset(); de.reset(); env = 0.0f; noise.s = seed | 1u; }
+        void reset (uint32_t seed) noexcept { os.reset(); pre.reset(); de.reset(); biasSt.reset(); env = 0.0f; noise.s = seed | 1u; }
 
         inline void process (const Shared& sh, const float* in, float* out, int n) noexcept
         {
@@ -338,7 +373,7 @@ namespace tape
                 os.upsample (e, a, b);
                 a = (Shared::sat (a * drive + sh.bias) - sh.biasOut) * inv;
                 b = (Shared::sat (b * drive + sh.bias) - sh.biasOut) * inv;
-                float y = de.process (sh.deEmph, os.downsample (a, b));
+                float y = biasSt.process (sh.biasEq, de.process (sh.deEmph, os.downsample (a, b)));
                 env += (std::abs (y) - env) * 0.002f;
                 y += noise.next() * env * sh.modNoise;
                 out[i] = y;

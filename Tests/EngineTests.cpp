@@ -2187,6 +2187,61 @@ static void testNoiseReduction()
     }
 }
 
+static void testAlignment()
+{
+    std::printf ("[24] alignment: operating level, bias, oscillator, master NR\n");
+    auto through = [] (double levelOff, double biasOff, double f, double amp)
+    {
+        tape::Shared sh;
+        sh.set (tape::Stock::us456, 15.0, kSR, tape::multitrackMachine (0), levelOff, biasOff);
+        tape::RecordChannel rc; rc.reset (1);
+        Tape in ((size_t) kSR), out ((size_t) kSR);
+        for (size_t k = 0; k < in.size(); ++k) in[k] = (float) (amp * std::sin (juce::MathConstants<double>::twoPi * f * (double) k / kSR));
+        rc.process (sh, in.data(), out.data(), (int) in.size());
+        return out;
+    };
+    // hotter operating level: more third harmonic for the same input
+    auto h = [&] (double lo) { auto o = through (lo, 0, 997.0, 0.5); return toneLevel (o, 8000, 16384, 2991.0) - toneLevel (o, 8000, 16384, 997.0); };
+    const double h0 = h (-6.0), h6 = h (0.0), h9 = h (3.0);
+    CHECK (h9 > h6 + 2.0 && h6 > h0 + 2.0, "hotter level saturates sooner (H3 %.1f / %.1f / %.1f dB)", h0, h6, h9);
+    // bias: over = darker at 10 kHz, under = brighter
+    auto t10 = [&] (double bo) { auto o = through (0, bo, 10000.0, 0.01); return toneLevel (o, 8000, 16384, 10000.0); };
+    const double ref = t10 (0.0), over = t10 (1.0) - ref, under = t10 (-1.0) - ref;
+    CHECK (over < -0.8 && under > 0.8, "bias moves 10 kHz (over %+.1f dB, under %+.1f dB)", over, under);
+    std::printf ("    456 at 0 / +6 / +9: H3 %.0f / %.0f / %.0f dB;  bias +1 dB over: 10 kHz %+.1f dB, 1 under: %+.1f dB\n", h0, h6, h9, over, under);
+
+    // the reel keeps its alignment and the master's NR
+    juce::String err;
+    auto dir = makeTempDir ("align");
+    auto reel = Reel::create (dir, "Align", kSR, 8, err, 15.0, (int) tape::Stock::us456);
+    CHECK (reel->alignLevel == 6 && reel->alignBias == 3.0, "new reel aligned for its tape (+%d, %.1f)", reel->alignLevel, reel->alignBias);
+    TapeEngine e;
+    e.setReel (reel.get());
+    e.setAlignment (9, 2.5);
+    reel->addMaster ("Mix", (int) tape::Stock::mastering499, nr::dolbySR);
+    CHECK (reel->save (err), "save");
+    auto again = Reel::load (reel->getFile(), err);
+    CHECK (again != nullptr && again->alignLevel == 9 && again->alignBias == 2.5 && again->masters[0].nr == nr::dolbySR
+           && again->info["Alignment"].contains ("520"), "alignment and master NR saved (%s)", again != nullptr ? again->info["Alignment"].toRawUTF8() : "");
+
+    // the oscillator: 0 VU into every track, back off the repro head
+    prepareEngine (e, 256);
+    e.setAlignment (6, 3.0);
+    e.setOscillator (1000);
+    SignalDevice dev (e, [] (int64) { return 0.0f; });
+    dev.startThread();
+    juce::Thread::sleep (300);
+    e.popTrackPeak (3);
+    juce::Thread::sleep (200);
+    const float pk = e.popTrackPeak (3);
+    dev.stopThread (5000);
+    e.setOscillator (0);
+    const double db = 20.0 * std::log10 (juce::jmax (1.0e-9f, pk));
+    CHECK (std::abs (db + 15.0) < 1.5, "oscillator at 0 VU on the meters (peak %.1f dBFS)", db);
+    std::printf ("    reel alignment saved; master Dolby SR saved; oscillator 1 kHz peak %.1f dBFS (0 VU)\n", db);
+    e.setReel (nullptr);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -2199,6 +2254,7 @@ int main()
         if (only.contains ("21")) testAutoPunchAndCycle();
         if (only.contains ("22")) testImportExportFlip();
         if (only.contains ("23")) testNoiseReduction();
+        if (only.contains ("24")) testAlignment();
         if (only.contains ("3"))  testTapeMachine();
         std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURE(S)\n", failures);
         return failures == 0 ? 0 : 1;
@@ -2222,6 +2278,7 @@ int main()
     testAutoPunchAndCycle();
     testImportExportFlip();
     testNoiseReduction();
+    testAlignment();
    #if JUCE_LINUX || JUCE_MAC
     testCrashRecovery();
    #endif

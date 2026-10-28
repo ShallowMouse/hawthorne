@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "AlignmentPanel.h"
 #include "UIHelpers.h"
 #include "TapeChoice.h"
 #include "MachineSkin.h"
@@ -567,7 +568,11 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
 
     // (development: open a reel straight away, for screenshots)
     if (auto open = juce::SystemStats::getEnvironmentVariable ("HAWTHORNE_OPEN_REEL", {}); open.isNotEmpty())
-        juce::MessageManager::callAsync ([this, open] { loadReel (juce::File (open)); });
+        juce::MessageManager::callAsync ([this, open]
+        {
+            loadReel (juce::File (open));
+            if (juce::SystemStats::getEnvironmentVariable ("HAWTHORNE_OPEN_ALIGN", {}).isNotEmpty()) showAlignment();
+        });
 
     counterMode = juce::jlimit (0, 2, props.getUserSettings()->getIntValue ("counterMode", 0));
     engine.setWindPhysics (props.getUserSettings()->getBoolValue ("windPhysics", true));
@@ -1130,7 +1135,8 @@ void MainComponent::showMasterMenu()
     juce::PopupMenu m;
     m.addSectionHeader ("MASTERS ON THIS REEL");
     for (int i = 0; i < (int) reel->masters.size(); ++i)
-        m.addItem (1 + i, reel->masters[(size_t) i].name + "   (" + tape::info ((tape::Stock) reel->masters[(size_t) i].stock).label + ")",
+        m.addItem (1 + i, reel->masters[(size_t) i].name + "   (" + tape::info ((tape::Stock) reel->masters[(size_t) i].stock).label
+                              + (reel->masters[(size_t) i].nr != 0 ? juce::String (", ") + nr::info (reel->masters[(size_t) i].nr).label : juce::String()) + ")",
                    ! rec, i == reel->activeMaster);
     if (reel->masters.empty())
         m.addItem (999, "(none yet)", false);
@@ -1141,6 +1147,13 @@ void MainComponent::showMasterMenu()
     m.addItem (1003, "Delete...", has && ! rec);
     m.addSeparator();
     m.addItem (1004, juce::String ("2-track machine: ") + tape::masterMachine (reel->masterMachine).name + "...", ! rec);
+    if (has)
+    {
+        juce::PopupMenu nrMenu;
+        for (int s = 0; s < nr::numSystems; ++s)
+            nrMenu.addItem (1100 + s, nr::info (s).name, ! rec, engine.getMasterNr() == s);
+        m.addSubMenu (juce::String ("Noise reduction: ") + nr::info (engine.getMasterNr()).name, nrMenu, ! rec);
+    }
 
     juce::PopupMenu ex;
     ex.addItem (2000, "Whole reel...");
@@ -1161,6 +1174,7 @@ void MainComponent::showMasterMenu()
         else if (r == 1002) renameMaster();
         else if (r == 1003) deleteMaster();
         else if (r == 1004) showMachines();
+        else if (r >= 1100 && r < 1100 + nr::numSystems) { engine.setMasterNr (r - 1100); refreshMasterSection(); repaint(); }
         else if (reel->activeMaster >= 0)
         {
             const auto& name = reel->masters[(size_t) reel->activeMaster].name;
@@ -1189,13 +1203,15 @@ void MainComponent::newMaster (std::function<void()> then)
     const int lastStock = reel->masters.empty() ? (int) tape::Stock::mastering499 : reel->masters.back().stock;
     w->addStockPicker ("stock", "Master tape (fixed for the life of this master):", tape::forMaster, lastStock);
     w->addMachinePicker ("machine", "2-track machine (can be changed later):", true, reel->masterMachine);
+    w->addNrPicker ("nr", reel->masters.empty() ? 0 : reel->masters.back().nr);
     w->addButton ("Create", 1, juce::KeyPress (juce::KeyPress::returnKey));
     w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
     w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, then] (int result)
     {
         if (result != 1 || reel == nullptr || engine.isRecording()) return;
         auto name = w->getTextEditorContents ("name").trim();
-        const int idx = reel->addMaster (name.isNotEmpty() ? name : reel->nextMasterName(), w->stockAt ("stock"));
+        const int idx = reel->addMaster (name.isNotEmpty() ? name : reel->nextMasterName(), w->stockAt ("stock"),
+                                         w->getComboBoxComponent ("nr")->getSelectedItemIndex());
         engine.setMasterMachine (w->getComboBoxComponent ("machine")->getSelectedItemIndex());
         applySkin();
         engine.mastersChanged();
@@ -1234,6 +1250,7 @@ void MainComponent::showMachineMenu()
     const bool rec = engine.isRecording();
     juce::PopupMenu m;
     m.addItem (1, juce::String ("Machines...   (") + tape::multitrackMachine (reel->machine).name + ")", ! rec);
+    m.addItem (5, "Alignment (calibration)...", ! rec);
     {
         juce::PopupMenu nrMenu;
         for (int s = 0; s < nr::numSystems; ++s)
@@ -1252,6 +1269,7 @@ void MainComponent::showMachineMenu()
     {
         if (reel == nullptr) return;
         if (r == 1) showMachines();
+        else if (r == 5) showAlignment();
         else if (r == 2) importAudio (0);
         else if (r == 3) { juce::Array<int> all; for (int t = 0; t < reel->numTracks; ++t) all.add (t); exportTracks (all); }
         else if (r == 4) flipReel();
@@ -1529,6 +1547,105 @@ void MainComponent::flipReel()
     }), true);
 }
 
+void MainComponent::showAlignment()
+{
+    if (reel == nullptr || engine.isRecording()) return;
+    auto* panel = new AlignmentPanel (engine, *reel);
+    panel->onRecordTones = [this, panel]
+    {
+        if (auto* dw = panel->findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState (0);
+        juce::MessageManager::callAsync ([this] { recordTones(); });
+    };
+    juce::DialogWindow::LaunchOptions o;
+    o.content.setOwned (panel);
+    o.dialogTitle = "Alignment";
+    o.dialogBackgroundColour = Colours::bg;
+    o.escapeKeyTriggersCloseButton = true;
+    o.useNativeTitleBar = true;
+    o.resizable = false;
+    o.launchAsync();
+}
+
+void MainComponent::recordTones()
+{
+    if (reel == nullptr || engine.isRecording()) return;
+    const double tone = 30.0;
+    auto* w = new ReelDialog ("Record line-up tones",
+                              "Records 1 kHz, 10 kHz and 100 Hz at 0 VU, " + juce::String ((int) tone) + " s each, from the start of the reel on all "
+                                  + juce::String (reel->numTracks) + " tracks - over anything already there.\n"
+                                  "They go through the tape and its alignment (no noise reduction), and markers are added.",
+                              juce::MessageBoxIconType::NoIcon, this);
+    w->addButton ("Record tones", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([this, tone] (int result)
+    {
+        if (result != 1 || reel == nullptr) return;
+        const double rate = reel->sampleRate;
+        auto src = reel->getAudioFolder().getChildFile ("lineup-tones.wav");
+        {
+            src.deleteFile();
+            std::unique_ptr<juce::OutputStream> os (src.createOutputStream().release());
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::AudioFormatWriter> wr (os != nullptr ? wav.createWriterFor (os.get(), rate, 1, 24, {}, 0) : nullptr);
+            if (wr == nullptr) { showAlert ("Line-up tones", "Could not write the tones."); return; }
+            os.release();
+            const int len = (int) (tone * rate);
+            juce::AudioBuffer<float> b (1, len);
+            for (double f : { 1000.0, 10000.0, 100.0 })
+            {
+                for (int k = 0; k < len; ++k)
+                {
+                    const double fade = juce::jmin (1.0, juce::jmin ((double) k, (double) (len - 1 - k)) / (0.01 * rate));
+                    b.setSample (0, k, (float) (0.17783 * fade * std::sin (juce::MathConstants<double>::twoPi * f * k / rate)));
+                }
+                wr->writeFromAudioSampleBuffer (b, 0, len);
+            }
+        }
+        juce::Array<juce::File> files;
+        for (int t = 0; t < reel->numTracks; ++t) files.add (reel->getTapeFile (t));
+        auto sh = std::make_shared<tape::Shared>();
+        const bool print = reel->tapeStock != 0 && reel->machine != tape::noMultitrackMachine;
+        if (print)
+        {
+            const auto st = (tape::Stock) reel->tapeStock;
+            sh->set (st, reel->ips, rate, tape::multitrackMachine (reel->machine),
+                     (double) (reel->alignLevel - tape::recommendedLevel (st)), reel->alignBias - tape::recommendedBias (st));
+        }
+        runTapeJob ("Recording line-up tones...", [src, files, rate, sh, print] (std::function<bool (double)> progress)
+        {
+            for (int i = 0; i < files.size(); ++i)
+            {
+                auto err = transfer::importFile (src, { files[i] }, rate, 0, print ? sh.get() : nullptr,
+                                                 [&] (double p) { return progress (((double) i + p) / (double) files.size()); });
+                if (err.isNotEmpty()) return err;
+            }
+            return juce::String();
+        }, [this, src, tone, rate] (bool ok)
+        {
+            src.deleteFile();
+            if (! ok || reel == nullptr) return;
+            const auto len = (juce::int64) (tone * rate);
+            const char* names[] = { "1 kHz TONE", "10 kHz TONE", "100 Hz TONE" };
+            for (int i = 0; i < 3; ++i)
+            {
+                bool have = false;
+                for (auto& mk : reel->markers) have = have || mk.position == len * i;
+                if (! have) reel->markers.push_back ({ len * i, names[i] });
+            }
+            std::sort (reel->markers.begin(), reel->markers.end(), [] (auto& a, auto& b) { return a.position < b.position; });
+            TakeEntry e;
+            e.take = reel->nextTake++;
+            e.when = juce::Time::getCurrentTime().formatted ("%d %b %Y  %H:%M");
+            e.start = 0;
+            e.end = len * 3;
+            e.tracks = "1-" + juce::String (reel->numTracks);
+            e.comments = "Line-up tones 1k / 10k / 100 Hz @ 0 VU";
+            reel->takeLog.push_back (e);
+            reel->info.set ("Tones", "1k / 10k / 100 Hz @ 0 VU");
+        });
+    }), true);
+}
+
 void MainComponent::showMachines()
 {
     if (reel == nullptr || engine.isRecording()) return;
@@ -1639,14 +1756,22 @@ void MainComponent::exportMaster (juce::int64 start, juce::int64 end, const juce
                 os.release(); // owned by the writer now
 
                 juce::AudioBuffer<float> buf (2, 65536);
-                for (auto pos = start; pos < end && ! threadShouldExit();)
+                // noise reduction: decoded, starting a little early so the decoder has settled
+                nr::Settings nrs;
+                nrs.set (nrSystem, rate);
+                std::array<nr::Channel, 2> dec;
+                for (auto& d : dec) d.reset();
+                juce::int64 pre = nrSystem != 0 ? juce::jmin (start, (juce::int64) rate) : 0;
+                for (auto pos = start - pre; pos < end && ! threadShouldExit();)
                 {
-                    const int n = (int) juce::jmin ((juce::int64) buf.getNumSamples(), end - pos);
+                    const int n = (int) juce::jmin ((juce::int64) buf.getNumSamples(), (pos < start ? start : end) - pos);
                     buf.clear();
                     float* l = buf.getWritePointer (0);
                     float* r = buf.getWritePointer (1);
                     rl->read (&l, 1, pos, n);
                     rr->read (&r, 1, pos, n);
+                    if (nrSystem != 0) { dec[0].decode (nrs, l, n); dec[1].decode (nrs, r, n); }
+                    if (pos < start) { pos += n; continue; }
                     if (! w->writeFromAudioSampleBuffer (buf, 0, n)) { error = "Write failed (disk full?)"; break; }
                     pos += n;
                     setProgress ((double) (pos - start) / (double) (end - start));
@@ -1669,10 +1794,13 @@ void MainComponent::exportMaster (juce::int64 start, juce::int64 end, const juce
             juce::File L, R, dest;
             juce::int64 start, end;
             double rate;
+            int nrSystem = 0;
             juce::String error;
         };
 
-        (new Job (fileL, fileR, dest, start, end, reel->sampleRate))->launchThread();
+        auto* job = new Job (fileL, fileR, dest, start, end, reel->sampleRate);
+        job->nrSystem = juce::isPositiveAndBelow (reel->activeMaster, (int) reel->masters.size()) ? reel->masters[(size_t) reel->activeMaster].nr : 0;
+        job->launchThread();
     });
 }
 
@@ -2452,6 +2580,18 @@ void MainComponent::paint (juce::Graphics& g)
         g.drawRoundedRectangle (badge.toFloat().reduced (1.0f), 2.0f, 1.0f);
         g.setColour (ms.badgeText);
         g.drawText (t, badge, juce::Justification::centred, false);
+        if (const int mnr = engine.getMasterNr(); mnr != 0)
+        {
+            // the master's noise reduction, beside the badge
+            const juce::String nt = nr::info (mnr).label;
+            const int nw = (int) juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), nt) + 12;
+            auto nb = badge.withWidth (nw).translated (-nw - 6, 0);
+            g.setColour (juce::Colour (0xff1e1e1e));
+            g.fillRoundedRectangle (nb.toFloat(), 3.0f);
+            g.setColour (juce::Colour (0xffdddddd));
+            g.drawRoundedRectangle (nb.toFloat().reduced (1.0f), 2.0f, 1.0f);
+            g.drawText (nt, nb, juce::Justification::centred, false);
+        }
     }
 
     // Autolocator

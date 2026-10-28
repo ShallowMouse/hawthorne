@@ -143,6 +143,8 @@ private:
     void deleteMaster();
     void exportMaster (juce::int64 start, juce::int64 end, const juce::String& suggestedName);
     // Tape jobs (transport stopped, files let go while they run)
+    void showAlignment();
+    void recordTones();
     void setNoiseReduction (int system);
     void showTrackMenu (int track);
     void showMachineMenu();

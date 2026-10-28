@@ -79,6 +79,10 @@ void TapeEngine::setReel (Reel* s)
     tapeStock = s != nullptr ? s->tapeStock : 0;
     machineA = s != nullptr ? s->machine : 0;
     nrSystemA = s != nullptr ? s->noiseReduction : 0;
+    alignLevelA = s != nullptr ? s->alignLevel : 0;
+    alignBiasA = s != nullptr ? s->alignBias : 3.0;
+    ++alignVersion;
+    oscHz = 0;
     for (int t = 0; t < kMaxTracks; ++t)
         nrModeA[(size_t) t] = s != nullptr && t < s->numTracks ? s->tracks[(size_t) t].nrMode : 0;
     apSession = false;
@@ -135,6 +139,8 @@ void TapeEngine::prepare (double sampleRate, int maxBlockSize,
     tapePosBuf.calloc ((size_t) vsChunk);
     tapeRecBuf.calloc ((size_t) juce::jmax (vsChunk, maxBlock));
     nrBuf.calloc ((size_t) juce::jmax (vsChunk, maxBlock));
+    oscBuf.calloc ((size_t) juce::jmax (vsChunk, maxBlock));
+    oscMonBuf.calloc ((size_t) juce::jmax (vsChunk, maxBlock));
     spoolBuf.calloc ((size_t) juce::jmax (vsChunk, maxBlock));
     route.open (sampleRate, juce::jmax (vsChunk, maxBlock));
     rawRing.calloc ((size_t) kMaxTracks * (size_t) ringLen);
@@ -399,22 +405,42 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         }
         tapeSharedStock = -1;
     }
-    // Noise reduction: the reel's system at the device rate
+    // Noise reduction: the reel's system (and the master's) at the device rate
     const int nrSys = nrSystemA.load (std::memory_order_relaxed);
+    const int mNr = masterNrA.load (std::memory_order_relaxed);
     {
         const double sr = juce::jmax (1000.0, deviceSampleRate.load (std::memory_order_relaxed));
         if (nrSys != nrSettings.system || sr != nrSettings.sr)
             nrSettings.set (nrSys, sr);
+        if (mNr != masterNrSettings.system || sr != masterNrSettings.sr)
+            masterNrSettings.set (mNr, sr);
+    }
+
+    // Line-up oscillator: a sine at 0 VU (-18 dBFS rms) into every track
+    const int osc = oscHz.load (std::memory_order_relaxed);
+    if (osc > 0)
+    {
+        const double sr = juce::jmax (1000.0, deviceSampleRate.load (std::memory_order_relaxed));
+        const double inc = juce::MathConstants<double>::twoPi * (double) osc / sr;
+        for (int k = 0; k < n; ++k)
+        {
+            oscBuf[k] = (float) (0.17783 * std::sin (oscPhase));
+            oscPhase += inc;
+        }
+        oscPhase = std::fmod (oscPhase, juce::MathConstants<double>::twoPi);
     }
     if (tapeOn)
     {
         const double sr = juce::jmax (1000.0, deviceSampleRate.load (std::memory_order_relaxed));
         const double ips = reelIps.load (std::memory_order_relaxed) * (isRolling ? r1 : targetRate.load (std::memory_order_relaxed));
         const int mach = machineA.load (std::memory_order_relaxed);
-        const int key = stockNow * 64 + mach;
+        const int key = stockNow * 64 + mach + 4096 * (alignVersion.load (std::memory_order_relaxed) & 0xffff);
         if (key != tapeSharedStock || std::abs (ips - tapeSharedIps) > 0.003 * ips || tapeShared.sr != sr)
         {
-            tapeShared.set ((tape::Stock) stockNow, ips, sr, tape::multitrackMachine (mach));
+            const auto st = (tape::Stock) stockNow;
+            tapeShared.set (st, ips, sr, tape::multitrackMachine (mach),
+                            (double) (alignLevelA.load (std::memory_order_relaxed) - tape::recommendedLevel (st)),
+                            alignBiasA.load (std::memory_order_relaxed) - tape::recommendedBias (st));
             tapeSharedStock = key;
             tapeSharedIps = ips;
         }
@@ -460,7 +486,10 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
                 (*nrEnc)[(size_t) t].reset();
             }
         for (int side = 0; side < 2; ++side)
+        {
             masterRec[(size_t) side].reset (0x2468ACEu + (uint32_t) side);
+            masterEnc[(size_t) side].reset();
+        }
         if (rp->rate == 1.0 && posFrac == 0.0)
         {
             rp->trackStart.store (pos - rp->latency);
@@ -608,7 +637,7 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
 
     for (int t = 0; t < nt; ++t)
     {
-        const float* src = rt != nullptr ? inputFor (rt->input[(size_t) t]) : nullptr;
+        const float* src = osc > 0 ? oscBuf.get() : (rt != nullptr ? inputFor (rt->input[(size_t) t]) : nullptr);
         const bool isArmed = armed[(size_t) t].load (std::memory_order_relaxed);
 
         // --- Playback from tape (read first: a punch crossfades against it)
@@ -628,7 +657,7 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
             {
                 const float* toTape = src != nullptr ? src : zeros.getReadPointer (0);
                 const float* recIn = src;
-                if (nrSys != nr::none && nr::encodes (nrModeA[(size_t) t].load (std::memory_order_relaxed)))
+                if (nrSys != nr::none && osc == 0 && nr::encodes (nrModeA[(size_t) t].load (std::memory_order_relaxed)))
                 {
                     // the noise reduction's encoder, before the tape
                     (*nrEnc)[(size_t) t].encode (nrSettings, src, nrBuf.get(), n);
@@ -678,6 +707,19 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         //     recording (or rehearsing a punch), and hear tape when just playing back.
         const bool spoolHeard = spoolOn && spool.renderTrack (t, tb, n);
         const float* mon = (isArmed && (! isRolling || isRec || rehearsing)) ? src : ((hasTape || spoolHeard) ? tb : nullptr);
+        if (osc > 0 && ! (rp != nullptr && rp->streams[(size_t) t] != nullptr))
+        {
+            // line-up: the tone off the repro head (through the tape and its alignment)
+            float* m = oscMonBuf.get();
+            if (tapeOn)
+            {
+                (*tapeRec)[(size_t) t].process (tapeShared, oscBuf.get(), m, n);
+                (*tapePlay)[(size_t) t].process (tapeShared, m, n);
+            }
+            else
+                juce::FloatVectorOperations::copy (m, oscBuf.get(), n);
+            mon = m;
+        }
 
         trackEnergy[(size_t) t].add (mon, n);
 
@@ -742,10 +784,16 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         if (recMaster)
         {
             const float* toTape = bus;
+            if (mNr != nr::none)
+            {
+                // the 2-track's noise reduction, encoding
+                masterEnc[(size_t) side].encode (masterNrSettings, bus, nrBuf.get(), n);
+                toTape = nrBuf.get();
+            }
             if (masterTapeOn)
             {
                 // the 2-track's record side, printed onto the master tape
-                masterRec[(size_t) side].process (masterShared, bus, tapeRecBuf.get(), n);
+                masterRec[(size_t) side].process (masterShared, toTape, tapeRecBuf.get(), n);
                 toTape = tapeRecBuf.get();
             }
             if (resampledRec)       rp->masterRs.push (side, toTape, n);
@@ -759,10 +807,21 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
             float* tb = masterTapeBus.getWritePointer (side);
             if (! readTape (g->master[(size_t) side], tb))
                 juce::FloatVectorOperations::clear (tb, n);
-            else if (masterTapeOn)
-                masterPlay[(size_t) side].process (masterShared, tb, n);   // 2-track repro head
+            else
+            {
+                if (masterTapeOn)
+                    masterPlay[(size_t) side].process (masterShared, tb, n);   // 2-track repro head
+                if (mNr != nr::none)
+                {
+                    if (! masterDecLive[(size_t) side]) masterDec[(size_t) side].reset();
+                    masterDec[(size_t) side].decode (masterNrSettings, tb, n);
+                    masterDecLive[(size_t) side] = true;
+                }
+            }
             outSig = tb;
         }
+        else
+            masterDecLive[(size_t) side] = false;
 
         raisePeak (masterPeak[(size_t) side], peakOf (outSig, n));
         masterEnergy[(size_t) side].add (outSig, n);
@@ -1506,6 +1565,30 @@ void TapeEngine::setNoiseReduction (int system)
     }
 }
 
+void TapeEngine::setMasterNr (int system)
+{
+    if (reel == nullptr || ! juce::isPositiveAndBelow (reel->activeMaster, (int) reel->masters.size())) return;
+    reel->masters[(size_t) reel->activeMaster].nr = juce::jlimit (0, nr::numSystems - 1, system);
+    masterNrA = reel->masters[(size_t) reel->activeMaster].nr;
+    saveReel();
+}
+
+void TapeEngine::setAlignment (int levelDb, double biasDb)
+{
+    alignLevelA = juce::jlimit (0, 9, levelDb);
+    alignBiasA = juce::jlimit (-1.0, 4.0, biasDb);
+    ++alignVersion;
+    if (reel != nullptr)
+    {
+        reel->alignLevel = alignLevelA.load();
+        reel->alignBias = alignBiasA.load();
+        reel->info.set ("Alignment", (alignLevelA.load() == 0 ? juce::String ("0") : "+" + juce::String (alignLevelA.load()))
+                                     + " / " + juce::String (tape::levelFluxivity (alignLevelA.load())) + " nWb/m, bias "
+                                     + (alignBiasA.load() >= 0 ? "+" : "") + juce::String (alignBiasA.load(), 1) + " dB @ 10k");
+        saveReel();
+    }
+}
+
 void TapeEngine::setTrackNr (int track, int mode)
 {
     if (! juce::isPositiveAndBelow (track, kMaxTracks)) return;
@@ -2092,6 +2175,8 @@ void TapeEngine::rebuildPlaybackGraph()
 
     masterStockA = reel != nullptr && juce::isPositiveAndBelow (reel->activeMaster, (int) reel->masters.size())
                      ? reel->masters[(size_t) reel->activeMaster].stock : 0;
+    masterNrA = reel != nullptr && juce::isPositiveAndBelow (reel->activeMaster, (int) reel->masters.size())
+                     ? reel->masters[(size_t) reel->activeMaster].nr : 0;
 }
 
 juce::int64 TapeEngine::getReelLength() const

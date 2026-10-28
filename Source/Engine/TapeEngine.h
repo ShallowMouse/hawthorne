@@ -437,9 +437,25 @@ public:
     void setNoiseReduction (int system);
     int  getNoiseReduction() const noexcept { return nrSystemA.load(); }
     void setTrackNr (int track, int mode);
+    /** Noise reduction on the active master's 2-track. */
+    void setMasterNr (int system);
+    int  getMasterNr() const noexcept { return masterNrA.load(); }
+    /** Alignment (calibration) of the multitrack: operating level (dB over 185 nWb/m) and
+        record bias (dB of overbias at 10 kHz). Printed into what's recorded from now on. */
+    void setAlignment (int levelDb, double biasDb);
+    /** The line-up oscillator at 0 VU into every track (0 = off; else 100, 1000 or 10000 Hz). */
+    void setOscillator (int hz) { oscHz = hz; }
+    int  getOscillator() const noexcept { return oscHz.load(); }
     int  getTrackNr (int track) const noexcept { return juce::isPositiveAndBelow (track, kMaxTracks) ? nrModeA[(size_t) track].load() : 0; }
 private:
-    std::atomic<int> nrSystemA { 0 };
+    std::atomic<int> nrSystemA { 0 }, masterNrA { 0 }, oscHz { 0 }, alignLevelA { 0 }, alignVersion { 0 };
+    std::atomic<double> alignBiasA { 3.0 };
+    int masterNrKey = -1;
+    nr::Settings masterNrSettings;
+    std::array<nr::Channel, 2> masterEnc, masterDec;
+    std::array<bool, 2> masterDecLive {};
+    double oscPhase = 0.0;
+    juce::HeapBlock<float> oscBuf, oscMonBuf;
     std::array<std::atomic<int>, kMaxTracks> nrModeA {};
     nr::Settings nrSettings;                            // audio thread
     std::unique_ptr<std::array<nr::Channel, kMaxTracks>> nrEnc, nrDec;

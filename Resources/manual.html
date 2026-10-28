@@ -58,6 +58,7 @@ th { background:#ece2c8; font:700 13px "Courier New", monospace; }
   <div class="h">STUDIO</div>
   <a href="#routing">Routing</a>
   <a href="#nr">Noise reduction</a>
+  <a href="#align">Alignment</a>
   <a href="#latency">Latency and outboard</a>
   <a href="#tempo">Tempo and click</a>
   <a href="#timecode">Timecode and sync</a>
@@ -197,6 +198,18 @@ th { background:#ece2c8; font:700 13px "Courier New", monospace; }
   <li><span class="key">OUT</span> bypass: neither.</li>
 </ul>
 <p>The switch is also in a track's right-click menu, and MACHINE &rarr; Noise reduction sets all tracks at once. Switching a track after recording changes how it plays back (it's what's on the tape that counts). Imports are encoded and exports decoded following each track's switch. Varispeed, tape saturation and flipping the reel make the decoder mistrack a little, as on the real thing.</p>
+
+<p><b>On the master:</b> each master can have its own noise reduction too (None, Dolby A, Dolby SR or dbx), chosen when you make it and changeable from the master menu. Its badge shows beside the 2-track's. Master exports are decoded. Half-inch at 30 ips was often run with none.</p>
+
+<h2 id="align">Alignment (calibration)</h2>
+<p><b>MACHINE &rarr; Alignment</b> opens the alignment panel, as a tech would line the machine up for each reel:</p>
+<ul>
+  <li><b>Operating level</b>: 0 (185 nWb/m), +3 (260), +6 (370) or +9 (520). Hawthorne's 0 VU stays at -18 dBFS; a hotter level drives the tape harder &mdash; less hiss, but it saturates sooner. Each tape is made for one (456-type +6, GP9-type +9, 250-type and Emitape 0...), and new reels start there.</li>
+  <li><b>Record bias</b> (overbias at 10 kHz, -1 to +4 dB): over-biasing is darker and smoother with a firmer low end; under-biasing is brighter, grittier and noisier. Double-click the knob for the tape's recommended bias.</li>
+  <li><b>Line-up oscillator</b>: a 100 Hz, 1 kHz or 10 kHz tone at 0 VU into every track. The meters show it back off the repro head, so you can watch 10 kHz drop as you over-bias and the level compress as you go hotter.</li>
+  <li><b>Record tones</b>: 1 kHz, 10 kHz and 100 Hz, 30 s each, at the head of the reel on every track (over anything there), with markers and a line on the take sheet.</li>
+</ul>
+<p>The alignment is saved with the reel and fills in its Alignment field. Level and bias are printed into what you record from then on; hiss follows the current level.</p>
 
 <h2 id="masters">Masters</h2>
 <p>A master is a stereo mix recorded onto the reel, sample-aligned with its tracks &mdash; the 2-track. In the sidebar:</p>

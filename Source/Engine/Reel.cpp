@@ -1,5 +1,6 @@
 #include "Reel.h"
 #include <juce_audio_formats/juce_audio_formats.h>
+#include "TapeStock.h"
 
 namespace hawthorne
 {
@@ -53,6 +54,8 @@ std::unique_ptr<Reel> Reel::create (const juce::File& parentFolder, const juce::
     s->numTracks   = juce::jlimit (1, kMaxTracks, numTracks);
     s->ips = s->deckIps = (ips == 7.5 || ips == 30.0) ? ips : 15.0;
     s->tapeStock = juce::jlimit (0, 7, tapeStock);
+    s->alignLevel = juce::jmin (9, tape::recommendedLevel ((tape::Stock) s->tapeStock));
+    s->alignBias = tape::recommendedBias ((tape::Stock) s->tapeStock);
     initDefaultTracks (s->tracks);
     s->info.set ("Reel No.", cleanName.retainCharacters ("0123456789").trimCharactersAtStart ("0"));
     s->info.set ("Date", juce::Time::getCurrentTime().formatted ("%d %b %Y"));
@@ -275,9 +278,9 @@ void Reel::flipMetadata (juce::int64 length, bool swapTracks)
     flipped = ! flipped;
 }
 
-int Reel::addMaster (const juce::String& name, int stock)
+int Reel::addMaster (const juce::String& name, int stock, int nr)
 {
-    masters.push_back ({ uniqueMasterName (name), juce::jlimit (0, 7, stock) });
+    masters.push_back ({ uniqueMasterName (name), juce::jlimit (0, 7, stock), juce::jlimit (0, 3, nr) });
     return (int) masters.size() - 1;
 }
 
@@ -342,6 +345,8 @@ std::unique_ptr<juce::XmlElement> Reel::toXml() const
     root->setAttribute ("masterMachine", masterMachine);
     root->setAttribute ("flipped", flipped);
     root->setAttribute ("nr", noiseReduction);
+    root->setAttribute ("alignLevel", alignLevel);
+    root->setAttribute ("alignBias", alignBias);
     auto* deck = root->createNewChildElement ("Deck");
     deck->setAttribute ("ips", deckIps);
     deck->setAttribute ("vari", variOn);
@@ -409,6 +414,7 @@ std::unique_ptr<juce::XmlElement> Reel::toXml() const
             auto* mx = ms->createNewChildElement ("Mix");
             mx->setAttribute ("name", m.name);
             mx->setAttribute ("stock", m.stock);
+            if (m.nr != 0) mx->setAttribute ("nr", m.nr);
         }
 
     auto* ie = root->createNewChildElement ("Info");
@@ -458,6 +464,8 @@ bool Reel::fromXml (const juce::XmlElement& root, juce::String& error)
     machine = juce::jlimit (0, 6, root.getIntAttribute ("machine", 0));
     flipped = root.getBoolAttribute ("flipped", false);
     noiseReduction = juce::jlimit (0, 3, root.getIntAttribute ("nr", 0));
+    alignLevel = juce::jlimit (0, 9, root.getIntAttribute ("alignLevel", juce::jmin (9, tape::recommendedLevel ((tape::Stock) tapeStock))));
+    alignBias = juce::jlimit (-1.0, 4.0, root.getDoubleAttribute ("alignBias", tape::recommendedBias ((tape::Stock) tapeStock)));
     masterMachine = juce::jlimit (0, 5, root.getIntAttribute ("masterMachine", 0));
     ips = root.getDoubleAttribute ("ips", 0.0);
     if (! validIps (ips))
@@ -555,7 +563,8 @@ bool Reel::fromXml (const juce::XmlElement& root, juce::String& error)
     if (auto* ms = root.getChildByName ("Masters"))
     {
         for (auto* e : ms->getChildWithTagNameIterator ("Mix"))
-            masters.push_back ({ e->getStringAttribute ("name"), juce::jlimit (0, 7, e->getIntAttribute ("stock", 0)) });
+            masters.push_back ({ e->getStringAttribute ("name"), juce::jlimit (0, 7, e->getIntAttribute ("stock", 0)),
+                                 juce::jlimit (0, 3, e->getIntAttribute ("nr", 0)) });
         activeMaster  = juce::jlimit (-1, (int) masters.size() - 1, ms->getIntAttribute ("active", masters.empty() ? -1 : 0));
         masterArmed   = ms->getBoolAttribute ("armed", false) && activeMaster >= 0;
         monitorMaster = ms->getBoolAttribute ("monitor", false) && activeMaster >= 0;
