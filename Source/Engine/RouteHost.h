@@ -40,6 +40,8 @@ public:
 
     /** The virtual ASIO driver: is it registered (so other programs can pick it)? */
     static bool isDriverInstalled();
+    /** Is the registered driver this version's (not an older one left from before an update)? */
+    static bool isDriverCurrent();
     /** Put the bundled driver in place and register it (asks Windows for permission). Returns an error, or empty. */
     static juce::String installDriver();
     static juce::String uninstallDriver();

@@ -75,19 +75,46 @@ static juce::String runElevated (const juce::String& exe, const juce::String& pa
 }
 #endif
 
+#if JUCE_WINDOWS
+static const char* const routeClsidKey = "HKEY_LOCAL_MACHINE\\SOFTWARE\\Classes\\CLSID\\{75AB7497-E772-4196-9A44-BEA8CEF177F6}\\InprocServer32\\";
+
+// Each driver version has its own file name, so an update never has to overwrite a DLL
+// another program (Reaper...) still has loaded - the registration just points to the new one.
+static juce::File appDir()        { return juce::File::getSpecialLocation (juce::File::currentExecutableFile).getParentDirectory(); }
+static juce::File versionedDriver() { return appDir().getChildFile ("HawthorneRoute-v" + juce::String ((int) route::version) + ".dll"); }
+static juce::File registeredDriver() { return juce::File (juce::WindowsRegistry::getValue (routeClsidKey)); }
+#endif
+
+bool RouteHost::isDriverCurrent()
+{
+   #if JUCE_WINDOWS
+    const auto reg = registeredDriver();
+    return reg == versionedDriver() && reg.existsAsFile();
+   #else
+    return true;
+   #endif
+}
+
 juce::String RouteHost::installDriver()
 {
    #if JUCE_WINDOWS
-    const auto dir = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getParentDirectory();
-    const auto fresh = dir.getChildFile ("HawthorneRoute.new.dll");
-    const auto dll = dir.getChildFile ("HawthorneRoute.dll");
-    if (fresh.existsAsFile())
-        if (! fresh.copyFileTo (dll) && ! dll.existsAsFile())
-            return "Couldn't put the driver in place: " + dll.getFullPathName();
+    const auto fresh = appDir().getChildFile ("HawthorneRoute.new.dll");
+    const auto dll = versionedDriver();
+    if (fresh.existsAsFile() && ! (dll.existsAsFile() && dll.hasIdenticalContentTo (fresh)))
+        if (! fresh.copyFileTo (dll))
+            return "Couldn't put the driver in place (" + dll.getFileName() + ").\n"
+                   "Close any program using Hawthorne Route (Reaper...) and try again.";
     if (! dll.existsAsFile())
         return "The driver isn't included in this build of Hawthorne.";
-    // (if the copy failed because a program has the driver open, the one in place is kept)
-    return runElevated ("regsvr32.exe", "/s \"" + dll.getFullPathName() + "\"");
+    const auto err = runElevated ("regsvr32.exe", "/s \"" + dll.getFullPathName() + "\"");
+    if (err.isEmpty())
+    {
+        // tidy up older drivers (any still loaded in a program stay until it closes)
+        appDir().getChildFile ("HawthorneRoute.dll").deleteFile();
+        for (auto& f : appDir().findChildFiles (juce::File::findFiles, false, "HawthorneRoute-v*.dll"))
+            if (f != dll) f.deleteFile();
+    }
+    return err;
    #else
     return "Hawthorne Route is for Windows.";
    #endif
@@ -96,7 +123,9 @@ juce::String RouteHost::installDriver()
 juce::String RouteHost::uninstallDriver()
 {
    #if JUCE_WINDOWS
-    const auto dll = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getParentDirectory().getChildFile ("HawthorneRoute.dll");
+    auto dll = registeredDriver();
+    if (! dll.existsAsFile()) dll = versionedDriver();
+    if (! dll.existsAsFile()) dll = appDir().getChildFile ("HawthorneRoute.dll");
     return runElevated ("regsvr32.exe", "/s /u \"" + dll.getFullPathName() + "\"");
    #else
     return {};

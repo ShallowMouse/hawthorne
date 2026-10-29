@@ -566,6 +566,22 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     loadSyncSettings();
     showLibrary (true);   // the tape library is the first thing you see
 
+    // Hawthorne Route: an older driver left registered from before an update
+    juce::MessageManager::callAsync ([]
+    {
+        if (! RouteHost::isDriverInstalled() || RouteHost::isDriverCurrent()) return;
+        juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::InfoIcon, "Hawthorne Route",
+            "The Hawthorne Route driver needs updating for this version of Hawthorne.\n"
+            "Close any program using it (Reaper...) first, then press UPDATE.",
+            "UPDATE", "Later", nullptr, juce::ModalCallbackFunction::create ([] (int r)
+            {
+                if (r == 0) return;
+                const auto err = RouteHost::installDriver();
+                juce::AlertWindow::showMessageBoxAsync (err.isEmpty() ? juce::MessageBoxIconType::InfoIcon : juce::MessageBoxIconType::WarningIcon,
+                    "Hawthorne Route", err.isEmpty() ? juce::String ("Updated. Re-open Hawthorne Route in the other program to see the new channels.") : err);
+            }));
+    });
+
     // (development: open a reel straight away, for screenshots)
     if (auto open = juce::SystemStats::getEnvironmentVariable ("HAWTHORNE_OPEN_REEL", {}); open.isNotEmpty())
         juce::MessageManager::callAsync ([this, open]
@@ -698,7 +714,7 @@ namespace
 
             routeButton.onClick = [this]
             {
-                const bool installed = RouteHost::isDriverInstalled();
+                const bool installed = RouteHost::isDriverInstalled() && RouteHost::isDriverCurrent();
                 const auto err = installed ? RouteHost::uninstallDriver() : RouteHost::installDriver();
                 if (err.isNotEmpty())
                     juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Hawthorne Route", err);
@@ -769,8 +785,10 @@ namespace
         void refreshRoute()
         {
             const bool installed = RouteHost::isDriverInstalled();
-            routeButton.setButtonText (installed ? "UNINSTALL" : "INSTALL DRIVER");
-            routeStatus = ! installed ? juce::String ("virtual ASIO device for other programs")
+            const bool old = installed && ! RouteHost::isDriverCurrent();
+            routeButton.setButtonText (old ? "UPDATE DRIVER" : installed ? "UNINSTALL" : "INSTALL DRIVER");
+            routeStatus = old ? juce::String ("an older version is installed - update it (close Reaper first)")
+                        : ! installed ? juce::String ("virtual ASIO device for other programs")
                         : engine.isRouteConnected() ? juce::String ("installed - a program is playing in")
                                                     : juce::String ("installed - pick it in the other program");
             repaint();
