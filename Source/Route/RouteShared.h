@@ -2,8 +2,9 @@
 
 // Hawthorne Route: a virtual ASIO driver ("Hawthorne Route") that other programs
 // - Reaper, a synth, anything with ASIO - can pick as their audio device. What they
-// play out of it arrives in Hawthorne as inputs ROUTE 1-32; Hawthorne's master mix
-// comes back to them on the driver's inputs 1-2.
+// play out of it arrives in Hawthorne as inputs ROUTE 1-96; back on the driver's
+// inputs they get every Hawthorne track (1-96: what each track's meter shows), the
+// master (97-98) and LTC of the tape position (99).
 //
 // The two sides meet in shared memory. Hawthorne's audio callback is the clock: it
 // advances a frame counter and signals an event, and the driver runs the other
@@ -18,15 +19,18 @@
 
 namespace hawthorne::route
 {
-    constexpr std::uint32_t magic   = 0x48525431;   // "HRT1"
-    constexpr std::uint32_t version = 1;
-    constexpr int toHawthorneChannels   = 32;       // the other program's outputs -> Hawthorne inputs ROUTE 1-32
-    constexpr int fromHawthorneChannels = 2;        // Hawthorne's master mix -> the other program's inputs 1-2
+    // v2: two-way - every Hawthorne track, the master and LTC back to the other program.
+    constexpr std::uint32_t magic   = 0x48525432;   // "HRT2"
+    constexpr std::uint32_t version = 2;
+    constexpr int toHawthorneChannels   = 96;       // the other program's outputs -> Hawthorne inputs ROUTE 1-96
+    constexpr int trackChannels         = 96;       // Hawthorne's tracks (what each meter shows) -> the other program's inputs 1-96
+    constexpr int masterLeft = trackChannels, masterRight = trackChannels + 1, ltcChannel = trackChannels + 2;
+    constexpr int fromHawthorneChannels = trackChannels + 3;   // + master L / R + LTC
     constexpr int ringFrames = 1 << 15;             // 32768 frames per channel (power of two)
     constexpr int ringMask   = ringFrames - 1;
 
-    constexpr const wchar_t* mappingName = L"Local\\HawthorneRouteV1";
-    constexpr const wchar_t* tickName    = L"Local\\HawthorneRouteTickV1";
+    constexpr const wchar_t* mappingName = L"Local\\HawthorneRouteV2";
+    constexpr const wchar_t* tickName    = L"Local\\HawthorneRouteTickV2";
 
     struct Shared
     {

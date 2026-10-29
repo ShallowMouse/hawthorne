@@ -183,7 +183,13 @@ namespace
             for (auto& b : bufs) if ((b.isInput != 0) == in && b.channel == info->channel) info->isActive = ASIOTrue;
             info->channelGroup = 0;
             info->type = ASIOSTFloat32LSB;
-            if (in) std::snprintf (info->name, sizeof (info->name), "Hawthorne master %s", info->channel == 0 ? "L" : "R");
+            if (in)
+            {
+                if (info->channel == route::masterLeft)       std::snprintf (info->name, sizeof (info->name), "Hawthorne master L");
+                else if (info->channel == route::masterRight) std::snprintf (info->name, sizeof (info->name), "Hawthorne master R");
+                else if (info->channel == route::ltcChannel)  std::snprintf (info->name, sizeof (info->name), "Hawthorne LTC");
+                else std::snprintf (info->name, sizeof (info->name), "Hawthorne track %ld", info->channel + 1);
+            }
             else    std::snprintf (info->name, sizeof (info->name), "To Hawthorne %ld", info->channel + 1);
             return ASE_OK;
         }

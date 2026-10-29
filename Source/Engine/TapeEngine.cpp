@@ -722,6 +722,7 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         }
 
         trackEnergy[(size_t) t].add (mon, n);
+        if (mon != nullptr && t < route::trackChannels) route.send (t, mon, n);     // Hawthorne Route: the track, back to the other program
 
         if (mon != nullptr)
         {
@@ -829,7 +830,6 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
             sendToOutputs (outSig, rt->masterOut[(size_t) side]);
         masterOutSig[(size_t) side] = outSig;
     }
-    route.endBlock (masterOutSig[0], masterOutSig[1], n);   // the master back to Hawthorne Route; its clock ticks
 
     if (recMaster && resampledRec)
     {
@@ -896,8 +896,10 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         clickEnv = 0.0;
     }
 
-    // --- LTC out: timecode of the tape position, while it rolls
-    if (rt != nullptr && ! rt->ltcOut.empty())
+    // --- LTC out: timecode of the tape position, while it rolls (to its outputs, and on
+    //     Hawthorne Route's LTC channel)
+    const bool ltcToRoute = route.wantsOutput();
+    if (rt != nullptr && (! rt->ltcOut.empty() || ltcToRoute))
     {
         float* lb = clickBuf.getWritePointer (1);
         if (isRolling)
@@ -913,7 +915,9 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
             ltcEncoder.reset();
         }
         sendToOutputs (lb, rt->ltcOut);
+        if (ltcToRoute && isRolling) route.send (route::ltcChannel, lb, n);
     }
+    route.endBlock (masterOutSig[0], masterOutSig[1], n);   // tracks, master and LTC back to Hawthorne Route; its clock ticks
 
     // --- LTC in (chase)
     if (chaseSource.load (std::memory_order_relaxed) == (int) ChaseSource::ltc)

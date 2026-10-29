@@ -252,14 +252,20 @@ th { background:#ece2c8; font:700 13px "Courier New", monospace; }
 <p>Record audio sent from other PCs on your network. Run <b>Hawthorne Link</b> (the sender app) on the other PC and choose what to send; it appears in <b>NETWORK</b> in Hawthorne. Connect it, and its channels appear as NET inputs in the routing. Hawthorne sizes the network buffer itself to avoid dropouts; set MIN BUFFER for lower latency on a good network. Senders on other subnets can be added by IP address.</p>
 <div class="tip">For no drift at all over long takes, clock both interfaces from the same word clock.</div>
 
-<h2 id="route">Hawthorne Route (other programs into Hawthorne)</h2>
+<h2 id="route">Hawthorne Route (other programs in and out of Hawthorne)</h2>
 <p>Hawthorne Route is a virtual ASIO device that other programs on this PC can play into &mdash; for example to record tracks out of Reaper onto tape.</p>
 <ol>
   <li>Install it once: <b>SETTINGS &rarr; Hawthorne Route &rarr; INSTALL DRIVER</b> (Windows asks for permission).</li>
-  <li>In the other program, choose <b>Hawthorne Route</b> as its ASIO device. Its outputs 1&ndash;32 arrive in Hawthorne as inputs <b>ROUTE 1&ndash;32</b>; its inputs 1&ndash;2 are Hawthorne's master mix.</li>
+  <li>In the other program, choose <b>Hawthorne Route</b> as its ASIO device. It's two-way:
+    <ul>
+      <li>Its outputs 1&ndash;96 arrive in Hawthorne as inputs <b>ROUTE 1&ndash;96</b> (patch them to tracks, or to the master returns).</li>
+      <li>Its inputs 1&ndash;96 are Hawthorne's <b>tracks</b> &mdash; each one exactly what that track's meter shows (tape on playback, the input when armed).</li>
+      <li>Inputs 97&ndash;98 are Hawthorne's <b>master</b> L / R, and input 99 is <b>LTC</b> of the tape position while it rolls &mdash; record it, or feed it to the program's timecode sync.</li>
+    </ul></li>
   <li>In Hawthorne's <b>ROUTING</b>, patch the ROUTE inputs to tracks, arm and record as usual.</li>
 </ol>
 <p>Hawthorne's own audio device clocks the other program, so the two never drift apart, and the sample rate follows Hawthorne. The other program can't use another audio device at the same time (one ASIO device per program). If Hawthorne isn't running, the other program still runs, silently.</p>
+<p><b>Updating from an older version:</b> after updating Hawthorne, press <b>UNINSTALL</b> then <b>INSTALL DRIVER</b> in SETTINGS once, so the other program sees the new channels.</p>
 
 <h2 id="sheets">Session sheets and printing</h2>
 <p><b>SHEET</b> opens the paperwork, typed on paper:</p>

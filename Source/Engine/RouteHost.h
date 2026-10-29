@@ -2,6 +2,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "../Route/RouteShared.h"
+#include <array>
 
 namespace hawthorne
 {
@@ -84,17 +85,33 @@ public:
         return live && juce::isPositiveAndBelow (ch, route::toHawthorneChannels) ? bufs.getReadPointer (ch) : nullptr;
     }
 
-    /** Send the master mix back and advance the clock that runs the other program. */
+    /** Is a program running the driver (so it's worth sending it anything)? */
+    bool wantsOutput() const noexcept { return shared != nullptr && shared->driverRunning.load (std::memory_order_relaxed) != 0; }
+
+    /** One of Hawthorne's channels back to the other program for this block
+        (route::trackChannels tracks, then master L / R, then LTC). */
+    void send (int ch, const float* sig, int n) noexcept
+    {
+        if (shared == nullptr || ! juce::isPositiveAndBelow (ch, route::fromHawthorneChannels) || sig == nullptr) return;
+        const auto w = shared->fromWrite.load (std::memory_order_relaxed);
+        float* ring = shared->fromHawthorne[ch];
+        for (int k = 0; k < n; ++k) ring[(w + k) & route::ringMask] = sig[k];
+        sent[(size_t) ch] = true;
+    }
+
+    /** Send the master mix back, silence anything not sent this block, and advance the
+        clock that runs the other program. */
     void endBlock (const float* masterL, const float* masterR, int n) noexcept
     {
         if (shared == nullptr) return;
+        send (route::masterLeft, masterL, n);
+        send (route::masterRight, masterR, n);
         const auto w = shared->fromWrite.load (std::memory_order_relaxed);
-        const float* src[2] = { masterL, masterR };
         for (int ch = 0; ch < route::fromHawthorneChannels; ++ch)
         {
+            if (sent[(size_t) ch]) { sent[(size_t) ch] = false; continue; }
             float* ring = shared->fromHawthorne[ch];
-            for (int k = 0; k < n; ++k)
-                ring[(w + k) & route::ringMask] = src[ch] != nullptr ? src[ch][k] : 0.0f;
+            for (int k = 0; k < n; ++k) ring[(w + k) & route::ringMask] = 0.0f;
         }
         shared->fromWrite.store (w + n, std::memory_order_release);
         shared->clock.store (shared->clock.load (std::memory_order_relaxed) + n, std::memory_order_release);
@@ -110,6 +127,7 @@ private:
     juce::int64 readPos = -1, clientId = -1;
     int latency = 0;
     bool live = false;
+    std::array<bool, route::fromHawthorneChannels> sent {};
 };
 
 } // namespace hawthorne

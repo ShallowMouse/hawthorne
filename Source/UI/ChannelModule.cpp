@@ -140,7 +140,9 @@ void ChannelModule::resized()
 {
     auto r = getLocalBounds();
     auto controls = r.removeFromBottom (controlsHeight).reduced (4, 3);
-    nrArea = nrSystem != 0 ? r.removeFromBottom (nrHeight) : juce::Rectangle<int>();
+    // the NR strip's place is always kept, so the bridge doesn't move when NR is switched
+    const auto strip = r.removeFromBottom (nrHeight);
+    nrArea = nrSystem != 0 ? strip : juce::Rectangle<int>();
     meter.setBounds (r.reduced (0, 2));
 
     numberArea = controls.removeFromRight (juce::jmax (30, controls.getWidth() / 4));

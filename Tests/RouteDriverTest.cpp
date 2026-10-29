@@ -42,7 +42,7 @@ static void bufferSwitch (long index, ASIOBool)
         float* b = static_cast<float*> (bi.buffers[index]);
         if (! bi.isInput && bi.channelNum == 0)
             for (long k = 0; k < hostBlock; ++k) b[k] = hostValue (hostCount + k);
-        if (bi.isInput && bi.channelNum == 0)
+        if (bi.isInput && bi.channelNum == route::masterLeft)
             for (long k = 0; k < hostBlock; ++k) hostIn.push_back (b[k]);
     }
     hostCount += hostBlock;
@@ -80,19 +80,25 @@ int main()
     CHECK (std::string (name) == "Hawthorne Route", "name %s", name);
     long ni = 0, no = 0;
     drv->getChannels (&ni, &no);
-    CHECK (ni == 2 && no == 32, "channels %ld in / %ld out", ni, no);
+    CHECK (ni == route::fromHawthorneChannels && no == route::toHawthorneChannels, "channels %ld in / %ld out", ni, no);
     CHECK (drv->canSampleRate (48000.0) == ASE_OK && drv->canSampleRate (44100.0) != ASE_OK, "follows Hawthorne's rate");
 
     infos.resize (4);
     infos[0] = { ASIOFalse, 0, { nullptr, nullptr } };
     infos[1] = { ASIOFalse, 1, { nullptr, nullptr } };
-    infos[2] = { ASIOTrue, 0, { nullptr, nullptr } };
-    infos[3] = { ASIOTrue, 1, { nullptr, nullptr } };
+    infos[2] = { ASIOTrue, route::masterLeft, { nullptr, nullptr } };
+    infos[3] = { ASIOTrue, route::ltcChannel, { nullptr, nullptr } };
     ASIOCallbacks cb { bufferSwitch, nullptr, asioMessage, switchTI };
     CHECK (drv->createBuffers (infos.data(), 4, hostBlock, &cb) == ASE_OK, "createBuffers");
     ASIOChannelInfo ci {};
     ci.channel = 0; ci.isInput = ASIOFalse;
     CHECK (drv->getChannelInfo (&ci) == ASE_OK && ci.type == ASIOSTFloat32LSB && ci.isActive, "channel info");
+    ASIOChannelInfo lt {};
+    lt.channel = route::ltcChannel; lt.isInput = ASIOTrue;
+    CHECK (drv->getChannelInfo (&lt) == ASE_OK && std::string (lt.name) == "Hawthorne LTC", "LTC channel named (%s)", lt.name);
+    ASIOChannelInfo t5 {};
+    t5.channel = 4; t5.isInput = ASIOTrue;
+    CHECK (drv->getChannelInfo (&t5) == ASE_OK && std::string (t5.name) == "Hawthorne track 5", "track channels named (%s)", t5.name);
     CHECK (drv->start() == ASE_OK, "start");
 
     // Hawthorne's audio thread: write the master, advance the clock, read what came in
@@ -101,7 +107,7 @@ int main()
     long long hawWritten = 0;
     for (int block = 0; block < 48000 * 3 / hb; ++block)   // 3 s of audio
     {
-        for (int k = 0; k < hb; ++k) sh->fromHawthorne[0][(hawWritten + k) & route::ringMask] = hawValue (hawWritten + k);
+        for (int k = 0; k < hb; ++k) sh->fromHawthorne[route::masterLeft][(hawWritten + k) & route::ringMask] = hawValue (hawWritten + k);
         hawWritten += hb;
         sh->fromWrite.store (hawWritten);
         sh->clock.store (hawWritten);

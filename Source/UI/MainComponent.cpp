@@ -168,7 +168,7 @@ int MeterBridge::layoutForWidth (int width, int minHeight)
     const int pad = 10, gap = 8;
     const float moduleW = ((float) (width - 2 * pad) - (float) (perRow - 1) * gap) / (float) perRow;
     const int meterH = (int) (moduleW / ChannelModule::meterAspect);
-    const int moduleH = meterH + ChannelModule::controlsHeight + (nrStrip ? ChannelModule::nrHeight : 0) + 4;
+    const int moduleH = meterH + ChannelModule::controlsHeight + ChannelModule::nrHeight + 4;   // NR strip's place always kept
     const int rows = (modules.size() + perRow - 1) / perRow;
     const int needed = pad + rows * (moduleH + 2 * gap);
     const int top = juce::jmax (0, (minHeight - needed) / 2);   // centre when there's room
@@ -705,7 +705,8 @@ namespace
                 else if (! installed)
                     juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Hawthorne Route",
                         "Installed. In the other program (Reaper...), choose \"Hawthorne Route\" as the ASIO device.\n"
-                        "Its outputs 1-32 arrive here as inputs ROUTE 1-32 - patch them in ROUTING. Its inputs 1-2 are Hawthorne's master.");
+                        "Its outputs 1-96 arrive here as inputs ROUTE 1-96 - patch them in ROUTING.\n"
+                        "Its inputs 1-96 are Hawthorne's tracks, 97-98 the master and 99 LTC.");
                 refreshRoute();
             };
             addAndMakeVisible (routeButton);
