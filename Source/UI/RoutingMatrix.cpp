@@ -378,7 +378,21 @@ LatencyPanel::LatencyPanel (TapeEngine& e, std::function<Reel*()> gs) : engine (
         c->setWantsKeyboardFocus (false);
         addAndMakeVisible (c);
     }
-    for (auto* b : { &measureButton, &resetButton })
+    routeAllButton.setTooltip ("Hawthorne Route (e.g. to an external mixer): every track records from its ROUTE track input, "
+                               "and the master returns come from ROUTE master L / R. The tracks and master go back to it anyway.");
+    routeAllButton.onClick = [this]
+    {
+        auto* reel = getReel ? getReel() : nullptr;
+        if (reel == nullptr || engine.isRecording()) return;
+        for (int t = 0; t < juce::jmin (reel->numTracks, route::maxTracks); ++t)
+            engine.setInput (t, route::inputBase + t);
+        engine.setMasterInputs (0, { route::inputBase + route::toMasterLeft });
+        engine.setMasterInputs (1, { route::inputBase + route::toMasterRight });
+        message = "Every track and the master returns now come from Hawthorne Route.";
+        if (onPatched) onPatched();
+        refresh();
+    };
+    for (auto* b : { &measureButton, &resetButton, &routeAllButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (b);
@@ -540,7 +554,9 @@ void LatencyPanel::resized()
     rttText = row1;
 
     r.removeFromTop (8);
-    messageArea = r.removeFromTop (22);
+    auto row2 = r.removeFromTop (22);
+    routeAllButton.setBounds (row2.removeFromRight (170));
+    messageArea = row2;
 }
 
 //==============================================================================
@@ -551,6 +567,7 @@ RoutingWindow::RoutingWindow (TapeEngine& e, std::function<Reel*()> gs)
     setUsingNativeTitleBar (true);
     matrix = new RoutingMatrix (e, std::move (gs));
     content.viewport.setViewedComponent (matrix, true);
+    content.latency.onPatched = [this] { matrix->repaint(); };
     content.viewport.setScrollBarsShown (true, true);
     setContentNonOwned (&content, false);
     setResizable (true, false);

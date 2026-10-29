@@ -22,6 +22,7 @@ using namespace hawthorne;
 
 static const CLSID clsid = { 0x75ab7497, 0xe772, 0x4196, { 0x9a, 0x44, 0xbe, 0xa8, 0xce, 0xf1, 0x77, 0xf6 } };
 static int failures = 0;
+static const long kTracks = 8;     // the reel on "Hawthorne"
 #define CHECK(c, ...) do { if (! (c)) { ++failures; std::printf ("  FAIL: "); std::printf (__VA_ARGS__); std::printf ("\n"); } } while (0)
 
 // --- the "host" (Reaper) side
@@ -42,13 +43,19 @@ static void bufferSwitch (long index, ASIOBool)
         float* b = static_cast<float*> (bi.buffers[index]);
         if (! bi.isInput && bi.channelNum == 0)
             for (long k = 0; k < hostBlock; ++k) b[k] = hostValue (hostCount + k);
-        if (bi.isInput && bi.channelNum == route::masterLeft)
+        if (bi.isInput && bi.channelNum == kTracks)          // master L comes after the tracks
             for (long k = 0; k < hostBlock; ++k) hostIn.push_back (b[k]);
     }
     hostCount += hostBlock;
     ++hostSwitches;
 }
-static long asioMessage (long, long, void*, double*) { return 0; }
+static std::atomic<int> resetRequests { 0 };
+static long asioMessage (long sel, long val, void*, double*)
+{
+    if (sel == kAsioSelectorSupported) return val == kAsioResetRequest ? 1 : 0;
+    if (sel == kAsioResetRequest) { ++resetRequests; return 1; }
+    return 0;
+}
 static ASIOTime* switchTI (ASIOTime*, long i, ASIOBool d) { bufferSwitch (i, d); return nullptr; }
 
 int main()
@@ -61,6 +68,7 @@ int main()
     HANDLE tick = CreateEventW (nullptr, FALSE, FALSE, route::tickName);
     sh->magic = route::magic; sh->version = route::version;
     sh->sampleRate = 48000;
+    sh->numTracks = (int) kTracks;
     sh->heartbeatMs = (long long) GetTickCount64();
 
     // --- load the driver like a host would (without the registry)
@@ -80,25 +88,29 @@ int main()
     CHECK (std::string (name) == "Hawthorne Route", "name %s", name);
     long ni = 0, no = 0;
     drv->getChannels (&ni, &no);
-    CHECK (ni == route::fromHawthorneChannels && no == route::toHawthorneChannels, "channels %ld in / %ld out", ni, no);
+    CHECK (ni == kTracks + 3 && no == kTracks + 2, "channels follow the reel: %ld in / %ld out", ni, no);
     CHECK (drv->canSampleRate (48000.0) == ASE_OK && drv->canSampleRate (44100.0) != ASE_OK, "follows Hawthorne's rate");
 
+    hostIn.reserve (48000 * 10);
     infos.resize (4);
     infos[0] = { ASIOFalse, 0, { nullptr, nullptr } };
     infos[1] = { ASIOFalse, 1, { nullptr, nullptr } };
-    infos[2] = { ASIOTrue, route::masterLeft, { nullptr, nullptr } };
-    infos[3] = { ASIOTrue, route::ltcChannel, { nullptr, nullptr } };
+    infos[2] = { ASIOTrue, kTracks, { nullptr, nullptr } };
+    infos[3] = { ASIOTrue, kTracks + 2, { nullptr, nullptr } };
     ASIOCallbacks cb { bufferSwitch, nullptr, asioMessage, switchTI };
     CHECK (drv->createBuffers (infos.data(), 4, hostBlock, &cb) == ASE_OK, "createBuffers");
     ASIOChannelInfo ci {};
     ci.channel = 0; ci.isInput = ASIOFalse;
     CHECK (drv->getChannelInfo (&ci) == ASE_OK && ci.type == ASIOSTFloat32LSB && ci.isActive, "channel info");
     ASIOChannelInfo lt {};
-    lt.channel = route::ltcChannel; lt.isInput = ASIOTrue;
+    lt.channel = kTracks + 2; lt.isInput = ASIOTrue;
     CHECK (drv->getChannelInfo (&lt) == ASE_OK && std::string (lt.name) == "Hawthorne LTC", "LTC channel named (%s)", lt.name);
     ASIOChannelInfo t5 {};
     t5.channel = 4; t5.isInput = ASIOTrue;
     CHECK (drv->getChannelInfo (&t5) == ASE_OK && std::string (t5.name) == "Hawthorne track 5", "track channels named (%s)", t5.name);
+    ASIOChannelInfo mo {};
+    mo.channel = kTracks; mo.isInput = ASIOFalse;
+    CHECK (drv->getChannelInfo (&mo) == ASE_OK && std::string (mo.name) == "To Hawthorne master L", "master inputs named (%s)", mo.name);
     CHECK (drv->start() == ASE_OK, "start");
 
     // Hawthorne's audio thread: write the master, advance the clock, read what came in
@@ -128,6 +140,15 @@ int main()
             }
         Sleep (block % 3 == 0 ? 2 : 1);      // ~ real time-ish, jittery
     }
+    // a reel with another track count: the program is asked to re-open the driver
+    const size_t inBefore = hostIn.size();
+    sh->numTracks = 16;
+    for (int i = 0; i < 50 && resetRequests.load() == 0; ++i)
+    {
+        sh->clock.store (sh->clock.load() + hb); sh->fromWrite.store (sh->clock.load());
+        sh->heartbeatMs = (long long) GetTickCount64(); SetEvent (tick); Sleep (2);
+    }
+    CHECK (resetRequests.load() == 1, "reset requested when the reel's track count changes (%d)", resetRequests.load());
     drv->stop();
     CHECK (sh->driverRunning.load() == 0, "stopped");
 
@@ -137,7 +158,7 @@ int main()
 
     // Hawthorne -> host: the master comes back in order (after the first block)
     long long inBad = 0, inN = 0;
-    for (size_t i = (size_t) hostBlock * 2; i + 1 < hostIn.size(); ++i, ++inN)
+    for (size_t i = (size_t) hostBlock * 2; i + 1 < inBefore; ++i, ++inN)
     {
         const float a = hostIn[i], b = hostIn[i + 1];
         if (a == 0.0f || b == 0.0f) { ++inBad; continue; }

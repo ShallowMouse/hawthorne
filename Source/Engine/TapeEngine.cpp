@@ -67,6 +67,7 @@ void TapeEngine::setReel (Reel* s)
     playbackUnderruns = 0;
 
     numTracks = s != nullptr ? s->numTracks : kDefaultTracks;
+    route.setTracks (numTracks.load());
 
     for (int t = 0; t < kMaxTracks; ++t)
         armed[(size_t) t] = s != nullptr && t < s->numTracks && s->tracks[(size_t) t].armed;

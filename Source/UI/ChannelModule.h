@@ -46,7 +46,7 @@ private:
     VUMeter meter;
     juce::TextButton armButton { "ARM" };
     bool isArmed = false;
-    juce::Rectangle<int> numberArea, nrArea;
+    juce::Rectangle<int> numberArea, nrArea, stripArea;
     int nrSystem = 0, nrMode = 0, nrLamp = 0;
     juce::Rectangle<float> segment (int mode) const;
 

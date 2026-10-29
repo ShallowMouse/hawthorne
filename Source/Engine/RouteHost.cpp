@@ -28,7 +28,10 @@ void RouteHost::open (double sampleRate, int maxBlockSize)
         }
     }
     if (shared != nullptr)
+    {
+        shared->numTracks = tracks;
         shared->sampleRate = (std::int32_t) std::lround (sampleRate);
+    }
    #else
     juce::ignoreUnused (sampleRate);
    #endif

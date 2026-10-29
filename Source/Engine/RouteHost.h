@@ -27,6 +27,13 @@ public:
     void open (double sampleRate, int maxBlockSize);     // (RouteHost.cpp: the Windows shared memory)
     void close();
 
+    /** The reel's track count: the driver shows that many track channels. */
+    void setTracks (int n) noexcept
+    {
+        tracks = n;
+        if (shared != nullptr) shared->numTracks.store (n);
+    }
+
     /** Is a program playing into the driver? */
     bool isConnected() const noexcept
     {
@@ -127,7 +134,7 @@ private:
     route::Shared* shared = nullptr;
     juce::AudioBuffer<float> bufs;
     juce::int64 readPos = -1, clientId = -1;
-    int latency = 0;
+    int latency = 0, tracks = route::defaultTracks;
     bool live = false;
     std::array<bool, route::fromHawthorneChannels> sent {};
 };

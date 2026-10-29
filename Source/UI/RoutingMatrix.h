@@ -103,7 +103,10 @@ private:
     std::function<Reel*()> getReel;
 
     juce::ComboBox pingOut, pingIn;
-    juce::TextButton measureButton { "MEASURE" }, resetButton { "USE DRIVER" };
+    juce::TextButton measureButton { "MEASURE" }, resetButton { "USE DRIVER" }, routeAllButton { "PATCH ALL TO ROUTE" };
+public:
+    std::function<void()> onPatched;
+private:
 
     int runsLeft = 0;
     juce::Array<int> results;

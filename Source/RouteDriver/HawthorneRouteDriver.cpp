@@ -102,10 +102,34 @@ namespace
             return ASE_OK;
         }
 
+        // The channels follow the reel on Hawthorne: tracks 1..N, then master L / R (and LTC on
+        // the inputs). Taken when the program asks, and kept until it re-opens the driver.
+        int liveTracks() const { return route::tracksOf (shared != nullptr ? (int) shared->numTracks.load() : 0); }
+        long numIns() const  { return tracks + 3; }
+        long numOuts() const { return tracks + 2; }
+        int inSlot (long c) const
+        {
+            if (c < 0) return -1;
+            if (c < tracks) return (int) c;
+            if (c == tracks) return route::masterLeft;
+            if (c == tracks + 1) return route::masterRight;
+            if (c == tracks + 2) return route::ltcChannel;
+            return -1;
+        }
+        int outSlot (long c) const
+        {
+            if (c < 0) return -1;
+            if (c < tracks) return (int) c;
+            if (c == tracks) return route::toMasterLeft;
+            if (c == tracks + 1) return route::toMasterRight;
+            return -1;
+        }
+
         ASIOError getChannels (long* numIn, long* numOut) override
         {
-            if (numIn)  *numIn  = route::fromHawthorneChannels;
-            if (numOut) *numOut = route::toHawthorneChannels;
+            if (! buffersReady) tracks = liveTracks();
+            if (numIn)  *numIn  = numIns();
+            if (numOut) *numOut = numOuts();
             return ASE_OK;
         }
         ASIOError getLatencies (long* inLat, long* outLat) override
@@ -177,7 +201,7 @@ namespace
         {
             if (info == nullptr) return ASE_InvalidParameter;
             const bool in = info->isInput != ASIOFalse;
-            const long n = in ? route::fromHawthorneChannels : route::toHawthorneChannels;
+            const long n = in ? numIns() : numOuts();
             if (info->channel < 0 || info->channel >= n) return ASE_InvalidParameter;
             info->isActive = ASIOFalse;
             for (auto& b : bufs) if ((b.isInput != 0) == in && b.channel == info->channel) info->isActive = ASIOTrue;
@@ -185,12 +209,19 @@ namespace
             info->type = ASIOSTFloat32LSB;
             if (in)
             {
-                if (info->channel == route::masterLeft)       std::snprintf (info->name, sizeof (info->name), "Hawthorne master L");
-                else if (info->channel == route::masterRight) std::snprintf (info->name, sizeof (info->name), "Hawthorne master R");
-                else if (info->channel == route::ltcChannel)  std::snprintf (info->name, sizeof (info->name), "Hawthorne LTC");
+                const int s = inSlot (info->channel);
+                if (s == route::masterLeft)       std::snprintf (info->name, sizeof (info->name), "Hawthorne master L");
+                else if (s == route::masterRight) std::snprintf (info->name, sizeof (info->name), "Hawthorne master R");
+                else if (s == route::ltcChannel)  std::snprintf (info->name, sizeof (info->name), "Hawthorne LTC");
                 else std::snprintf (info->name, sizeof (info->name), "Hawthorne track %ld", info->channel + 1);
             }
-            else    std::snprintf (info->name, sizeof (info->name), "To Hawthorne %ld", info->channel + 1);
+            else
+            {
+                const int s = outSlot (info->channel);
+                if (s == route::toMasterLeft)       std::snprintf (info->name, sizeof (info->name), "To Hawthorne master L");
+                else if (s == route::toMasterRight) std::snprintf (info->name, sizeof (info->name), "To Hawthorne master R");
+                else std::snprintf (info->name, sizeof (info->name), "To Hawthorne track %ld", info->channel + 1);
+            }
             return ASE_OK;
         }
 
@@ -201,15 +232,18 @@ namespace
             if (infos == nullptr || cb == nullptr || bufferSize < 16 || bufferSize > 8192) return ASE_InvalidParameter;
             block = bufferSize;
             callbacks = cb;
+            tracks = liveTracks();
+            resetAsked = false;
             for (long i = 0; i < numChannels; ++i)
             {
                 auto& in = infos[i];
                 const bool isIn = in.isInput != ASIOFalse;
-                const long n = isIn ? route::fromHawthorneChannels : route::toHawthorneChannels;
+                const long n = isIn ? numIns() : numOuts();
                 if (in.channelNum < 0 || in.channelNum >= n) { disposeBuffers(); return ASE_InvalidParameter; }
                 Buf b;
                 b.isInput = isIn ? 1 : 0;
                 b.channel = in.channelNum;
+                b.slot = isIn ? inSlot (in.channelNum) : outSlot (in.channelNum);
                 b.data.assign ((size_t) block * 2, 0.0f);
                 bufs.push_back (std::move (b));
             }
@@ -240,11 +274,12 @@ namespace
             const int hr = hawthorneRate();
             std::snprintf (msg, sizeof (msg),
                            "Hawthorne Route\n\n"
-                           "Your outputs 1-32 go to Hawthorne as inputs ROUTE 1-32 (patch them in Hawthorne's ROUTING).\n"
-                           "Your inputs 1-2 are Hawthorne's master mix.\n\n"
+                           "Channels follow the reel loaded on Hawthorne (%d tracks now).\n"
+                           "Your outputs: one per track, then master L / R - into Hawthorne as ROUTE inputs.\n"
+                           "Your inputs: every Hawthorne track, then its master L / R, then LTC.\n\n"
                            "Hawthorne: %s\n"
                            "The sample rate follows Hawthorne's audio device.",
-                           hawthorneAlive() ? (std::string ("running at ") + std::to_string (hr) + " Hz").c_str()
+                           liveTracks(), hawthorneAlive() ? (std::string ("running at ") + std::to_string (hr) + " Hz").c_str()
                                             : "not running (silent until it starts)");
             MessageBoxA (nullptr, msg, driverName, MB_OK | MB_ICONINFORMATION);
             return ASE_OK;
@@ -261,7 +296,7 @@ namespace
         ASIOError outputReady() override { return ASE_NotPresent; }
 
     private:
-        struct Buf { int isInput = 0; long channel = 0; std::vector<float> data; };
+        struct Buf { int isInput = 0; long channel = 0; int slot = 0; std::vector<float> data; };
 
         void openShared()
         {
@@ -301,7 +336,7 @@ namespace
                     float* dst = b.data.data() + (size_t) idx * (size_t) block;
                     if (alive && shared->fromWrite.load() >= framePos + block && framePos >= 0)
                         for (long k = 0; k < block; ++k)
-                            dst[k] = shared->fromHawthorne[b.channel][(framePos + k) & route::ringMask];
+                            dst[k] = shared->fromHawthorne[b.slot][(framePos + k) & route::ringMask];
                     else
                         std::memset (dst, 0, sizeof (float) * (size_t) block);
                 }
@@ -336,7 +371,7 @@ namespace
                 for (int ch = 0; ch < route::toHawthorneChannels; ++ch)
                 {
                     const Buf* src = nullptr;
-                    for (auto& b : bufs) if (! b.isInput && b.channel == ch) { src = &b; break; }
+                    for (auto& b : bufs) if (! b.isInput && b.slot == ch) { src = &b; break; }
                     float* ring = shared->toHawthorne[ch];
                     for (long k = 0; k < block; ++k)
                         ring[(w + k) & route::ringMask] = src != nullptr ? src->data[(size_t) idx * (size_t) block + (size_t) k] : 0.0f;
@@ -362,6 +397,13 @@ namespace
             while (running)
             {
                 const bool alive = hawthorneAlive();
+                // the reel on Hawthorne changed its track count: ask the program to re-open us
+                if (alive && ! resetAsked && liveTracks() != tracks && callbacks != nullptr && callbacks->asioMessage != nullptr
+                     && callbacks->asioMessage (kAsioSelectorSupported, kAsioResetRequest, nullptr, nullptr) != 0)
+                {
+                    resetAsked = true;
+                    callbacks->asioMessage (kAsioResetRequest, 0, nullptr, nullptr);
+                }
                 if (alive)
                 {
                     const long long clk = shared->clock.load();
@@ -402,7 +444,8 @@ namespace
         std::thread worker;
         std::vector<Buf> bufs;
         ASIOCallbacks* callbacks = nullptr;
-        bool buffersReady = false, timeInfo = false;
+        bool buffersReady = false, timeInfo = false, resetAsked = false;
+        int tracks = route::defaultTracks;
         long block = 256;
         double rate = 48000.0;
         char error[128] {};

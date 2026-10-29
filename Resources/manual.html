@@ -256,12 +256,13 @@ th { background:#ece2c8; font:700 13px "Courier New", monospace; }
 <p>Hawthorne Route is a virtual ASIO device that other programs on this PC can play into &mdash; for example to record tracks out of Reaper onto tape.</p>
 <ol>
   <li>Install it once: <b>SETTINGS &rarr; Hawthorne Route &rarr; INSTALL DRIVER</b> (Windows asks for permission).</li>
-  <li>In the other program, choose <b>Hawthorne Route</b> as its ASIO device. It's two-way:
+  <li>In the other program, choose <b>Hawthorne Route</b> as its ASIO device. It's two-way, and its channels follow the reel loaded in Hawthorne (N tracks):
     <ul>
-      <li>Its outputs 1&ndash;96 arrive in Hawthorne as inputs <b>ROUTE 1&ndash;96</b> (patch them to tracks, or to the master returns).</li>
-      <li>Its inputs 1&ndash;96 are Hawthorne's <b>tracks</b> &mdash; each one exactly what that track's meter shows (tape on playback, the input when armed).</li>
-      <li>Inputs 97&ndash;98 are Hawthorne's <b>master</b> L / R, and input 99 is <b>LTC</b> of the tape position while it rolls &mdash; record it, or feed it to the program's timecode sync.</li>
+      <li>Its <b>outputs</b>: 1&ndash;N into Hawthorne's tracks, then master L / R into Hawthorne's master. In Hawthorne they're inputs <b>ROUTE track 1&hellip;N</b> and <b>ROUTE master L / R</b>.</li>
+      <li>Its <b>inputs</b>: 1&ndash;N are Hawthorne's tracks (each exactly what its meter shows: tape on playback, the input while armed), then master L / R (Hawthorne's master, as its meters show), then <b>LTC</b> of the tape position while it rolls.</li>
+      <li>Load a reel with another track count and the other program is asked to re-open the driver, so its channels match.</li>
     </ul></li>
+  <li><b>ROUTING &rarr; PATCH ALL TO ROUTE</b> sets every track's input to its ROUTE track and the master returns to ROUTE master L / R in one go (still editable after) &mdash; the setup for an external mixer. Hawthorne's own sum of the tracks still feeds the master too: turn a track's "to mix" off in ROUTING if the mixer's master already carries it.</li>
   <li>In Hawthorne's <b>ROUTING</b>, patch the ROUTE inputs to tracks, arm and record as usual.</li>
 </ol>
 <p>Hawthorne's own audio device clocks the other program, so the two never drift apart, and the sample rate follows Hawthorne. The other program can't use another audio device at the same time (one ASIO device per program). If Hawthorne isn't running, the other program still runs, silently.</p>

@@ -721,8 +721,8 @@ namespace
                 else if (! installed)
                     juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Hawthorne Route",
                         "Installed. In the other program (Reaper...), choose \"Hawthorne Route\" as the ASIO device.\n"
-                        "Its outputs 1-96 arrive here as inputs ROUTE 1-96 - patch them in ROUTING.\n"
-                        "Its inputs 1-96 are Hawthorne's tracks, 97-98 the master and 99 LTC.");
+                        "Its channels follow the reel: one per track, then master L / R (and LTC on its inputs).\n"
+                        "In ROUTING, PATCH ALL TO ROUTE sends every track and the master returns to it.");
                 refreshRoute();
             };
             addAndMakeVisible (routeButton);
@@ -2034,12 +2034,18 @@ void MainComponent::updateNetworkInputs()
     if (reel != nullptr)
         for (int t = 0; t < reel->numTracks; ++t)
             routeUsed = routeUsed || route::isRouteInput (reel->tracks[(size_t) t].input);
+    if (reel != nullptr)
+        for (int side = 0; side < 2; ++side)
+            for (auto ch : reel->master.inputs[(size_t) side]) routeUsed = routeUsed || route::isRouteInput (ch);
     const bool routeLive = engine.isRouteConnected();
     if (routeLive || routeUsed)
     {
-        for (int ch = 0; ch < route::toHawthorneChannels; ++ch)
-            inputs.push_back ({ route::inputBase + ch, "ROUTE " + juce::String (ch + 1) + " (Hawthorne Route)", -1, ch, routeLive });
-        key << "route" << (routeLive ? "L" : "-");
+        const int nt = reel != nullptr ? reel->numTracks : route::defaultTracks;
+        for (int ch = 0; ch < juce::jmin (nt, route::maxTracks); ++ch)
+            inputs.push_back ({ route::inputBase + ch, "ROUTE track " + juce::String (ch + 1) + " (Hawthorne Route)", -1, ch, routeLive });
+        inputs.push_back ({ route::inputBase + route::toMasterLeft, "ROUTE master L (Hawthorne Route)", -1, route::toMasterLeft, routeLive });
+        inputs.push_back ({ route::inputBase + route::toMasterRight, "ROUTE master R (Hawthorne Route)", -1, route::toMasterRight, routeLive });
+        key << "route" << nt << (routeLive ? "L" : "-");
     }
 
     if (key != netInputsKey)

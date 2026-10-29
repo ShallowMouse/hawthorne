@@ -38,8 +38,8 @@ void ChannelModule::setNr (int system, int mode, int lamp)
     if (system == nrSystem && mode == nrMode && lamp == nrLamp) return;
     const bool relayout = (system != 0) != (nrSystem != 0);
     nrSystem = system; nrMode = mode; nrLamp = lamp;
-    if (relayout) resized();
-    repaint (nrArea);
+    if (relayout) { resized(); repaint(); }
+    else repaint (stripArea);       // (the whole strip: also clears it when NR is switched off)
 }
 
 juce::Rectangle<float> ChannelModule::segment (int mode) const
@@ -141,8 +141,8 @@ void ChannelModule::resized()
     auto r = getLocalBounds();
     auto controls = r.removeFromBottom (controlsHeight).reduced (4, 3);
     // the NR strip's place is always kept, so the bridge doesn't move when NR is switched
-    const auto strip = r.removeFromBottom (nrHeight);
-    nrArea = nrSystem != 0 ? strip : juce::Rectangle<int>();
+    stripArea = r.removeFromBottom (nrHeight);
+    nrArea = nrSystem != 0 ? stripArea : juce::Rectangle<int>();
     meter.setBounds (r.reduced (0, 2));
 
     numberArea = controls.removeFromRight (juce::jmax (30, controls.getWidth() / 4));
