@@ -7,6 +7,7 @@
  #define WIN32_LEAN_AND_MEAN
  #include <windows.h>
  #include <shellapi.h>
+ #include <cstring>
 #endif
 
 namespace hawthorne
@@ -46,6 +47,56 @@ void RouteHost::close()
     if (shared != nullptr) { shared->sampleRate = 0; UnmapViewOfFile (shared); shared = nullptr; }
     if (mapping != nullptr) { CloseHandle ((HANDLE) mapping); mapping = nullptr; }
     if (tick != nullptr) { CloseHandle ((HANDLE) tick); tick = nullptr; }
+   #endif
+}
+
+void RouteHost::closeInfo()
+{
+   #if JUCE_WINDOWS
+    if (info != nullptr) { info->numTracks = 0; UnmapViewOfFile (info); info = nullptr; }
+    if (infoMapping != nullptr) { CloseHandle ((HANDLE) infoMapping); infoMapping = nullptr; }
+   #endif
+}
+
+void RouteHost::publishInfo (const juce::String& reelName, int numTracks, const juce::StringArray& trackNames,
+                             const std::vector<bool>& armedTracks, const std::vector<bool>& tracksToMix)
+{
+   #if JUCE_WINDOWS
+    // only when something changed
+    juce::String key = reelName + "|" + juce::String (numTracks);
+    for (int t = 0; t < numTracks; ++t)
+        key << "|" << trackNames[t] << (t < (int) armedTracks.size() && armedTracks[(size_t) t] ? "A" : "")
+            << (t < (int) tracksToMix.size() && tracksToMix[(size_t) t] ? "M" : "");
+    const auto h = key.hashCode64();
+    if (info != nullptr && h == infoHash) return;
+
+    if (info == nullptr)
+    {
+        infoMapping = CreateFileMappingW (INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, (DWORD) sizeof (route::Info), route::infoMappingName);
+        if (infoMapping == nullptr) return;
+        info = static_cast<route::Info*> (MapViewOfFile ((HANDLE) infoMapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof (route::Info)));
+        if (info == nullptr) { CloseHandle ((HANDLE) infoMapping); infoMapping = nullptr; return; }
+        info->magic = route::infoMagic;
+        info->version = route::infoVersion;
+    }
+    infoHash = h;
+
+    info->seq.fetch_add (1, std::memory_order_acq_rel);          // odd: writing
+    std::atomic_thread_fence (std::memory_order_release);
+    info->numTracks = juce::jlimit (0, route::maxTracks, numTracks);
+    std::memset (info->reelName, 0, sizeof (info->reelName));
+    reelName.copyToUTF8 (info->reelName, sizeof (info->reelName) - 1);
+    for (int t = 0; t < route::maxTracks; ++t)
+    {
+        std::memset (info->trackNames[t], 0, route::infoNameBytes);
+        if (t < numTracks) trackNames[t].trim().copyToUTF8 (info->trackNames[t], route::infoNameBytes - 1);
+        info->armed[t] = (std::uint8_t) (t < numTracks && t < (int) armedTracks.size() && armedTracks[(size_t) t] ? 1 : 0);
+        info->toMix[t] = (std::uint8_t) (t < numTracks && t < (int) tracksToMix.size() && tracksToMix[(size_t) t] ? 1 : 0);
+    }
+    std::atomic_thread_fence (std::memory_order_release);
+    info->seq.fetch_add (1, std::memory_order_acq_rel);          // even: done
+   #else
+    juce::ignoreUnused (reelName, numTracks, trackNames, armedTracks, tracksToMix);
    #endif
 }
 

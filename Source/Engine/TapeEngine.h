@@ -378,6 +378,7 @@ private:
     std::atomic<double> windPosA { 0.0 }, windVelA { 0.0 };
     SpoolMonitor spool;
     RouteHost route;
+    int routeInfoTicks = 0;
     juce::HeapBlock<float> spoolBuf;
     void requestSpool();
     void windStep();

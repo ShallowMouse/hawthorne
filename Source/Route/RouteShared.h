@@ -64,6 +64,29 @@ namespace hawthorne::route
 
     static_assert (std::atomic<std::int64_t>::is_always_lock_free, "shared-memory atomics must be lock-free");
 
+    //--------------------------------------------------------------------------
+    // Reel and track info, for programs on the other end that want to show it (WHITMAN's
+    // strips take their names from it). Its own small mapping, so the audio block above -
+    // and every driver already installed - stays exactly as it was. Hawthorne writes it from
+    // its message thread a few times a second when something changes; readers copy it out
+    // under the sequence number (odd while Hawthorne is writing; read again if it changed).
+    constexpr std::uint32_t infoMagic   = 0x48524931;   // "HRI1"
+    constexpr std::uint32_t infoVersion = 1;
+    constexpr int infoNameBytes = 32;                   // UTF-8, nul-terminated
+    constexpr const wchar_t* infoMappingName = L"Local\\HawthorneRouteInfoV1";
+
+    struct Info
+    {
+        std::uint32_t magic, version;
+        std::atomic<std::uint32_t> seq;
+        std::int32_t  numTracks;                         // the reel's tracks (0 = no reel loaded)
+        char reelName[64];                               // UTF-8
+        char trackNames[maxTracks][infoNameBytes];       // UTF-8, empty = not named
+        std::uint8_t armed[maxTracks];                   // 1 = armed to record
+        std::uint8_t toMix[maxTracks];                   // 1 = the track feeds Hawthorne's own master mix
+    };
+    static_assert (std::atomic<std::uint32_t>::is_always_lock_free, "shared-memory atomics must be lock-free");
+
     /** Absolute input ids for Hawthorne's routing (beside device inputs and the network's 1000+). */
     constexpr int inputBase = 3000;
     inline bool isRouteInput (int id) noexcept { return id >= inputBase && id < inputBase + toHawthorneChannels; }

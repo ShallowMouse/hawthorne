@@ -3,6 +3,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "../Route/RouteShared.h"
 #include <array>
+#include <vector>
 
 namespace hawthorne
 {
@@ -21,7 +22,7 @@ class RouteHost
 {
 public:
     RouteHost() = default;
-    ~RouteHost() { close(); }
+    ~RouteHost() { close(); closeInfo(); }
     RouteHost (const RouteHost&) = delete;
 
     void open (double sampleRate, int maxBlockSize);     // (RouteHost.cpp: the Windows shared memory)
@@ -52,6 +53,11 @@ public:
     /** Put the bundled driver in place and register it (asks Windows for permission). Returns an error, or empty. */
     static juce::String installDriver();
     static juce::String uninstallDriver();
+
+    /** Reel and track info for the program on the other end (message thread; cheap - writes
+        only when something changed). Pass nullptr names when no reel is loaded. */
+    void publishInfo (const juce::String& reelName, int numTracks, const juce::StringArray& trackNames,
+                      const std::vector<bool>& armedTracks, const std::vector<bool>& tracksToMix);
 
     /** The extra delay of ROUTE inputs (the other program's block + ours), in samples. */
     int getLatency() const noexcept { return latency; }
@@ -129,7 +135,11 @@ public:
 
 private:
     void signal() noexcept;             // heartbeat + wake the driver
+    void closeInfo();
     void* mapping = nullptr;            // (Windows handles)
+    void* infoMapping = nullptr;
+    route::Info* info = nullptr;
+    juce::int64 infoHash = 0;
     void* tick = nullptr;
     route::Shared* shared = nullptr;
     juce::AudioBuffer<float> bufs;
