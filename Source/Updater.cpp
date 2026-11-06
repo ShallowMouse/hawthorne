@@ -1,4 +1,5 @@
 #include "Updater.h"
+#include "Melville.h"
 
 #ifndef HAWTHORNE_VERSION
  #define HAWTHORNE_VERSION "0.0.0"
@@ -45,6 +46,7 @@ int Updater::compareVersions (const juce::String& a, const juce::String& b)
 
 void Updater::checkSoon()
 {
+    if (melville::isHosted()) return;     // inside MELVILLE, MELVILLE updates everything
     if (isThreadRunning()) return;
     job = Job::check;
     startThread();

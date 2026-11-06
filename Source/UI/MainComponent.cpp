@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "../Melville.h"
 #include "AlignmentPanel.h"
 #include "Blocks.h"
 #include "UIHelpers.h"
@@ -399,7 +400,12 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
         auto* w = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent());
         return w != nullptr && (w->isFullScreen() || juce::Desktop::getInstance().getKioskModeComponent() == w);
     };
-    winCloseButton.onClick = [] { juce::JUCEApplication::getInstance()->systemRequestedQuit(); };
+    winCloseButton.onClick = [this]
+    {
+        // inside MELVILLE, closing Hawthorne's window just hides it: the tape keeps running
+        if (melville::isHosted()) { if (auto* w = getTopLevelComponent()) w->setVisible (false); }
+        else juce::JUCEApplication::getInstance()->systemRequestedQuit();
+    };
     networkButton.setTooltip ("Hawthorne Link: record audio sent from other PCs");
     audioButton.onClick   = [this] { showAudioSettings(); };
 
@@ -685,9 +691,11 @@ void MainComponent::initialiseAudio()
 {
     auto saved = props.getUserSettings()->getXmlValue ("audioDeviceState");
 
-    const auto err = deviceManager.initialise (kDefaultTracks, 2, saved.get(), true);
+    // inside MELVILLE: MELVILLE's HAWTHORNE device (MELVILLE owns the interface)
+    const auto err = melville::attach (deviceManager, "hawthorne") ? juce::String()
+                                                                   : deviceManager.initialise (kDefaultTracks, 2, saved.get(), true);
 
-    if (saved == nullptr)
+    if (saved == nullptr && ! melville::isHosted())
     {
         // First run on Windows: prefer ASIO when a driver is installed.
         for (auto* type : deviceManager.getAvailableDeviceTypes())
@@ -708,7 +716,7 @@ void MainComponent::initialiseAudio()
 
 void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
 {
-    if (auto xml = deviceManager.createStateXml())
+    if (auto xml = melville::isHosted() ? nullptr : deviceManager.createStateXml())
     {
         props.getUserSettings()->setValue ("audioDeviceState", xml.get());
         props.saveIfNeeded();
