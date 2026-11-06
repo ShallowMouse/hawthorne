@@ -254,7 +254,7 @@ class TimeBlock : public Panel
 public:
     explicit TimeBlock (MainComponent& d) : Panel ("time", "Time"), deck (d)
     {
-        minW = 200; minH = 60;
+        minW = 140; minH = 40;
         onPaint = [this] (juce::Graphics& g)
         {
             paintFace (g, getLocalBounds());

@@ -2751,8 +2751,12 @@ void MainComponent::paintCounter (juce::Graphics& g, juce::Rectangle<int> counte
     {
         // top: state and which readout is big.  middle: the chosen readout (click the clock to
         // choose).  bottom: the other two.
-        auto c = counterArea.reduced (8, 3);
-        auto top = c.removeFromTop (13), bottom = c.removeFromBottom (15);
+        // small windows drop the state / other readouts so the big figures keep their room
+        auto c = counterArea.reduced (juce::jmin (8, counterArea.getWidth() / 30), 3);
+        const bool showTop = c.getHeight() >= 46, showBottom = c.getHeight() >= 64;
+        juce::Rectangle<int> top, bottom;
+        if (showTop)    top = c.removeFromTop (13);
+        if (showBottom) bottom = c.removeFromBottom (15);
         const auto pos = engine.getPosition();
 
         const juce::String ms = formatTime (pos, sessionRate());
@@ -2763,14 +2767,25 @@ void MainComponent::paintCounter (juce::Graphics& g, juce::Rectangle<int> counte
         const int mode = (modeWanted == 1 && bbt.isEmpty()) ? 0 : modeWanted;
         const juce::String big = mode == 1 ? bbt : (mode == 2 ? tc : ms);
 
-        const auto bigFont = monoFont (juce::jmin ((float) c.getHeight() * 0.95f, (float) c.getWidth() / 7.6f), true);
+        // as tall as fits, but never so wide that figures get dropped
+        auto bigFont = monoFont (juce::jmax (6.0f, (float) c.getHeight() * 0.95f), true);
+        {
+            const float w = juce::GlyphArrangement::getStringWidth (bigFont, big);
+            if (w > (float) c.getWidth() * 0.96f)
+                bigFont = bigFont.withHeight (juce::jmax (6.0f, bigFont.getHeight() * (float) c.getWidth() * 0.96f / w));
+        }
         if (drum)
         {
             // mechanical counter: white figures on turning drums
             const float cw = (float) c.getWidth() / (float) juce::jmax (1, big.length()) * 0.98f;
             const float ch = (float) c.getHeight() * 0.92f;
             auto cell = juce::Rectangle<float> (cw * (float) big.length(), ch).withCentre (c.toFloat().getCentre());
-            g.setFont (bigFont.withHeight (ch * 0.86f));
+            // figure must fit its drum, or the text is dropped and only the drums show
+            auto drumFont = bigFont.withHeight (juce::jmax (6.0f, ch * 0.86f));
+            const float digitW = juce::GlyphArrangement::getStringWidth (drumFont, "8");
+            if (digitW > cw * 0.92f)
+                drumFont = drumFont.withHeight (juce::jmax (5.0f, drumFont.getHeight() * cw * 0.92f / digitW));
+            g.setFont (drumFont);
             for (int i = 0; i < big.length(); ++i)
             {
                 auto d = cell.removeFromLeft (cw);
@@ -2805,6 +2820,7 @@ void MainComponent::paintCounter (juce::Graphics& g, juce::Rectangle<int> counte
             g.drawText (big, c, juce::Justification::centred);
         }
 
+        if (! showTop) return;
         g.setFont (monoFont (10.0f, true));
         g.setColour (rec ? Colours::red : (engine.isPlaying() ? ink : ink.withAlpha (0.5f)));
         const int wd = engine.getWindDirection();
@@ -2813,6 +2829,7 @@ void MainComponent::paintCounter (juce::Graphics& g, juce::Rectangle<int> counte
         g.drawText (mode == 1 ? juce::String ("BARS . BEATS") : (mode == 2 ? "TIMECODE  " + timecode::name (rate) : juce::String ("MIN : SEC")),
                     top, juce::Justification::centredRight);
 
+        if (! showBottom) return;
         g.setFont (monoFont (13.0f, true));
         const juce::String bbtLine = bbt.isNotEmpty() ? "BAR " + bbt : juce::String ("NO TEMPO");
         g.setColour (ink.withAlpha (0.7f));
