@@ -413,8 +413,8 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     rehKey.setIcon (Icon::rehearse); loopKey.setIcon (Icon::loop); variKey.setIcon (Icon::vari);
     masterArmKey.setIcon (Icon::arm); monitorKey.setIcon (Icon::tape);
     rtzKey.onClick  = [this] { locate (0); };
-    rewKey.onClick  = [this] { nudge (-5.0); };
-    ffwKey.onClick  = [this] { nudge (5.0); };
+    rewKey.onClick  = [this] { engine.spoolWind (-1); };       // spool until STOP / PLAY
+    ffwKey.onClick  = [this] { engine.spoolWind (+1); };
     stopKey.onClick = [this] { doStop(); };
     playKey.onClick = [this] { doPlay(); };
     recKey.onClick  = [this] { doRecord(); };

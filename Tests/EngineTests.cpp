@@ -1775,6 +1775,19 @@ static void testWind()
     e.setWindPhysics (false);
     e.windTo ((juce::int64) (5 * kSR));
     CHECK (e.getPosition() == (juce::int64) (5 * kSR) && e.getWindDirection() == 0, "physics off: instant");
+
+    // FFWD / REW keys: a real spool (even with physics off) until STOP
+    e.spoolWind (+1);
+    for (int i = 0; i < 100; ++i) { juce::Thread::sleep (10); e.tick(); }
+    const auto ran = e.getPosition();
+    CHECK (e.getWindDirection() > 0 && ran > (juce::int64) (10 * kSR), "FFWD spools on (at %.1f s after 1 s)", (double) ran / kSR);
+    e.stop();
+    for (int i = 0; i < 300 && e.getWindDirection() != 0; ++i) { juce::Thread::sleep (10); e.tick(); }
+    CHECK (e.getWindDirection() == 0 && e.getPosition() > ran, "STOP brakes it to a halt (at %.1f s)", (double) e.getPosition() / kSR);
+    e.spoolWind (-1);
+    for (int i = 0; i < 1500 && e.getWindDirection() != 0; ++i) { juce::Thread::sleep (10); e.tick(); }
+    CHECK (e.getPosition() == 0, "REW spools back to the head (at %lld)", (long long) e.getPosition());
+    std::printf ("    FFWD 1 s: %.1f s of tape;  STOP brakes;  REW back to the head\n", (double) ran / kSR);
     e.setReel (nullptr);
 }
 
@@ -2249,6 +2262,7 @@ int main()
     if (auto only = juce::SystemStats::getEnvironmentVariable ("HAWTHORNE_ONLY", {}); only.isNotEmpty())
     {
         // quick runs of the newest tests
+        if (only.contains ("19")) testWind();
         if (only.contains ("18")) testTapeStock();
         if (only.contains ("20")) testLifterDefeat();
         if (only.contains ("21")) testAutoPunchAndCycle();

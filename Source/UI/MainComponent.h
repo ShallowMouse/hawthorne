@@ -233,8 +233,8 @@ private:
     Updater updater;
 
     TransportKey rtzKey  { "RTZ",  "Return to zero (Enter)",          Colours::mustard },
-                 rewKey  { "<<",   "Back 5 seconds (Left)",           Colours::mustard },
-                 ffwKey  { ">>",   "Forward 5 seconds (Right)",       Colours::mustard },
+                 rewKey  { "<<",   "Rewind: spool back until STOP or PLAY (Left arrow: back 5 seconds)",       Colours::mustard },
+                 ffwKey  { ">>",   "Fast forward: spool on until STOP or PLAY (Right arrow: forward 5 seconds)", Colours::mustard },
                  stopKey { "STOP", "Stop (Space)",                    Colours::mustard },
                  playKey { "PLAY", "Play (Space)",                    Colours::mustard },
                  recKey  { "REC",  "Record / punch in-out (R)",       Colours::red },

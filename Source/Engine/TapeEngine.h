@@ -49,7 +49,10 @@ public:
     /** Locate like a real machine: spool there in fast wind (accelerate, brake,
         a little overshoot, creep back). Instant if wind physics is off, or while
         chasing. If the tape was playing, it plays again on arrival. */
-    void windTo (juce::int64 samplePos, bool rollAfter = false);
+    void windTo (juce::int64 samplePos, bool rollAfter = false, bool spoolAlways = false);
+    /** FFWD (+1) / REW (-1): spool at full speed towards the end / the head of the reel
+        until STOP or PLAY (always a real wind, whatever the wind physics setting). */
+    void spoolWind (int direction);
     void setWindPhysics (bool on) noexcept { windPhysics = on; windPhysicsA = on; }
     /** Lifter defeat: hear the tape (the "chatter") while it spools. Monitor only. */
     void setLifterDefeat (bool on);

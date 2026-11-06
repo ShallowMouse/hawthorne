@@ -1308,14 +1308,26 @@ namespace windModel
     constexpr double creepAccel = 0.25;    // s to reach creep speed
 }
 
-void TapeEngine::windTo (juce::int64 target, bool rollAfter)
+void TapeEngine::spoolWind (int direction)
+{
+    if (recording || reel == nullptr || getChase() != ChaseSource::off) return;
+    const auto pos = position.load();
+    const auto sr = juce::jmax (1.0, reel->sampleRate);
+    // to the head of the tape, or on to the end of what's on it (and past, if it's already there)
+    const auto end = juce::jmax (getReelLength(), pos + (juce::int64) (600.0 * sr));
+    if (playing) playing = false;
+    windTo (direction < 0 ? 0 : end, false, true);
+    wind.rollAfter = false;
+}
+
+void TapeEngine::windTo (juce::int64 target, bool rollAfter, bool spoolAlways)
 {
     if (recording)
         return;
 
     target = juce::jmax ((juce::int64) 0, target);
 
-    if (! windPhysics || reel == nullptr || getChase() != ChaseSource::off)
+    if ((! windPhysics && ! spoolAlways) || reel == nullptr || getChase() != ChaseSource::off)
     {
         locate (target);
         if (rollAfter && ! playing) play();
