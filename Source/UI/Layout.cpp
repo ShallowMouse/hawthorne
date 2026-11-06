@@ -367,6 +367,7 @@ void LayoutManager::removeAllDisplays()
 std::unique_ptr<juce::XmlElement> LayoutManager::toXml() const
 {
     auto xml = std::make_unique<juce::XmlElement> ("Displays");
+    xml->setAttribute ("grid", juce::String (PanelHost::cols) + "x" + juce::String (PanelHost::rows));
     for (size_t i = 0; i < windows.size(); ++i)
     {
         auto* w = xml->createNewChildElement ("Display");
@@ -396,9 +397,11 @@ void LayoutManager::fromXml (const juce::XmlElement& xml)
 
     for (auto* w : xml.getChildWithTagNameIterator ("Display"))
         windowStates.push_back ({ juce::Rectangle<int>::fromString (w->getStringAttribute ("bounds")), w->getBoolAttribute ("full") });
+    // (layouts saved on the old 12 x 8 grid: the same places on this one)
+    const int scale = xml.hasAttribute ("grid") ? 1 : 2;
     for (auto* e : xml.getChildWithTagNameIterator ("Block"))
     {
-        const auto c = juce::Rectangle<int>::fromString (e->getStringAttribute ("cells"));
+        const auto c = juce::Rectangle<int>::fromString (e->getStringAttribute ("cells")) * scale;
         const int w = e->getIntAttribute ("display", 1);
         if (c.isEmpty() || w < 1 || w > (int) windowStates.size() || ! createBlock) continue;
         bool clash = false;

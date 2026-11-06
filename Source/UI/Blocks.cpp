@@ -390,18 +390,21 @@ class MasterBlock : public Panel
 public:
     explicit MasterBlock (MainComponent& d) : Panel ("master", "Master"), deck (d)
     {
-        minW = 220; minH = 150;
+        minW = 150; minH = 70;
         for (auto* m : { &l, &r }) { m->setMaster (true); m->setInterceptsMouseClicks (false, false); addAndMakeVisible (m); }
         onPaint = [this] (juce::Graphics& g)
         {
             g.fillAll (Colours::panel);
-            auto a = paintLabel (g, getLocalBounds(), "MASTER");
-            const auto& ms = MachineSkin::currentMaster();
-            g.setFont (juce::Font (juce::FontOptions ("Arial", 11.0f, juce::Font::bold)));
-            g.setColour (Colours::textDim);
-            g.drawText (juce::String (ms.brand) + "  " + ms.model, getLocalBounds().reduced (10, 0).withHeight (18), juce::Justification::centredRight);
+            if (! compact())
+            {
+                paintLabel (g, getLocalBounds(), "MASTER");
+                const auto& ms = MachineSkin::currentMaster();
+                g.setFont (juce::Font (juce::FontOptions ("Arial", 11.0f, juce::Font::bold)));
+                g.setColour (Colours::textDim);
+                g.drawText (juce::String (ms.brand) + "  " + ms.model, getLocalBounds().reduced (10, 0).withHeight (18), juce::Justification::centredRight);
+            }
             g.setColour (Colours::text);
-            g.setFont (monoFont (13.0f, true));
+            g.setFont (monoFont (compact() ? 11.0f : 13.0f, true));
             g.drawText (deck.masterButton.getButtonText().upToFirstOccurrenceOf (juce::String (juce::CharPointer_UTF8 ("  \xe2\x96\xbe")), false, false),
                         nameArea, juce::Justification::centred, true);
             // TAPE: a small reel by the name, lit while you're hearing the master tape
@@ -412,10 +415,11 @@ public:
         };
         onLayout = [this]
         {
-            auto a = getLocalBounds().reduced (10, 6);
-            a.removeFromTop (16);
-            nameArea = a.removeFromBottom (22);
-            a.removeFromBottom (4);
+            // (small: no title, just the meters and the master's name)
+            auto a = getLocalBounds().reduced (compact() ? 6 : 10, compact() ? 3 : 6);
+            if (! compact()) a.removeFromTop (16);
+            nameArea = a.removeFromBottom (compact() ? 16 : 22);
+            a.removeFromBottom (compact() ? 2 : 4);
             const int vuW = (a.getWidth() - 8) / 2;
             const int vuH = juce::jmin (a.getHeight(), (int) ((float) vuW / ChannelModule::meterAspect));
             const int w = (int) ((float) vuH * ChannelModule::meterAspect);
@@ -438,6 +442,7 @@ public:
     void reelChanged() override { l.skinChanged(); r.skinChanged(); repaint(); }
 
 private:
+    bool compact() const { return getHeight() < 140; }
     MainComponent& deck;
     VUMeter l { "L" }, r { "R" };
     juce::Rectangle<int> nameArea;

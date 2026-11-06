@@ -12,7 +12,7 @@ namespace hawthorne
     transport, varispeed, tempo, master, autolocator, markers. The main window stays the
     classic Hawthorne deck.
 
-    Every display is a grid of 12 x 8 cells. A block covers a block of cells; it has its own
+    Every display is a grid of 24 x 16 cells. A block covers a block of cells; it has its own
     settings (meters per row, which tracks, VU / PPM, the time's format, which transport
     keys...), and any kind can be used as often as you like. LAYOUT -> Edit displays: right-click
     an empty cell to add a block there, drag a block to move it (to another display too),
@@ -85,7 +85,7 @@ private:
 class PanelHost : public juce::Component
 {
 public:
-    static constexpr int cols = 12, rows = 8;
+    static constexpr int cols = 24, rows = 16;
 
     PanelHost (LayoutManager& m, int index) : manager (m), windowIndex (index) {}
     void resized() override;

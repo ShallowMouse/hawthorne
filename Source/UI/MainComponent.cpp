@@ -2094,14 +2094,14 @@ void MainComponent::setupPanels()
 
     // Displays: extra windows built from blocks
     layout.blockTypes = {
-        { "meters",      "Meters",        { 8, 5 } },
-        { "time",        "Time",          { 4, 2 } },
-        { "transport",   "Transport",     { 6, 1 } },
-        { "varispeed",   "Speed / varispeed", { 3, 1 } },
-        { "tempo",       "Tempo and sync", { 3, 1 } },
-        { "master",      "Master",        { 2, 2 } },
-        { "locator",     "Autolocator",   { 2, 1 } },
-        { "markers",     "Markers",       { 2, 3 } },
+        { "meters",      "Meters",        { 16, 10 } },
+        { "time",        "Time",          { 8, 3 } },
+        { "transport",   "Transport",     { 12, 2 } },
+        { "varispeed",   "Speed / varispeed", { 6, 2 } },
+        { "tempo",       "Tempo and sync", { 5, 2 } },
+        { "master",      "Master",        { 4, 2 } },
+        { "locator",     "Autolocator",   { 4, 2 } },
+        { "markers",     "Markers",       { 4, 6 } },
     };
     layout.createBlock = [this] (const juce::String& type) { return createDeckBlock (*this, type); };
     layout.onKey = [this] (const juce::KeyPress& k) { return keyPressed (k); };
