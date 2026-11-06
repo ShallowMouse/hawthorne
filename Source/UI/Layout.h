@@ -100,6 +100,11 @@ public:
 
     LayoutManager& manager;
     int windowIndex;                      // 1, 2 ... (display number)
+    bool fullScreen = false;
+    // full screen: an EXIT FULL SCREEN button shows when the mouse is at the top
+    juce::TextButton exitFull { "EXIT FULL SCREEN" };
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
     juce::Rectangle<int> target;
     bool targetOK = false;
 };

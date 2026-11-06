@@ -1,4 +1,5 @@
 #include "Layout.h"
+#include "MachineSkin.h"
 
 namespace hawthorne
 {
@@ -100,11 +101,38 @@ juce::Point<int> PanelHost::cellAt (juce::Point<int> p) const
              juce::jlimit (0, rows - 1, (int) std::floor ((float) p.y / juce::jmax (1.0f, cellH()))) };
 }
 
-void PanelHost::resized()   { manager.layoutHost (*this); }
+void PanelHost::resized()
+{
+    manager.layoutHost (*this);
+    exitFull.setBounds (getWidth() - 190, 8, 180, 30);
+}
+
+void PanelHost::mouseMove (const juce::MouseEvent& e)
+{
+    const bool show = fullScreen && e.getEventRelativeTo (this).y < 50;
+    if (show != exitFull.isVisible())
+    {
+        if (exitFull.getParentComponent() != this)
+        {
+            addChildComponent (exitFull);
+            exitFull.setAlwaysOnTop (true);
+            exitFull.setWantsKeyboardFocus (false);
+            exitFull.onClick = [this] { exitFull.setVisible (false); manager.toggleFullScreen (windowIndex); };
+        }
+        exitFull.setBounds (getWidth() - 190, 8, 180, 30);
+        exitFull.setVisible (show);
+        exitFull.toFront (false);
+    }
+}
+
+void PanelHost::mouseExit (const juce::MouseEvent& e)
+{
+    if (! getLocalBounds().contains (e.getEventRelativeTo (this).getPosition())) exitFull.setVisible (false);
+}
 
 void PanelHost::paint (juce::Graphics& g)
 {
-    g.fillAll (Colours::bg);
+    g.fillAll (MachineSkin::current().bridge);
     if (! manager.isEditing())
     {
         bool empty = true;
@@ -146,7 +174,7 @@ void PanelHost::paintOverChildren (juce::Graphics& g)
 
 void PanelHost::mouseUp (const juce::MouseEvent& e)
 {
-    if (e.mods.isPopupMenu()) manager.showDisplayMenu (windowIndex, cellAt (e.getPosition()));
+    if (e.eventComponent == this && e.mods.isPopupMenu()) manager.showDisplayMenu (windowIndex, cellAt (e.getPosition()));
 }
 
 //==============================================================================
@@ -161,6 +189,7 @@ struct LayoutManager::Floating : public juce::DocumentWindow
         setContentNonOwned (&host, false);
         setResizable (true, false);
         setResizeLimits (300, 200, 20000, 20000);
+        host.addMouseListener (&host, true);
         tips = std::make_unique<juce::TooltipWindow> (&host, 600);
     }
     ~Floating() override
@@ -186,20 +215,36 @@ struct LayoutManager::Floating : public juce::DocumentWindow
     void setFull (bool on, juce::Rectangle<int> normal)
     {
         full = on;
+        host.fullScreen = on;
         if (on)
         {
             const auto* d = juce::Desktop::getInstance().getDisplays().getDisplayForRect (normal.isEmpty() ? getBounds() : normal);
-            setTitleBarHeight (0);
             setResizable (false, false);
+            setResizeLimits (100, 100, 100000, 100000);
+            setTitleBarHeight (0);
             setBounds (d != nullptr ? d->totalArea : getBounds());
+            setAlwaysOnTop (true);          // (over the taskbar)
             toFront (true);
         }
         else
         {
+            setAlwaysOnTop (false);
             setTitleBarHeight (30);
             setResizable (true, false);
             if (! normal.isEmpty()) setBounds (normal);
         }
+        resized();
+        host.resized();
+    }
+
+    // full screen: no frame at all
+    juce::BorderSize<int> getBorderThickness() const override
+    {
+        return full ? juce::BorderSize<int>() : juce::DocumentWindow::getBorderThickness();
+    }
+    juce::BorderSize<int> getContentComponentBorder() const override
+    {
+        return full ? juce::BorderSize<int>() : juce::DocumentWindow::getContentComponentBorder();
     }
 
     LayoutManager& manager;
@@ -467,9 +512,7 @@ void LayoutManager::layoutHost (PanelHost& h)
         auto* p = find (pl.block);
         if (p == nullptr) continue;
         const auto a = h.cellArea (pl.cells);
-        int w = a.getWidth(), ht = a.getHeight();
-        if (p->maxW > 0) w = juce::jmin (w, p->maxW);
-        if (p->maxH > 0) ht = juce::jmin (ht, p->maxH);
+        const int w = a.getWidth(), ht = a.getHeight();      // (fills its cells: no gaps)
         // never laid out smaller than it works at: scaled down instead
         const int bw = juce::jmax (w, p->minW), bh = juce::jmax (ht, p->minH);
         const float s = juce::jmin (1.0f, (float) a.getWidth() / (float) bw, (float) a.getHeight() / (float) bh);

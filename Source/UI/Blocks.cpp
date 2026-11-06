@@ -6,55 +6,76 @@
 namespace hawthorne
 {
 
+/*  Blocks for the displays. They only show the deck - no controls: lamps and readouts in
+    the machine's style. (Controlling is done on the main window.) */
+
 // The deck's face behind a block, in the machine's style
 static void paintDeckFace (juce::Graphics& g, juce::Rectangle<int> r)
 {
     const auto& sk = MachineSkin::current();
     g.setGradientFill (juce::ColourGradient (sk.deck, 0.0f, (float) r.getY(), sk.deckLow, 0.0f, (float) r.getBottom(), false));
     g.fillRect (r);
-    g.setColour (sk.deckEdge);
-    g.drawRect (r, 1);
 }
 
-static void paintPanelFace (juce::Graphics& g, juce::Rectangle<int> r, const juce::String& label)
+static juce::Rectangle<int> paintLabel (juce::Graphics& g, juce::Rectangle<int> r, const juce::String& label)
 {
-    g.setColour (Colours::panel);
-    g.fillRect (r);
-    g.setColour (Colours::edge);
-    g.drawRect (r, 1);
-    g.setColour (Colours::mustard);
-    g.setFont (monoFont (12.0f, true));
-    g.drawText (label, r.reduced (10, 4).withHeight (18), juce::Justification::centredLeft);
+    const auto& sk = MachineSkin::current();
+    g.setColour (sk.deckTextDim);
+    g.setFont (monoFont (11.0f, true));
+    auto top = r.removeFromTop (18);
+    g.drawText (label, top.reduced (10, 0), juce::Justification::centredLeft);
+    return r;
 }
 
-/** A key on a block that works like one of the deck's own (and lights with it). */
-struct MirrorKey : public TransportKey
+/** A lamp: a lit (or dark) label, like the keys' lamps on the deck. */
+static void drawLamp (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& text, bool lit, juce::Colour colour)
 {
-    MirrorKey (TransportKey& src, juce::Colour lamp)
-        : TransportKey (src.getButtonText(), src.getTooltip(), lamp), source (src)
+    g.setColour (lit ? colour : juce::Colour (0xff1d1d1c));
+    g.fillRoundedRectangle (r, 4.0f);
+    if (lit)
     {
-        onClick = [this] { source.triggerClick(); };
+        g.setColour (colour.withAlpha (0.35f));
+        g.drawRoundedRectangle (r.expanded (1.5f), 5.0f, 2.0f);
     }
-    void follow()
+    g.setColour (juce::Colours::black.withAlpha (0.6f));
+    g.drawRoundedRectangle (r, 4.0f, 1.0f);
+    g.setColour (lit ? juce::Colours::black : juce::Colour (0xff6c6a64));
+    g.setFont (monoFont (juce::jlimit (10.0f, 30.0f, r.getHeight() * 0.42f), true));
+    g.drawFittedText (text, r.toNearestInt().reduced (3, 0), juce::Justification::centred, 1, 0.6f);
+}
+
+/** A row of lamps filling an area (no taller than they need to be). */
+static void drawLampRow (juce::Graphics& g, juce::Rectangle<float> r, const juce::StringArray& texts,
+                         const juce::Array<bool>& lit, const juce::Array<juce::Colour>& colours, float maxH = 70.0f)
+{
+    if (texts.isEmpty()) return;
+    r = r.withSizeKeepingCentre (r.getWidth(), juce::jmin (r.getHeight(), maxH));
+    const float gap = 6.0f, w = (r.getWidth() - gap * (float) (texts.size() - 1)) / (float) texts.size();
+    for (int i = 0; i < texts.size(); ++i)
     {
-        setLit (source.isLit());
-        setEnabled (source.isEnabled());
+        drawLamp (g, r.removeFromLeft (w), texts[i], lit[i], colours[i]);
+        r.removeFromLeft (gap);
     }
-    TransportKey& source;
-};
+}
+
+static void drawReadout (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& text, juce::Colour ink)
+{
+    g.setColour (juce::Colours::black);
+    g.fillRoundedRectangle (r, 3.0f);
+    g.setColour (ink);
+    g.setFont (monoFont (juce::jlimit (11.0f, 40.0f, r.getHeight() * 0.55f), true));
+    g.drawFittedText (text, r.toNearestInt().reduced (4, 0), juce::Justification::centred, 1, 0.6f);
+}
 
 //==============================================================================
-/** Meters: a meter bridge of its own - which tracks, how many per row, VU / PPM, names. */
+/** Meters: just the VUs (with their record lamps) - which tracks, how many per row, VU / PPM, names. */
 class MetersBlock : public Panel
 {
 public:
     explicit MetersBlock (MainComponent& d) : Panel ("meters", "Meters"), deck (d)
     {
-        view.setViewedComponent (&bridge, false);
-        view.setScrollBarsShown (true, false);
-        view.setScrollBarThickness (8);
-        addAndMakeVisible (view);
-        onLayout = [this] { view.setBounds (getLocalBounds()); layoutBridge(); };
+        onPaint = [] (juce::Graphics& g) { g.fillAll (MachineSkin::current().bridge); };
+        onLayout = [this] { layoutMeters(); };
     }
 
     void addSettings (juce::PopupMenu& m) override
@@ -62,7 +83,7 @@ public:
         juce::PopupMenu rows;
         for (int n : { 4, 6, 8, 12, 16, 24 })
             rows.addItem (10 + n, juce::String (n) + " per row", true, setting ("perRow", 8) == n);
-        rows.addItem (10, "Fit (as big as they go, no scrolling)", true, setting ("perRow", 8) == 0);
+        rows.addItem (10, "Fit (as big as they go)", true, setting ("perRow", 8) == 0);
         m.addSubMenu ("Meters per row", rows);
 
         const int n = numTracks();
@@ -98,10 +119,8 @@ public:
     void settingsChanged() override
     {
         const int per = setting ("perRow", 8);
-        bridge.setPerRow (per);
-        if (per != 0 && per != 8 && per != 12 && per != 16 && per != 24) bridge.perRowSetting = per;   // (4 and 6 too)
-        minW = per > 0 ? juce::jmax (260, per * 64) : 300;
-        minH = 160;
+        minW = per > 0 ? juce::jmax (200, per * 50) : 240;
+        minH = 120;
         rebuild();
     }
 
@@ -109,23 +128,14 @@ public:
 
     void refresh() override
     {
-        const bool rec = deck.engine.isRecording(), rolling = deck.engine.isPlaying();
-        const int sys = deck.engine.getNoiseReduction();
-        for (auto* m : bridge.modules)
+        const bool rec = deck.engine.isRecording();
+        for (int i = 0; i < meters.size(); ++i)
         {
-            const int t = m->getIndex();
+            const int t = tracks[i];
             const bool armed = deck.engine.isArmed (t);
-            m->setArmed (armed, rec, deck.frameFlash);
-            const int mode = deck.engine.getTrackNr (t);
-            int lamp = 0;
-            if (sys != nr::none)
-            {
-                if (armed && rec)  lamp = nr::encodes (mode) ? 1 : 0;
-                else if (rolling)  lamp = nr::decodes (mode) ? 2 : 0;
-            }
-            m->setNr (sys, mode, lamp);
+            meters[i]->setRecLamp (! armed ? VUMeter::RecLamp::off : rec ? VUMeter::RecLamp::recording : VUMeter::RecLamp::armed, deck.frameFlash);
             if (juce::isPositiveAndBelow (t, 96))
-                m->getMeter().update (deck.frameRms[(size_t) t], deck.framePeak[(size_t) t], deck.frameDt);
+                meters[i]->update (deck.frameRms[(size_t) t], deck.framePeak[(size_t) t], deck.frameDt);
         }
     }
 
@@ -136,29 +146,69 @@ private:
 
     void rebuild()
     {
-        bridge.modules.clear();
+        meters.clear();
+        tracks.clear();
         if (deck.reel != nullptr)
             for (int t = first(); t <= last(); ++t)
             {
-                auto* m = bridge.modules.add (new ChannelModule (t));
-                deck.wireModule (*m);
-                m->setTrackName (deck.reel->tracks[(size_t) t].name);
-                m->getMeter().setStyle (setting ("style", -1));
-                m->getMeter().showLabel (setting ("names", 1) != 0);
-                bridge.addAndMakeVisible (m);
+                auto* m = meters.add (new VUMeter (deck.reel->tracks[(size_t) t].name));
+                m->setStyle (setting ("style", -1));
+                m->showLabel (setting ("names", 1) != 0);
+                m->setInterceptsMouseClicks (false, false);
+                addAndMakeVisible (m);
+                tracks.add (t);
             }
-        layoutBridge();
+        layoutMeters();
     }
 
-    void layoutBridge()
+    void layoutMeters()
     {
-        const int w = view.getWidth() - view.getScrollBarThickness();
-        if (w > 60) bridge.layoutForWidth (w, view.getHeight());
+        const int n = meters.size();
+        if (n == 0 || getWidth() < 20) return;
+        const float gap = 8.0f, pad = 10.0f, W = (float) getWidth() - 2 * pad, H = (float) getHeight() - 2 * pad;
+        auto sizeFor = [&] (int per, float& mw, float& mh)
+        {
+            mw = (W - gap * (float) (per - 1)) / (float) per;
+            mh = mw / ChannelModule::meterAspect;
+            const int rows = (n + per - 1) / per;
+            const float need = (float) rows * mh + gap * (float) (rows - 1);
+            if (need > H)              // too tall: shrink to fit the height
+            {
+                mh = (H - gap * (float) (rows - 1)) / (float) rows;
+                mw = mh * ChannelModule::meterAspect;
+            }
+        };
+        int per = setting ("perRow", 8);
+        float mw = 0, mh = 0;
+        if (per <= 0)
+        {
+            // fit: the arrangement that gives the biggest meters
+            float best = 0;
+            for (int p = 1; p <= n; ++p)
+            {
+                float w, h;
+                sizeFor (p, w, h);
+                if (w > best) { best = w; per = p; }
+            }
+        }
+        per = juce::jlimit (1, juce::jmax (1, n), per);
+        sizeFor (per, mw, mh);
+        const int rows = (n + per - 1) / per;
+        const float totalH = (float) rows * mh + gap * (float) (rows - 1);
+        const float y0 = pad + (H - totalH) * 0.5f;
+        for (int i = 0; i < n; ++i)
+        {
+            const int row = i / per, col = i % per;
+            const int inRow = juce::jmin (per, n - row * per);
+            const float rowW = (float) inRow * mw + gap * (float) (inRow - 1);
+            const float x0 = pad + (W - rowW) * 0.5f;
+            meters[i]->setBounds (juce::Rectangle<float> (x0 + (float) col * (mw + gap), y0 + (float) row * (mh + gap), mw, mh).toNearestInt());
+        }
     }
 
     MainComponent& deck;
-    juce::Viewport view;
-    MeterBridge bridge;
+    juce::OwnedArray<VUMeter> meters;
+    juce::Array<int> tracks;
 };
 
 //==============================================================================
@@ -174,7 +224,6 @@ public:
             paintDeckFace (g, getLocalBounds());
             deck.paintCounter (g, getLocalBounds().reduced (8), setting ("format", 0));
         };
-        setMouseCursor (juce::MouseCursor::PointingHandCursor);
     }
     void addSettings (juce::PopupMenu& m) override
     {
@@ -183,16 +232,6 @@ public:
         m.addItem (3, "Timecode", true, setting ("format", 0) == 2);
     }
     void settingChosen (int r) override { if (r >= 1 && r <= 3) set ("format", r - 1); }
-    void mouseUp (const juce::MouseEvent& e) override
-    {
-        if (e.mouseWasDraggedSinceMouseDown()) return;
-        juce::PopupMenu m;
-        addSettings (m);
-        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [safe = juce::Component::SafePointer<TimeBlock> (this)] (int r)
-        {
-            if (safe != nullptr && r > 0) safe->settingChosen (r);
-        });
-    }
     void refresh() override { repaint(); }
 
 private:
@@ -200,302 +239,237 @@ private:
 };
 
 //==============================================================================
-/** Transport keys: the ones chosen for this block. */
+/** Transport: lamps for what the tape is doing (the ones chosen for this block). */
 class TransportBlock : public Panel
 {
 public:
-    explicit TransportBlock (MainComponent& d) : Panel ("transport", "Transport keys"), deck (d)
+    explicit TransportBlock (MainComponent& d) : Panel ("transport", "Transport"), deck (d)
     {
-        TransportKey* src[] = { &d.rtzKey, &d.rewKey, &d.ffwKey, &d.liftKey, &d.stopKey, &d.playKey, &d.recKey, &d.markKey, &d.clickKey };
-        for (int i = 0; i < numKeys; ++i)
-            keys.add (new MirrorKey (*src[i], src[i] == &d.recKey ? Colours::red : Colours::mustard));
-        onPaint = [this] (juce::Graphics& g) { paintDeckFace (g, getLocalBounds()); };
-        onLayout = [this] { layoutKeys(); };
+        onPaint = [this] (juce::Graphics& g)
+        {
+            paintDeckFace (g, getLocalBounds());
+            static const char* names[] = { "REW", "F FWD", "STOP", "PLAY", "REC", "CUE", "CLICK" };
+            const auto& e = deck.engine;
+            const int wd = e.getWindDirection();
+            const bool lit[] = { wd < 0, wd > 0, ! e.isPlaying() && wd == 0, e.isPlaying(), e.isRecording(), e.getLifterDefeat(),
+                                 deck.reel != nullptr && deck.reel->clickOn && deck.reel->tempoBpm > 0.0 };
+            juce::StringArray t;
+            juce::Array<bool> l;
+            juce::Array<juce::Colour> c;
+            for (int i = 0; i < numLamps; ++i)
+                if (shown (i))
+                {
+                    t.add (names[i]);
+                    l.add (lit[i]);
+                    c.add (i == 4 ? Colours::red : i == 3 ? juce::Colour (0xff5fcf6a) : Colours::mustard);
+                }
+            drawLampRow (g, getLocalBounds().toFloat().reduced (8.0f), t, l, c, 110.0f);
+        };
     }
     void addSettings (juce::PopupMenu& m) override
     {
-        static const char* names[] = { "RTZ", "<<  rewind", ">>  fast forward", "CUE  (lifter defeat)", "STOP", "PLAY", "REC", "MARK", "CLICK" };
+        static const char* names[] = { "REW", "F FWD", "STOP", "PLAY", "REC", "CUE (lifter defeat)", "CLICK" };
         juce::PopupMenu k;
-        for (int i = 0; i < numKeys; ++i) k.addItem (10 + i, names[i], true, shown (i));
+        for (int i = 0; i < numLamps; ++i) k.addItem (10 + i, names[i], true, shown (i));
         k.addSeparator();
         k.addItem (30, "All of them");
         k.addItem (31, "Just STOP / PLAY / REC");
-        m.addSubMenu ("Keys", k);
+        m.addSubMenu ("Lamps", k);
     }
     void settingChosen (int r) override
     {
-        int mask = setting ("keys", allKeys);
-        if (r >= 10 && r < 10 + numKeys) { mask ^= 1 << (r - 10); if (mask == 0) mask = 1 << (r - 10); }
-        else if (r == 30) mask = allKeys;
-        else if (r == 31) mask = (1 << 4) | (1 << 5) | (1 << 6);
-        set ("keys", mask);
+        int mask = setting ("lamps", allLamps);
+        if (r >= 10 && r < 10 + numLamps) { mask ^= 1 << (r - 10); if (mask == 0) mask = 1 << (r - 10); }
+        else if (r == 30) mask = allLamps;
+        else if (r == 31) mask = (1 << 2) | (1 << 3) | (1 << 4);
+        set ("lamps", mask);
     }
     void settingsChanged() override
     {
         int n = 0;
-        for (int i = 0; i < numKeys; ++i) n += shown (i) ? 1 : 0;
-        minW = juce::jmax (120, n * 52);
-        minH = 44;
-        maxH = 240;
-        for (int i = 0; i < numKeys; ++i) { addChildComponent (keys[i]); keys[i]->setVisible (shown (i)); }
-        layoutKeys();
+        for (int i = 0; i < numLamps; ++i) n += shown (i) ? 1 : 0;
+        minW = juce::jmax (100, n * 48);
+        minH = 40;
+        repaint();
     }
-    void refresh() override { for (auto* k : keys) k->follow(); }
+    void refresh() override { if (++frame % 2 == 0) repaint(); }
 
 private:
-    static constexpr int numKeys = 9, allKeys = (1 << 9) - 1;
-    bool shown (int i) const { return (setting ("keys", allKeys) & (1 << i)) != 0; }
-    void layoutKeys()
-    {
-        juce::Array<MirrorKey*> vis;
-        for (int i = 0; i < numKeys; ++i) if (shown (i)) vis.add (keys[i]);
-        if (vis.isEmpty()) return;
-        auto r = getLocalBounds().reduced (8);
-        const int gap = 6, w = (r.getWidth() - gap * (vis.size() - 1)) / vis.size();
-        for (auto* k : vis) { k->setBounds (r.removeFromLeft (w)); r.removeFromLeft (gap); }
-    }
+    static constexpr int numLamps = 7, allLamps = (1 << 7) - 1;
+    bool shown (int i) const { return (setting ("lamps", allLamps) & (1 << i)) != 0; }
     MainComponent& deck;
-    juce::OwnedArray<MirrorKey> keys;
+    int frame = 0;
 };
 
 //==============================================================================
-/** Speed: the IPS switch, VARI, the varispeed knob and its readouts. */
+/** Speed: which IPS, VARI, and the varispeed in % and semitones. */
 class VarispeedBlock : public Panel
 {
 public:
     explicit VarispeedBlock (MainComponent& d) : Panel ("varispeed", "Speed / varispeed"), deck (d)
     {
-        minW = 300; minH = 70; maxH = 160;
-        for (auto* k : { &d.ips7Key, &d.ips15Key, &d.ips30Key, &d.variKey })
-            addAndMakeVisible (keys.add (new MirrorKey (*k, Colours::mustard)));
-        for (auto* b : { &d.stDownButton, &d.stUpButton, &d.variResetButton })
+        minW = 260; minH = 64;
+        onPaint = [this] (juce::Graphics& g)
         {
-            auto* nb = buttons.add (new juce::TextButton (b->getButtonText(), b->getTooltip()));
-            nb->setWantsKeyboardFocus (false);
-            nb->onClick = [b] { b->triggerClick(); };
-            addAndMakeVisible (nb);
-        }
-        for (auto* l : { &pct, &st })
-        {
-            l->setJustificationType (juce::Justification::centred);
-            l->setFont (monoFont (13.0f, true));
-            l->setColour (juce::Label::backgroundColourId, Colours::black);
-            l->setColour (juce::Label::outlineColourId, Colours::edge);
-            addAndMakeVisible (l);
-        }
-        knob.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-        knob.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-        knob.setRange (-TapeEngine::maxVarispeedPercent, TapeEngine::maxVarispeedPercent, 0.0);
-        knob.setDoubleClickReturnValue (true, 0.0);
-        knob.setMouseDragSensitivity (800);
-        knob.setVelocityModeParameters (0.4, 1, 0.0, true, juce::ModifierKeys::shiftModifier);
-        knob.setWantsKeyboardFocus (false);
-        knob.setTooltip (d.variKnob.getTooltip());
-        knob.onValueChange = [this] { if (deck.reel != nullptr) deck.changeSpeed (deck.reel->deckIps, true, knob.getValue(), false); };
-        knob.onDragEnd = [this] { deck.saveReel(); };
-        addAndMakeVisible (knob);
-        onPaint = [this] (juce::Graphics& g) { paintDeckFace (g, getLocalBounds()); };
-        onLayout = [this]
-        {
-            auto r = getLocalBounds().reduced (8, 6);
-            r = r.withSizeKeepingCentre (r.getWidth(), juce::jmin (r.getHeight(), 90));
-            const int ks = juce::jmin (r.getHeight(), 70);
-            knob.setBounds (r.removeFromRight (ks).withSizeKeepingCentre (ks, ks));
-            r.removeFromRight (6);
-            auto row1 = r.removeFromTop (r.getHeight() / 2 - 2);
-            r.removeFromTop (4);
-            const int iw = (row1.getWidth() - 12) / 4;
-            for (auto* k : keys) { k->setBounds (row1.removeFromLeft (iw)); row1.removeFromLeft (4); }
-            auto row2 = r;
-            const int w2 = row2.getWidth() - 16;
-            const int wb = w2 * 17 / 100, wr = w2 * 13 / 100, wl = (w2 - 2 * wb - wr) / 2;
-            buttons[0]->setBounds (row2.removeFromLeft (wb)); row2.removeFromLeft (4);
-            pct.setBounds (row2.removeFromLeft (wl));        row2.removeFromLeft (4);
-            st.setBounds (row2.removeFromLeft (wl));         row2.removeFromLeft (4);
-            buttons[1]->setBounds (row2.removeFromLeft (wb)); row2.removeFromLeft (4);
-            buttons[2]->setBounds (row2);
+            paintDeckFace (g, getLocalBounds());
+            auto r = paintLabel (g, getLocalBounds(), "SPEED").toFloat().reduced (8.0f, 4.0f);
+            r = r.withSizeKeepingCentre (r.getWidth(), juce::jmin (r.getHeight(), 120.0f));
+            const auto* reel = deck.reel.get();
+            const double ips = reel != nullptr ? reel->deckIps : 15.0;
+            const bool vari = reel != nullptr && reel->variOn;
+            auto row1 = r.removeFromTop (r.getHeight() * 0.5f - 3.0f);
+            r.removeFromTop (6.0f);
+            drawLampRow (g, row1, { juce::String (juce::CharPointer_UTF8 ("7\xc2\xbd")), "15", "30", "VARI" },
+                         { reel != nullptr && ips == 7.5, reel != nullptr && ips == 15.0, reel != nullptr && ips == 30.0, vari },
+                         { Colours::mustard, Colours::mustard, Colours::mustard, Colours::mustard }, 60.0f);
+            const auto ink = vari ? Colours::mustard : Colours::textDim;
+            auto row2 = r.withSizeKeepingCentre (r.getWidth(), juce::jmin (r.getHeight(), 60.0f));
+            drawReadout (g, row2.removeFromLeft (row2.getWidth() * 0.5f - 3.0f), deck.variPctLabel.getText(), ink);
+            row2.removeFromLeft (6.0f);
+            drawReadout (g, row2, deck.variStLabel.getText(), ink);
         };
     }
-    void refresh() override
-    {
-        for (auto* k : keys) k->follow();
-        for (int i = 0; i < 3; ++i) buttons[i]->setEnabled (deck.variResetButton.isEnabled());
-        knob.setEnabled (deck.variKnob.isEnabled());
-        if (! knob.isMouseButtonDown()) knob.setValue (deck.variKnob.getValue(), juce::dontSendNotification);
-        pct.setText (deck.variPctLabel.getText(), juce::dontSendNotification);
-        st.setText (deck.variStLabel.getText(), juce::dontSendNotification);
-        for (auto* l : { &pct, &st }) l->setColour (juce::Label::textColourId, deck.variPctLabel.findColour (juce::Label::textColourId));
-    }
+    void refresh() override { if (++frame % 6 == 0) repaint(); }
 
 private:
     MainComponent& deck;
-    juce::OwnedArray<MirrorKey> keys;
-    juce::OwnedArray<juce::TextButton> buttons;
-    juce::Label pct, st;
-    juce::Slider knob;
+    int frame = 0;
 };
 
 //==============================================================================
-/** Tempo (drag / type / tap, time signature) and the sync source. */
+/** Tempo (BPM, time signature) and where the time comes from (sync). */
 class TempoBlock : public Panel
 {
 public:
     explicit TempoBlock (MainComponent& d) : Panel ("tempo", "Tempo and sync"), deck (d)
     {
-        minW = 170; minH = 64; maxH = 160;
-        tempo.getReel = d.tempoBox.getReel;
-        tempo.onChanged = d.tempoBox.onChanged;
-        addAndMakeVisible (tempo);
-        sync.setWantsKeyboardFocus (false);
-        sync.setTooltip (d.syncSourceButton.getTooltip());
-        sync.onClick = [this] { deck.showSyncMenu(); };
-        addAndMakeVisible (sync);
-        onPaint = [this] (juce::Graphics& g) { paintDeckFace (g, getLocalBounds()); };
-        onLayout = [this]
+        minW = 170; minH = 64;
+        onPaint = [this] (juce::Graphics& g)
         {
-            auto r = getLocalBounds().reduced (8, 6);
-            tempo.setBounds (r.removeFromTop (r.getHeight() / 2 - 2));
-            r.removeFromTop (4);
-            sync.setBounds (r);
+            paintDeckFace (g, getLocalBounds());
+            auto r = getLocalBounds().toFloat().reduced (8.0f, 6.0f);
+            r = r.withSizeKeepingCentre (r.getWidth(), juce::jmin (r.getHeight(), 120.0f));
+            const auto* reel = deck.reel.get();
+            const auto& sk = MachineSkin::current();
+            auto top = r.removeFromTop (r.getHeight() * 0.5f - 3.0f);
+            r.removeFromTop (6.0f);
+            const bool has = reel != nullptr && reel->tempoBpm > 0.0;
+            auto sig = top.removeFromRight (top.getHeight() * 1.4f);
+            top.removeFromRight (6.0f);
+            drawReadout (g, top, has ? juce::String (reel->tempoBpm, 2) + " BPM" : juce::String ("NO TEMPO"), sk.counterInk);
+            drawReadout (g, sig, reel != nullptr ? juce::String (reel->beatsPerBar) + "/4" : juce::String ("-"), sk.counterInk);
+            const auto& b = deck.syncSourceButton;
+            const auto col = b.findColour (juce::TextButton::buttonColourId);
+            drawLamp (g, r, b.getButtonText(), col == Colours::mustard, Colours::mustard);
         };
     }
-    void refresh() override
-    {
-        if (++frame % 5 != 0) return;
-        if (sync.getButtonText() != deck.syncSourceButton.getButtonText()) sync.setButtonText (deck.syncSourceButton.getButtonText());
-        for (auto id : { juce::TextButton::buttonColourId, juce::TextButton::textColourOffId })
-            sync.setColour (id, deck.syncSourceButton.findColour (id));
-        tempo.repaint();
-    }
+    void refresh() override { if (++frame % 6 == 0) repaint(); }
 
 private:
     MainComponent& deck;
-    TempoBox tempo;
-    juce::TextButton sync;
     int frame = 0;
 };
 
 //==============================================================================
-/** The master: its meters, which master, ARM and TAPE. */
+/** The master: its meters, which master, and lamps for ARMED and TAPE. */
 class MasterBlock : public Panel
 {
 public:
-    explicit MasterBlock (MainComponent& d) : Panel ("master", "Master"), deck (d), arm (d.masterArmKey, Colours::red), tape (d.monitorKey, Colours::mustard)
+    explicit MasterBlock (MainComponent& d) : Panel ("master", "Master"), deck (d)
     {
-        minW = 240; minH = 170;
-        for (auto* m : { &l, &r }) { m->setMaster (true); addAndMakeVisible (m); }
-        which.setWantsKeyboardFocus (false);
-        which.onClick = [this] { deck.showMasterMenu(); };
-        addAndMakeVisible (which);
-        addAndMakeVisible (arm);
-        addAndMakeVisible (tape);
+        minW = 220; minH = 150;
+        for (auto* m : { &l, &r }) { m->setMaster (true); m->setInterceptsMouseClicks (false, false); addAndMakeVisible (m); }
         onPaint = [this] (juce::Graphics& g)
         {
-            paintPanelFace (g, getLocalBounds(), "MASTER");
+            g.fillAll (Colours::panel);
+            auto a = paintLabel (g, getLocalBounds(), "MASTER");
             const auto& ms = MachineSkin::currentMaster();
             g.setFont (juce::Font (juce::FontOptions ("Arial", 11.0f, juce::Font::bold)));
             g.setColour (Colours::textDim);
-            g.drawText (juce::String (ms.brand) + "  " + ms.model, getLocalBounds().reduced (10, 4).withHeight (18), juce::Justification::centredRight);
+            g.drawText (juce::String (ms.brand) + "  " + ms.model, getLocalBounds().reduced (10, 0).withHeight (18), juce::Justification::centredRight);
+            g.setColour (Colours::text);
+            g.setFont (monoFont (13.0f, true));
+            g.drawText (deck.masterButton.getButtonText().upToFirstOccurrenceOf (juce::String (juce::CharPointer_UTF8 ("  \xe2\x96\xbe")), false, false),
+                        nameArea, juce::Justification::centred, true);
+            drawLampRow (g, lampArea.toFloat(), { "ARMED", "TAPE" },
+                         { deck.engine.isMasterArmed() && (! deck.engine.isRecording() || deck.frameFlash), deck.engine.isMonitoringMaster() },
+                         { Colours::red, Colours::mustard }, 40.0f);
         };
         onLayout = [this]
         {
             auto a = getLocalBounds().reduced (10, 6);
-            a.removeFromTop (20);
-            auto controls = a.removeFromBottom (26);
-            a.removeFromBottom (6);
-            which.setBounds (a.removeFromBottom (26));
-            a.removeFromBottom (8);
+            a.removeFromTop (16);
+            lampArea = a.removeFromBottom (juce::jlimit (24, 40, a.getHeight() / 6));
+            a.removeFromBottom (4);
+            nameArea = a.removeFromBottom (22);
+            a.removeFromBottom (4);
             const int vuW = (a.getWidth() - 8) / 2;
             const int vuH = juce::jmin (a.getHeight(), (int) ((float) vuW / ChannelModule::meterAspect));
-            auto vus = a.withSizeKeepingCentre (a.getWidth(), vuH);
-            l.setBounds (vus.removeFromLeft (vuW));
-            r.setBounds (vus.removeFromRight (vuW));
-            arm.setBounds (controls.removeFromLeft ((controls.getWidth() - 6) / 2));
-            controls.removeFromLeft (6);
-            tape.setBounds (controls);
+            const int w = (int) ((float) vuH * ChannelModule::meterAspect);
+            auto vus = a.withSizeKeepingCentre (w * 2 + 8, vuH);
+            l.setBounds (vus.removeFromLeft (w));
+            r.setBounds (vus.removeFromRight (w));
         };
     }
     void refresh() override
     {
         l.update (deck.frameMasterRms[0], deck.frameMasterPeak[0], deck.frameDt);
         r.update (deck.frameMasterRms[1], deck.frameMasterPeak[1], deck.frameDt);
-        arm.follow();
-        tape.follow();
-        if (which.getButtonText() != deck.masterButton.getButtonText()) which.setButtonText (deck.masterButton.getButtonText());
-        which.setEnabled (deck.masterButton.isEnabled());
+        if (++frame % 6 == 0) repaint (lampArea.getUnion (nameArea));
     }
     void reelChanged() override { l.skinChanged(); r.skinChanged(); repaint(); }
 
 private:
     MainComponent& deck;
     VUMeter l { "L" }, r { "R" };
-    juce::TextButton which;
-    MirrorKey arm, tape;
+    juce::Rectangle<int> nameArea, lampArea;
+    int frame = 0;
 };
 
 //==============================================================================
-/** The autolocator: IN / OUT (with their times), AUTO, REH, LOOP. */
+/** The autolocator: IN / OUT times, and lamps for AUTO, REH, LOOP. */
 class LocatorBlock : public Panel
 {
 public:
     explicit LocatorBlock (MainComponent& d) : Panel ("locator", "Autolocator"), deck (d)
     {
-        minW = 250; minH = 84; maxH = 220;
-        for (auto* k : { &d.inKey, &d.outKey, &d.autoKey, &d.rehKey, &d.loopKey })
-            addAndMakeVisible (keys.add (new MirrorKey (*k, k == &d.autoKey ? Colours::red : Colours::mustard)));
+        minW = 220; minH = 80;
         onPaint = [this] (juce::Graphics& g)
         {
-            paintPanelFace (g, getLocalBounds(), "AUTOLOCATOR");
+            g.fillAll (Colours::panel);
+            auto r = paintLabel (g, getLocalBounds(), "AUTOLOCATOR").toFloat().reduced (10.0f, 4.0f);
+            r = r.withSizeKeepingCentre (r.getWidth(), juce::jmin (r.getHeight(), 130.0f));
+            const auto& e = deck.engine;
             const double sr = deck.sessionRate();
             auto t = [&] (juce::int64 v) { return v >= 0 ? formatShortTime (v, sr) : juce::String ("--:--"); };
-            g.setColour (Colours::text);
-            g.setFont (monoFont (13.0f, true));
-            g.drawText (t (deck.engine.getPunchIn()), inTime, juce::Justification::centredLeft);
-            g.drawText (t (deck.engine.getPunchOut()), outTime, juce::Justification::centredLeft);
-        };
-        onLayout = [this]
-        {
-            auto a = getLocalBounds().reduced (10, 6);
-            a.removeFromTop (20);
-            a = a.withSizeKeepingCentre (a.getWidth(), juce::jmin (a.getHeight(), 100));
-            auto row1 = a.removeFromTop (a.getHeight() / 2 - 3);
-            a.removeFromTop (6);
-            const int kw = juce::jmin (70, row1.getWidth() / 5);
-            keys[0]->setBounds (row1.removeFromLeft (kw)); row1.removeFromLeft (6);
-            inTime = row1.removeFromLeft ((row1.getWidth() - kw - 6) / 2);
-            keys[1]->setBounds (row1.removeFromLeft (kw)); row1.removeFromLeft (6);
-            outTime = row1;
-            const int w3 = (a.getWidth() - 12) / 3;
-            keys[2]->setBounds (a.removeFromLeft (w3)); a.removeFromLeft (6);
-            keys[3]->setBounds (a.removeFromLeft (w3)); a.removeFromLeft (6);
-            keys[4]->setBounds (a);
+            auto row1 = r.removeFromTop (r.getHeight() * 0.5f - 3.0f);
+            r.removeFromTop (6.0f);
+            const auto ink = MachineSkin::current().counterInk;
+            drawReadout (g, row1.removeFromLeft (row1.getWidth() * 0.5f - 3.0f), "IN  " + t (e.getPunchIn()), ink);
+            row1.removeFromLeft (6.0f);
+            drawReadout (g, row1, "OUT  " + t (e.getPunchOut()), ink);
+            drawLampRow (g, r, { "AUTO", "REH", "LOOP" },
+                         { e.getAutoPunch() && (! e.isAutoPunching() || deck.frameFlash), e.getRehearse(), e.getCycle() },
+                         { Colours::red, Colours::mustard, Colours::mustard }, 60.0f);
         };
     }
-    void refresh() override
-    {
-        for (auto* k : keys) k->follow();
-        if (++frame % 10 == 0) repaint();
-    }
+    void refresh() override { if (++frame % 6 == 0) repaint(); }
 
 private:
     MainComponent& deck;
-    juce::OwnedArray<MirrorKey> keys;
-    juce::Rectangle<int> inTime, outTime;
     int frame = 0;
 };
 
 //==============================================================================
-/** The markers list. */
+/** The markers list (the one at the playhead highlighted). */
 class MarkersBlock : public Panel
 {
 public:
     explicit MarkersBlock (MainComponent& d) : Panel ("markers", "Markers"), deck (d)
     {
-        minW = 220; minH = 140;
-        markers.onLocate    = [this] (juce::int64 pos) { deck.locate (pos); };
-        markers.onAddMarker = [this] { deck.addMarker(); };
-        markers.onChanged   = [this] { deck.saveReel(); deck.markers.refresh(); };
+        minW = 200; minH = 120;
         markers.getPlayhead = [this] { return deck.engine.getPosition(); };
+        markers.setInterceptsMouseClicks (false, false);
         addAndMakeVisible (markers);
         onLayout = [this] { markers.setBounds (getLocalBounds()); };
         reelChanged();
@@ -505,7 +479,6 @@ public:
     {
         markers.setPlayhead (deck.engine.getPosition());
         if (++frame % 15 != 0 || deck.reel == nullptr) return;
-        // markers added / changed elsewhere
         juce::String key;
         for (auto& m : deck.reel->markers) key << m.position << m.name << ";";
         if (key != lastKey) { lastKey = key; markers.refresh(); }

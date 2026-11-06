@@ -2083,9 +2083,9 @@ void MainComponent::setupPanels()
     layout.blockTypes = {
         { "meters",      "Meters",        { 8, 5 } },
         { "time",        "Time",          { 4, 2 } },
-        { "transport",   "Transport keys", { 6, 1 } },
+        { "transport",   "Transport",     { 6, 1 } },
         { "varispeed",   "Speed / varispeed", { 3, 1 } },
-        { "tempo",       "Tempo and sync", { 2, 1 } },
+        { "tempo",       "Tempo and sync", { 3, 1 } },
         { "master",      "Master",        { 2, 2 } },
         { "locator",     "Autolocator",   { 2, 1 } },
         { "markers",     "Markers",       { 2, 3 } },
