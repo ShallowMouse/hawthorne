@@ -85,6 +85,64 @@ void PanelHost::paintOverChildren (juce::Graphics& g)
     g.drawRect (dropZone, 3);
 }
 
+void PanelHost::Divider::paint (juce::Graphics& g)
+{
+    if (! isMouseOverOrDragging()) return;
+    g.setColour (Colours::mustard.withAlpha (0.8f));
+    if (vertical) g.fillRect (getLocalBounds().withSizeKeepingCentre (2, getHeight()));
+    else          g.fillRect (getLocalBounds().withSizeKeepingCentre (getWidth(), 2));
+}
+
+void PanelHost::Divider::mouseDown (const juce::MouseEvent&)
+{
+    // where the drag measures from
+    if (edge >= 0)
+    {
+        const auto c = getBounds().getCentre();
+        int thick = 0;
+        for (auto* p : host.getChildren())
+            if (dynamic_cast<Panel*> (p) != nullptr && p->isVisible())
+            {
+                const auto pb = p->getBounds();
+                if (edge == 0 && pb.getBottom() == c.y) thick = juce::jmax (thick, pb.getHeight());
+                if (edge == 1 && pb.getY() == c.y)      thick = juce::jmax (thick, pb.getHeight());
+                if (edge == 2 && pb.getRight() == c.x)  thick = juce::jmax (thick, pb.getWidth());
+                if (edge == 3 && pb.getX() == c.x)      thick = juce::jmax (thick, pb.getWidth());
+            }
+        start = edge == 0 ? c.y - thick : edge == 1 ? c.y + thick : edge == 2 ? c.x - thick : c.x + thick;
+    }
+    else
+    {
+        juce::Component* pa = nullptr;
+        juce::Component* pb = nullptr;
+        for (auto* p : host.getChildren())
+            if (auto* panel = dynamic_cast<Panel*> (p))
+            {
+                if (panel->id == a) pa = panel;
+                if (panel->id == b) pb = panel;
+            }
+        if (pa == nullptr || pb == nullptr) return;
+        start = vertical ? pa->getX() : pa->getY();
+        total = vertical ? pa->getWidth() + pb->getWidth() : pa->getHeight() + pb->getHeight();
+    }
+}
+
+void PanelHost::Divider::mouseDrag (const juce::MouseEvent& e)
+{
+    host.manager.dividerDragged (*this, e.getEventRelativeTo (&host).getPosition(), false);
+}
+
+void PanelHost::Divider::mouseUp (const juce::MouseEvent& e)
+{
+    if (e.mouseWasDraggedSinceMouseDown())
+        host.manager.dividerDragged (*this, e.getEventRelativeTo (&host).getPosition(), true);
+}
+
+void PanelHost::Divider::mouseDoubleClick (const juce::MouseEvent&)
+{
+    host.manager.dividerReset (*this);
+}
+
 //==============================================================================
 struct LayoutManager::Floating : public juce::DocumentWindow
 {
@@ -173,6 +231,7 @@ bool LayoutManager::isShown (const Panel& p) const
 void LayoutManager::defaults()
 {
     places = defaultPlaces;
+    edgeSizes.clear();
     windowBounds.clear();
 }
 
@@ -205,6 +264,15 @@ std::unique_ptr<juce::XmlElement> LayoutManager::toXml() const
         e->setAttribute ("id", pl.panel);
         e->setAttribute ("window", pl.window);
         e->setAttribute ("edge", edgeName (pl.edge));
+        if (pl.size > 0) e->setAttribute ("size", pl.size);
+    }
+    for (auto& [w, es] : edgeSizes)
+    {
+        if (es[0] == 0 && es[1] == 0 && es[2] == 0 && es[3] == 0) continue;
+        auto* e = xml->createNewChildElement ("Edges");
+        e->setAttribute ("window", w);
+        e->setAttribute ("top", es[0]); e->setAttribute ("bottom", es[1]);
+        e->setAttribute ("left", es[2]); e->setAttribute ("right", es[3]);
     }
     return xml;
 }
@@ -223,9 +291,13 @@ void LayoutManager::fromXml (const juce::XmlElement& xml)
         for (auto& l : loaded) dup = dup || l.panel == id;
         if (dup) continue;
         const int w = juce::jlimit (0, (int) bounds.size(), e->getIntAttribute ("window", 0));
-        loaded.push_back ({ id, w, edgeFrom (e->getStringAttribute ("edge")) });
+        loaded.push_back ({ id, w, edgeFrom (e->getStringAttribute ("edge")), juce::jmax (0, e->getIntAttribute ("size", 0)) });
     }
     places = loaded;
+    edgeSizes.clear();
+    for (auto* e : xml.getChildWithTagNameIterator ("Edges"))
+        edgeSizes[e->getIntAttribute ("window")] = { e->getIntAttribute ("top"), e->getIntAttribute ("bottom"),
+                                                     e->getIntAttribute ("left"), e->getIntAttribute ("right") };
     windowBounds = bounds;
 }
 
@@ -299,79 +371,162 @@ void LayoutManager::apply()
 void LayoutManager::layoutHost (PanelHost& h)
 {
     auto r = h.getLocalBounds();
-    std::vector<Panel*> top, bottom, left, right, centre;
+    struct Spec { bool vertical; juce::String a, b; int edge; juce::Rectangle<int> bounds; };
+    std::vector<Spec> specs;
+    std::vector<Place*> groups[5];        // top, bottom, left, right, centre
     for (auto& pl : places)
         if (pl.window == h.windowIndex)
             if (auto* p = find (pl.panel))
             {
                 auto e = pl.edge;
                 if (! p->sideOK && (e == Edge::left || e == Edge::right)) e = Edge::centre;
-                (e == Edge::top ? top : e == Edge::bottom ? bottom : e == Edge::left ? left : e == Edge::right ? right : centre).push_back (p);
+                groups[(int) e].push_back (&pl);
             }
+    auto& es = edgeSizes[h.windowIndex];
+    const int divT = 6;
 
-    // a row (top / bottom): as tall as its tallest panel; fixed-width panels keep their width
-    auto row = [] (std::vector<Panel*>& ps, juce::Rectangle<int> area)
+    // a stack of panels along one axis: sized ones keep their size, fixed ones their natural
+    // size, the rest share; whatever's left over goes to the last flexible one (or the last)
+    auto stack = [&] (std::vector<Place*>& ps, juce::Rectangle<int> area, bool across)
     {
-        int fixed = 0, flex = 0;
-        for (auto* p : ps) { if (p->fixedW) fixed += p->prefW; else ++flex; }
-        const int share = flex > 0 ? juce::jmax (0, area.getWidth() - fixed) / flex : 0;
-        const float scale = flex == 0 && fixed > area.getWidth() ? (float) area.getWidth() / (float) fixed : 1.0f;
+        const int len = across ? area.getWidth() : area.getHeight();
+        std::vector<int> sz;
+        int used = 0, flex = 0;
+        for (auto* pl : ps)
+        {
+            auto* p = find (pl->panel);
+            const bool fixed = across ? p->fixedW : p->fixedH;
+            const int s = pl->size > 0 ? pl->size : fixed ? (across ? p->prefW : p->prefH) : -1;
+            sz.push_back (s);
+            if (s < 0) ++flex; else used += s;
+        }
+        const float scale = used > len && flex == 0 ? (float) len / (float) used : 1.0f;
+        const int share = flex > 0 ? juce::jmax (0, len - used) / flex : 0;
+        int total = 0, lastFlex = -1;
+        for (size_t i = 0; i < sz.size(); ++i)
+        {
+            if (sz[i] < 0) { sz[i] = share; lastFlex = (int) i; }
+            else sz[i] = (int) ((float) sz[i] * scale);
+            total += sz[i];
+        }
+        const int extra = len - total;
+        if (extra > 0 && ! sz.empty()) sz[(size_t) (lastFlex >= 0 ? lastFlex : (int) sz.size() - 1)] += extra;
         for (size_t i = 0; i < ps.size(); ++i)
         {
-            auto* p = ps[i];
-            const int w = i + 1 == ps.size() && flex > 0 && ! p->fixedW ? area.getWidth()
-                        : p->fixedW ? (int) ((float) p->prefW * scale) : share;
-            p->setBounds (area.removeFromLeft (w));
+            auto* p = find (ps[i]->panel);
+            const auto b = across ? area.removeFromLeft (juce::jmin (sz[i], area.getWidth()))
+                                  : area.removeFromTop (juce::jmin (sz[i], area.getHeight()));
+            p->setBounds (b);
+            if (i + 1 < ps.size())
+            {
+                // a divider between this panel and the next
+                specs.push_back ({ across, ps[i]->panel, ps[i + 1]->panel, -1,
+                                   across ? juce::Rectangle<int> (b.getRight() - divT / 2, b.getY(), divT, b.getHeight())
+                                          : juce::Rectangle<int> (b.getX(), b.getBottom() - divT / 2, b.getWidth(), divT) });
+            }
         }
     };
-    // a column (left / right / centre): fixed-height panels keep their height
-    auto column = [] (std::vector<Panel*>& ps, juce::Rectangle<int> area)
+    auto edgeDivider = [&] (int edge, juce::Rectangle<int> line)
     {
-        int fixed = 0, flex = 0;
-        for (auto* p : ps) { if (p->fixedH) fixed += p->prefH; else ++flex; }
-        const float scale = fixed > area.getHeight() ? (float) area.getHeight() / (float) fixed : 1.0f;
-        const int share = flex > 0 ? juce::jmax (0, area.getHeight() - fixed) / flex : 0;
-        std::vector<int> hs;
-        int used = 0, lastFlex = -1;
-        for (size_t i = 0; i < ps.size(); ++i)
-        {
-            const int hgt = ps[i]->fixedH ? (int) ((float) ps[i]->prefH * scale) : share;
-            if (! ps[i]->fixedH) lastFlex = (int) i;
-            hs.push_back (hgt);
-            used += hgt;
-        }
-        if (lastFlex >= 0) hs[(size_t) lastFlex] += juce::jmax (0, area.getHeight() - used);   // (rounding)
-        for (size_t i = 0; i < ps.size(); ++i)
-            ps[i]->setBounds (area.removeFromTop (juce::jmin (hs[i], area.getHeight())));
+        specs.push_back ({ edge >= 2, {}, {}, edge, line });
+    };
+    auto thickness = [&] (int edge, std::vector<Place*>& ps, int avail)
+    {
+        int t = 0;
+        for (auto* pl : ps) t = juce::jmax (t, edge < 2 ? find (pl->panel)->prefH : find (pl->panel)->prefW);
+        if (es[(size_t) edge] > 0) t = es[(size_t) edge];
+        return juce::jlimit (0, avail, t);
     };
 
-    if (! bottom.empty())
+    const bool centreEmpty = groups[4].empty();
+    if (! groups[1].empty())
     {
-        int hgt = 0;
-        for (auto* p : bottom) hgt = juce::jmax (hgt, p->prefH);
-        row (bottom, r.removeFromBottom (juce::jmin (hgt, r.getHeight())));
+        const bool all = centreEmpty && groups[0].empty() && groups[2].empty() && groups[3].empty();
+        auto a = r.removeFromBottom (all ? r.getHeight() : thickness (1, groups[1], r.getHeight()));
+        stack (groups[1], a, true);
+        if (! all) edgeDivider (1, { a.getX(), a.getY() - divT / 2, a.getWidth(), divT });
     }
-    if (! top.empty())
+    if (! groups[0].empty())
     {
-        int hgt = 0;
-        for (auto* p : top) hgt = juce::jmax (hgt, p->prefH);
-        row (top, r.removeFromTop (juce::jmin (hgt, r.getHeight())));
+        const bool all = centreEmpty && groups[2].empty() && groups[3].empty();
+        auto a = r.removeFromTop (all ? r.getHeight() : thickness (0, groups[0], r.getHeight()));
+        stack (groups[0], a, true);
+        if (! all) edgeDivider (0, { a.getX(), a.getBottom() - divT / 2, a.getWidth(), divT });
     }
-    // left / right columns are as wide as their widest panel - or, with nothing in the
-    // centre, the last one takes what's left
-    auto side = [&] (std::vector<Panel*>& ps, bool isRight, bool last)
+    if (! groups[3].empty())
     {
-        if (ps.empty()) return;
-        int wid = 0;
-        for (auto* p : ps) wid = juce::jmax (wid, p->prefW);
-        if (last && centre.empty()) wid = r.getWidth();
-        wid = juce::jmin (wid, r.getWidth());
-        column (ps, isRight ? r.removeFromRight (wid) : r.removeFromLeft (wid));
-    };
-    side (right, true, left.empty());
-    side (left, false, true);
-    if (! centre.empty()) column (centre, r);
+        const bool all = centreEmpty && groups[2].empty();
+        auto a = r.removeFromRight (all ? r.getWidth() : thickness (3, groups[3], r.getWidth()));
+        stack (groups[3], a, false);
+        if (! all) edgeDivider (3, { a.getX() - divT / 2, a.getY(), divT, a.getHeight() });
+    }
+    if (! groups[2].empty())
+    {
+        const bool all = centreEmpty;
+        auto a = r.removeFromLeft (all ? r.getWidth() : thickness (2, groups[2], r.getWidth()));
+        stack (groups[2], a, false);
+        if (! all) edgeDivider (2, { a.getRight() - divT / 2, a.getY(), divT, a.getHeight() });
+    }
+    if (! centreEmpty) stack (groups[4], r, false);
+
+    // the dividers: kept when they're the same ones (one may be being dragged)
+    bool same = specs.size() == (size_t) h.dividers.size();
+    for (size_t i = 0; same && i < specs.size(); ++i)
+    {
+        auto* d = h.dividers[(int) i];
+        same = d->vertical == specs[i].vertical && d->a == specs[i].a && d->b == specs[i].b && d->edge == specs[i].edge;
+    }
+    if (! same)
+    {
+        h.dividers.clear();
+        for (auto& sp : specs)
+        {
+            auto* d = h.dividers.add (new PanelHost::Divider (h, sp.vertical));
+            d->a = sp.a; d->b = sp.b; d->edge = sp.edge;
+            h.addAndMakeVisible (d);
+        }
+    }
+    for (size_t i = 0; i < specs.size(); ++i)
+    {
+        h.dividers[(int) i]->setBounds (specs[i].bounds);
+        h.dividers[(int) i]->toFront (false);
+    }
     h.repaint();
+}
+
+void LayoutManager::dividerDragged (PanelHost::Divider& d, juce::Point<int> pos, bool finished)
+{
+    auto& h = d.host;
+    if (d.edge >= 0)
+    {
+        auto& es = edgeSizes[h.windowIndex];
+        const auto b = h.getLocalBounds();
+        int v = d.edge == 0 ? pos.y - d.start : d.edge == 1 ? d.start - pos.y : d.edge == 2 ? pos.x - d.start : d.start - pos.x;
+        es[(size_t) d.edge] = juce::jlimit (40, (d.edge < 2 ? b.getHeight() : b.getWidth()) - 40, v);
+    }
+    else
+    {
+        auto* pa = placeOf (d.a);
+        auto* pb = placeOf (d.b);
+        if (pa == nullptr || pb == nullptr) return;
+        const int v = juce::jlimit (40, juce::jmax (40, d.total - 40), (d.vertical ? pos.x : pos.y) - d.start);
+        pa->size = v;
+        pb->size = d.total - v;
+    }
+    layoutHost (h);
+    if (finished) save();
+}
+
+void LayoutManager::dividerReset (PanelHost::Divider& d)
+{
+    if (d.edge >= 0) edgeSizes[d.host.windowIndex][(size_t) d.edge] = 0;
+    else
+    {
+        if (auto* pa = placeOf (d.a)) pa->size = 0;
+        if (auto* pb = placeOf (d.b)) pb->size = 0;
+    }
+    layoutHost (d.host);
+    save();
 }
 
 //==============================================================================
@@ -430,6 +585,9 @@ void LayoutManager::windowClosed (int index)
     }
     windowBounds.clear();
     for (auto& w : windows) if (w->host.windowIndex != index) windowBounds.push_back (w->getBounds());
+    std::map<int, std::array<int, 4>> shifted;
+    for (auto& [w, es] : edgeSizes) if (w != index) shifted[w > index ? w - 1 : w] = es;
+    edgeSizes = shifted;
     juce::MessageManager::callAsync ([this] { windows.clear(); apply(); save(); });
 }
 

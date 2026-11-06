@@ -2,6 +2,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "HawthorneLookAndFeel.h"
+#include <map>
+#include <array>
 
 namespace hawthorne
 {
@@ -77,6 +79,29 @@ public:
     LayoutManager& manager;
     int windowIndex;                      // 0 = the main window
     juce::Rectangle<int> dropZone;        // while dragging a panel over this window
+
+    /** A divider between panels (or between an edge's panels and the rest): drag to resize,
+        double-click to go back to the automatic size. */
+    struct Divider : juce::Component
+    {
+        PanelHost& host;
+        bool vertical;                    // a vertical line: drag left / right
+        juce::String a, b;                // between panels a and b (same stack) ...
+        int edge = -1;                    // ... or the edge group's inner side (0 top, 1 bottom, 2 left, 3 right)
+        int start = 0, total = 0;         // (the drag)
+        Divider (PanelHost& h, bool v) : host (h), vertical (v)
+        {
+            setMouseCursor (v ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::UpDownResizeCursor);
+            setAlwaysOnTop (true);
+            setRepaintsOnMouseActivity (true);
+        }
+        void paint (juce::Graphics&) override;
+        void mouseDown (const juce::MouseEvent&) override;
+        void mouseDrag (const juce::MouseEvent&) override;
+        void mouseUp (const juce::MouseEvent&) override;
+        void mouseDoubleClick (const juce::MouseEvent&) override;
+    };
+    juce::OwnedArray<Divider> dividers;
 };
 
 //==============================================================================
@@ -119,9 +144,12 @@ public:
     void dragPanel (Panel&, juce::Point<int> screenPos, bool finished);
     void windowClosed (int index);
     void windowMoved();
+    void dividerDragged (PanelHost::Divider&, juce::Point<int> hostPos, bool finished);
+    void dividerReset (PanelHost::Divider&);
 
 private:
-    struct Place { juce::String panel; int window = 0; Edge edge = Edge::centre; };
+    struct Place { juce::String panel; int window = 0; Edge edge = Edge::centre; int size = 0; };   // size: along its stack (0 = automatic)
+    std::map<int, std::array<int, 4>> edgeSizes;      // per window: thickness of the top / bottom / left / right groups (0 = automatic)
     struct Floating;
 
     Panel* find (const juce::String& id) const;

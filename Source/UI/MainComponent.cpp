@@ -2873,12 +2873,14 @@ void MainComponent::layoutTransport()
 {
     // Compact transport deck
     deckArea = transportPanel.getLocalBounds();
-    deckBand = deckArea.withSizeKeepingCentre (deckArea.getWidth(), juce::jmin (deckArea.getHeight(), 96));
+    // (grows with the panel - a bigger counter and keys - up to about twice its normal height)
+    deckBand = deckArea.withSizeKeepingCentre (deckArea.getWidth(), juce::jmin (deckArea.getHeight(), 200));
     {
         auto d = deckBand.reduced (14, 9);
 
         const bool compact = deckArea.getWidth() < 1700;
-        counterArea = d.removeFromLeft (compact ? 250 : 300).reduced (0, 2);
+        const float grow = juce::jlimit (1.0f, 2.0f, (float) deckBand.getHeight() / 96.0f);
+        counterArea = d.removeFromLeft ((int) ((compact ? 250.0f : 300.0f) * grow)).reduced (0, 2);
         d.removeFromLeft (8);
 
         // tempo (top) and sync (bottom), right by the clock
@@ -2906,6 +2908,7 @@ void MainComponent::layoutTransport()
 
         // Speed: IPS switch, VARI, varispeed knob and readout
         auto sp = d.removeFromLeft (compact ? 320 : 370);
+        sp = sp.withSizeKeepingCentre (sp.getWidth(), juce::jmin (sp.getHeight(), 78));
         speedLabelArea = sp.removeFromTop (14);
         variKnob.setBounds (sp.removeFromRight (52).withSizeKeepingCentre (52, 52));
         sp.removeFromRight (6);
@@ -2937,7 +2940,7 @@ void MainComponent::layoutMaster()
     {
         auto ms = masterPanel.getLocalBounds();
         masterPanelArea = ms;
-        ms = ms.withSizeKeepingCentre (juce::jmin (ms.getWidth(), 460), juce::jmin (ms.getHeight(), 340));
+        ms = ms.withSizeKeepingCentre (juce::jmin (ms.getWidth(), 1000), juce::jmin (ms.getHeight(), 700));
         ms = ms.reduced (12, 8).withTrimmedLeft (1);
         masterLabelArea = ms.removeFromTop (18);
         ms.removeFromTop (4);
