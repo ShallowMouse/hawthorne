@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(Hawthorne VERSION 1.31.1)
+project(Hawthorne VERSION 1.31.2)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -43,6 +43,7 @@ if(HAWTHORNE_BUILD_APP)
 
     juce_add_gui_app(Hawthorne
         ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/hawthorne-logo.png"
+        ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/Resources/hawthorne-logo-small.png"
         PRODUCT_NAME "Hawthorne"
         COMPANY_NAME "Hawthorne"
         BUNDLE_ID "com.hawthorne.recorder"
@@ -110,6 +111,7 @@ if(HAWTHORNE_BUILD_APP)
     # Hawthorne Link: runs on the other PC and streams its inputs to Hawthorne.
     juce_add_gui_app(HawthorneLink
         ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/hawthorne-logo.png"
+        ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/Resources/hawthorne-logo-small.png"
         PRODUCT_NAME "Hawthorne Link"
         COMPANY_NAME "Hawthorne"
         BUNDLE_ID "com.hawthorne.link"
