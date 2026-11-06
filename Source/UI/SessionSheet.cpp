@@ -919,7 +919,8 @@ SessionSheetWindow::SessionSheetWindow (std::function<Reel*()> gr, std::function
     : juce::DocumentWindow ("Hawthorne - Session Sheet", Colours::panel, juce::DocumentWindow::closeButton),
       sheet (std::move (gr), std::move (gs))
 {
-    setUsingNativeTitleBar (true);
+    setUsingNativeTitleBar (false);
+        setTitleBarHeight (30);
     setContentNonOwned (&sheet, false);
     setResizable (true, false);
     setResizeLimits (700, 500, 4000, 3000);

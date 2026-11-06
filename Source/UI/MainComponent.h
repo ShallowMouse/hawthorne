@@ -249,6 +249,13 @@ private:
     TempoBox tempoBox;
     juce::TextButton syncSourceButton;
     juce::TextButton fullScreenButton { "FULL SCREEN" };
+    WindowButton winMinButton { WindowButton::minimise }, winMaxButton { WindowButton::maximise }, winCloseButton { WindowButton::close };
+    juce::ComponentDragger windowDragger;
+    bool draggingWindow = false;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+    void toggleMaximised();
 
     TransportKey ips7Key  { juce::String (juce::CharPointer_UTF8 ("7\xc2\xbd")), juce::String (juce::CharPointer_UTF8 ("Deck speed 7\xc2\xbd ips")), Colours::mustard },
                  ips15Key { "15",   "Deck speed 15 ips",  Colours::mustard },

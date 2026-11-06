@@ -184,16 +184,17 @@ th { background:#ece2c8; font:700 13px "Courier New", monospace; }
 
 <p><b>No machine (bit-perfect)</b> is in both columns too: with it, nothing is added on playback or recording &mdash; no saturation, EQ, hiss or wow &mdash; whatever tape the reel is on. The machine room lists the machines oldest first.</p>
 
-<h2 id="layout">Layout (panels, windows, second screens)</h2>
-<p>The deck is made of panels: <b>Meters</b>, <b>Transport</b>, <b>Master</b>, <b>Autolocator</b> and <b>Markers</b>. Each can sit in the main window or in any number of extra windows &mdash; docked at the top, bottom, left, right or in the centre &mdash; or be hidden. <b>LAYOUT</b> in the header:</p>
+<h2 id="layout">Layout (a grid of panels, windows, second screens)</h2>
+<p>The deck is made of panels: <b>Meters</b>, <b>Transport</b>, <b>Master</b>, <b>Autolocator</b> and <b>Markers</b>. Every window is a grid of 12 &times; 8 cells, and each panel covers a block of cells &mdash; in the main window or in any number of extra windows &mdash; or is hidden. <b>LAYOUT</b> in the header:</p>
 <ul>
-  <li><b>Edit layout</b>: every panel shows its name; drag it into any window &mdash; near an edge to dock it there, the middle for the centre, or outside every window for a new window. Right-click a panel for dock / move / hide. Press <b>DONE</b> when finished.</li>
-  <li><b>New window</b>: an empty window to drag panels into (e.g. the meters on a second screen). Close a window and its panels come back to the main window. <b>F11</b> makes any window full screen.</li>
-  <li><b>Sizes</b>: drag the line between two panels (or between an edge's panels and the rest) to resize them &mdash; e.g. a big counter, a tall markers list. Double-click a line to go back to the automatic size. The transport grows to about twice its height (bigger counter and keys).</li>
+  <li><b>Edit layout</b>: the grid shows. Drag a panel to move it (into another window too, or outside every window for a new one); drag its corner to change how many cells it covers. Green = it fits; red = it doesn't (over another panel, too small for it to work, or far bigger than it needs) and nothing changes. Right-click a panel to move it to another window or hide it. Press <b>DONE</b> when finished.</li>
+  <li><b>New window</b>: an empty window to put panels in (e.g. the meters on a second screen). Its maximise button (or <b>F11</b>) makes it full screen on the monitor it's on, with no title bar; <b>Esc</b> / F11 or a right-click on an empty cell to leave. Each window remembers its place and full screen. Close a window and its panels go back to the main window where they fit.</li>
   <li><b>Show</b>: tick panels on or off.</li>
   <li><b>Meters per row</b>: 8, 12, 16, 24 or <b>Fit</b> (as big as they can be with every track showing, no scrolling).</li>
   <li><b>Save layout as / Load layout / Delete layout / Reset to default</b>: named layouts, e.g. "Tracking - 2 screens" or "Laptop".</li>
 </ul>
+<p>Windows can't be made smaller than their panels work at; if a screen is smaller still, panels scale down rather than break. The transport grows with its cells (bigger counter and keys).</p>
+<p><b>Window buttons</b>: Hawthorne draws its own title bars. In the main window, minimise / maximise / close sit right of FULL SCREEN; drag the header to move the window, double-click it to maximise or restore.</p>
 <p>The layout is yours, not the reel's: it stays the same whichever reel is loaded. Transport keys (space, R, M...) work from any window.</p>
 
 <h2 id="nr">Noise reduction (Dolby A, Dolby SR, dbx)</h2>

@@ -75,7 +75,8 @@ public:
                                 Colours::panel, juce::DocumentWindow::closeButton),
           panel (page, e, std::move (gr), std::move (gs))
     {
-        setUsingNativeTitleBar (true);
+        setUsingNativeTitleBar (false);
+        setTitleBarHeight (30);
         setContentNonOwned (&panel, false);
         setResizable (false, false);
         centreWithSize (760, page == SyncPanel::Page::tempo ? 280 : 320);

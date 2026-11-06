@@ -56,7 +56,8 @@ public:
         : juce::DocumentWindow ("Hawthorne - Network (Hawthorne Link)", Colours::panel, juce::DocumentWindow::closeButton),
           panel (rx)
     {
-        setUsingNativeTitleBar (true);
+        setUsingNativeTitleBar (false);
+        setTitleBarHeight (30);
         setContentNonOwned (&panel, false);
         setResizable (true, false);
         setResizeLimits (700, 420, 2000, 1400);

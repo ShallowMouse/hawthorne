@@ -12,14 +12,16 @@ public:
     explicit MainWindow (juce::ApplicationProperties& props)
         : juce::DocumentWindow ("Hawthorne", hawthorne::Colours::bg, juce::DocumentWindow::allButtons)
     {
-        setUsingNativeTitleBar (true);
+        // no standard title bar: Hawthorne's header has the window buttons (and drags the window)
+        setUsingNativeTitleBar (false);
+        setTitleBarHeight (0);
         content = new hawthorne::MainComponent (props);
         setContentOwned (content, true);
         setResizable (true, true);
         setResizeLimits (1340, 600, 10000, 10000);
         centreWithSize (getWidth(), getHeight());
         setVisible (true);
-        setFullScreen (true);          // with the native title bar this is "maximised"
+        setFullScreen (true);          // "maximised": the whole screen above the taskbar
         content->grabKeyboardFocus();
 
         // Windows can hand a program started by an installer or the updater a

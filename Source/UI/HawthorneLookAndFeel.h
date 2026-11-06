@@ -34,6 +34,67 @@ inline juce::Font uiFont (float size, bool bold = false)
 }
 
 //==============================================================================
+//==============================================================================
+/** Hawthorne's own window buttons (minimise / maximise / close), used in place of the
+    standard Windows title bar: in the main window's header and on the other windows. */
+class WindowButton : public juce::Button
+{
+public:
+    enum Kind { minimise, maximise, close };
+    explicit WindowButton (Kind k)
+        : juce::Button (k == minimise ? "minimise" : k == maximise ? "maximise" : "close"), kind (k)
+    {
+        setWantsKeyboardFocus (false);
+        setTooltip (k == minimise ? "Minimise" : k == maximise ? "Maximise / restore" : "Close");
+    }
+    /** For the main window's header: what "maximised" means there (else the parent window's). */
+    std::function<bool()> isMaximised;
+
+    void paintButton (juce::Graphics& g, bool over, bool down) override
+    {
+        auto r = getLocalBounds().toFloat();
+        if (over || down)
+        {
+            g.setColour (kind == close ? juce::Colour (0xffc42b1c).withAlpha (down ? 0.75f : 1.0f)
+                                       : Colours::panelLight.brighter (down ? 0.05f : 0.2f));
+            g.fillRoundedRectangle (r.reduced (1.0f), 3.0f);
+        }
+        g.setColour (over && kind == close ? juce::Colours::white : Colours::text);
+        const float s = juce::jmin (r.getWidth(), r.getHeight()) * 0.32f;
+        auto c = r.getCentre();
+        if (kind == minimise)
+            g.fillRect (juce::Rectangle<float> (s * 2.0f, 1.5f).withCentre (c.translated (0.0f, s * 0.6f)));
+        else if (kind == close)
+        {
+            g.drawLine (c.x - s, c.y - s, c.x + s, c.y + s, 1.6f);
+            g.drawLine (c.x - s, c.y + s, c.x + s, c.y - s, 1.6f);
+        }
+        else
+        {
+            bool maxed = false;
+            if (isMaximised) maxed = isMaximised();
+            else if (auto* w = findParentComponentOfClass<juce::ResizableWindow>()) maxed = w->isFullScreen();
+            auto box = juce::Rectangle<float> (s * 2.0f, s * 2.0f).withCentre (c);
+            if (maxed)
+            {
+                // restore: two overlapping frames
+                auto back = box.reduced (s * 0.15f).translated (s * 0.3f, -s * 0.3f);
+                auto front = box.reduced (s * 0.15f).translated (-s * 0.15f, s * 0.15f);
+                g.drawRect (back, 1.3f);
+                g.setColour (over ? Colours::panelLight.brighter (0.2f) : Colours::panel);
+                g.fillRect (front);
+                g.setColour (Colours::text);
+                g.drawRect (front, 1.3f);
+            }
+            else
+                g.drawRect (box, 1.3f);
+        }
+    }
+
+private:
+    Kind kind;
+};
+
 class HawthorneLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
@@ -171,6 +232,46 @@ public:
         label.setBounds (box.getLocalBounds().reduced (2, 1));
         label.setFont (getComboBoxFont (box));
         label.setJustificationType (juce::Justification::centred);
+    }
+
+    //--------------------------------------------------------------------------
+    // Windows: Hawthorne's own title bar (instead of the standard one)
+    void drawDocumentWindowTitleBar (juce::DocumentWindow& w, juce::Graphics& g, int width, int height,
+                                     int titleSpaceX, int titleSpaceW, const juce::Image*, bool) override
+    {
+        g.setColour (Colours::panel);
+        g.fillRect (0, 0, width, height);
+        g.setColour (Colours::edge);
+        g.drawHorizontalLine (height - 1, 0.0f, (float) width);
+        drawLogoMark (g, juce::Rectangle<float> (8.0f, 3.0f, (float) height * 1.6f, (float) height - 6.0f));
+        g.setColour (w.isActiveWindow() ? Colours::mustard : Colours::textDim);
+        g.setFont (monoFont (juce::jmin (14.0f, (float) height * 0.55f), true));
+        const int x = juce::jmax (titleSpaceX, (int) ((float) height * 1.6f) + 16);
+        g.drawText (w.getName().toUpperCase(), x, 0, juce::jmax (0, titleSpaceW - (x - titleSpaceX)), height, juce::Justification::centredLeft, true);
+    }
+
+    juce::Button* createDocumentWindowButton (int type) override
+    {
+        if (type == juce::DocumentWindow::closeButton)    return new WindowButton (WindowButton::close);
+        if (type == juce::DocumentWindow::minimiseButton) return new WindowButton (WindowButton::minimise);
+        if (type == juce::DocumentWindow::maximiseButton) return new WindowButton (WindowButton::maximise);
+        return LookAndFeel_V4::createDocumentWindowButton (type);
+    }
+
+    void positionDocumentWindowButtons (juce::DocumentWindow&, int titleBarX, int titleBarY, int titleBarW, int titleBarH,
+                                        juce::Button* minimiseButton, juce::Button* maximiseButton, juce::Button* closeButton,
+                                        bool) override
+    {
+        const int bw = (int) ((float) titleBarH * 1.5f);
+        int x = titleBarX + titleBarW - bw;
+        for (auto* b : { closeButton, maximiseButton, minimiseButton })
+            if (b != nullptr) { b->setBounds (x, titleBarY, bw, titleBarH); x -= bw; }
+    }
+
+    void drawResizableWindowBorder (juce::Graphics& g, int w, int h, const juce::BorderSize<int>& border, juce::ResizableWindow&) override
+    {
+        g.setColour (Colours::edge);
+        g.drawRect (0, 0, w, h, juce::jmax (1, border.getTop()));
     }
 };
 

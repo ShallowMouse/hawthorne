@@ -2,25 +2,23 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "HawthorneLookAndFeel.h"
-#include <map>
-#include <array>
 
 namespace hawthorne
 {
 
 //==============================================================================
 /**
-    Hawthorne's flexible layout. The UI is split into panels (meters, transport, master,
-    autolocator, markers). Each one is docked in the main window or in any number of
-    extra windows - at the top, bottom, left, right or centre - or hidden. Panels on the
-    same edge stack (side by side on the top / bottom, one above the other on the left /
-    right). Layouts are global, with named presets.
+    Hawthorne's layout: a grid in every window. The UI is split into panels (meters,
+    transport, master, autolocator, markers); each one covers a block of grid cells in the
+    main window or in any number of extra windows, or is hidden. Layouts are global, with
+    named presets.
 
-    LAYOUT -> Edit layout: drag a panel by its overlay into any window (near an edge to
-    dock it there, the middle for the centre, outside every window for a new one).
+    LAYOUT -> Edit layout: the grid shows; drag a panel to move it (into any window, or out
+    of every window for a new one), drag its corner to change how many cells it covers. A
+    panel only goes where it fits: never over another, never smaller than it can work at or
+    bigger than makes sense. Windows can't be made too small for what's in them, and if a
+    screen is still too small, a panel scales down rather than breaking.
 */
-enum class Edge { top, bottom, left, right, centre };
-
 class LayoutManager;
 
 //==============================================================================
@@ -32,12 +30,8 @@ public:
 
     const juce::String id, title;
 
-    // Natural size: on the top / bottom a panel gets prefH tall (the row is as tall as its
-    // tallest), on the left / right prefW wide. fixedW / fixedH: keep that size in a row /
-    // column instead of sharing the space.
-    int prefW = 300, prefH = 200;
-    bool fixedW = false, fixedH = false;
-    bool sideOK = true;                  // can it go on the left / right (narrow)?
+    // Sizes it works at, in pixels (0 = no maximum)
+    int minW = 200, minH = 100, maxW = 0, maxH = 0;
 
     std::function<void (juce::Graphics&)> onPaint;
     std::function<void()> onLayout;
@@ -57,51 +51,40 @@ private:
         Panel& panel;
         explicit Overlay (Panel& p) : panel (p) {}
         void paint (juce::Graphics&) override;
+        void mouseMove (const juce::MouseEvent&) override;
         void mouseDown (const juce::MouseEvent&) override;
         void mouseDrag (const juce::MouseEvent&) override;
         void mouseUp (const juce::MouseEvent&) override;
-        bool dragging = false;
+        bool overCorner (juce::Point<int>) const;
+        bool dragging = false, resizing = false;
+        juce::Point<int> grabCell;           // which of the panel's cells it was picked up by
     };
     Overlay overlay { *this };
     LayoutManager* manager = nullptr;
 };
 
 //==============================================================================
-/** Where the panels go in one window. */
+/** One window's grid. */
 class PanelHost : public juce::Component
 {
 public:
+    static constexpr int cols = 12, rows = 8;
+
     PanelHost (LayoutManager& m, int index) : manager (m), windowIndex (index) {}
     void resized() override;
     void paint (juce::Graphics&) override;
     void paintOverChildren (juce::Graphics&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+
+    juce::Rectangle<int> cellArea (juce::Rectangle<int> cells) const;    // cells -> pixels
+    juce::Point<int> cellAt (juce::Point<int> local) const;              // pixels -> cell (clamped)
+    float cellW() const { return (float) getWidth() / (float) cols; }
+    float cellH() const { return (float) getHeight() / (float) rows; }
 
     LayoutManager& manager;
     int windowIndex;                      // 0 = the main window
-    juce::Rectangle<int> dropZone;        // while dragging a panel over this window
-
-    /** A divider between panels (or between an edge's panels and the rest): drag to resize,
-        double-click to go back to the automatic size. */
-    struct Divider : juce::Component
-    {
-        PanelHost& host;
-        bool vertical;                    // a vertical line: drag left / right
-        juce::String a, b;                // between panels a and b (same stack) ...
-        int edge = -1;                    // ... or the edge group's inner side (0 top, 1 bottom, 2 left, 3 right)
-        int start = 0, total = 0;         // (the drag)
-        Divider (PanelHost& h, bool v) : host (h), vertical (v)
-        {
-            setMouseCursor (v ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::UpDownResizeCursor);
-            setAlwaysOnTop (true);
-            setRepaintsOnMouseActivity (true);
-        }
-        void paint (juce::Graphics&) override;
-        void mouseDown (const juce::MouseEvent&) override;
-        void mouseDrag (const juce::MouseEvent&) override;
-        void mouseUp (const juce::MouseEvent&) override;
-        void mouseDoubleClick (const juce::MouseEvent&) override;
-    };
-    juce::OwnedArray<Divider> dividers;
+    juce::Rectangle<int> target;          // while dragging: the cells it would go to
+    bool targetOK = false;
 };
 
 //==============================================================================
@@ -111,7 +94,8 @@ public:
     explicit LayoutManager (juce::ApplicationProperties&);
     ~LayoutManager();
 
-    void addPanel (Panel&, int defaultWindow, Edge defaultEdge);
+    /** cells: where it goes in the main window by default. */
+    void addPanel (Panel&, juce::Rectangle<int> defaultCells);
     PanelHost& mainHost() { return main; }
 
     /** Load the saved layout (or the default) and put everything in place. */
@@ -129,11 +113,15 @@ public:
     void setEditing (bool);
     bool isShown (const Panel&) const;
     void setShown (Panel&, bool);
-    void move (Panel&, int window, Edge);
     int  newWindow (juce::Point<int> screenPos = {});
     int  numWindows() const { return (int) windows.size() + 1; }
     void showPanelMenu (Panel&);
+    void showWindowMenu (int window);
     void setFloatingVisible (bool);       // (hidden while the library is up)
+    void toggleWindowFullScreen (int window);
+
+    /** The smallest the main window's grid can be for what's in it (so nothing gets cramped). */
+    juce::Point<int> minimumHostSize (int window) const;
 
     std::function<bool (const juce::KeyPress&)> onKey;     // keys pressed in other windows
     std::function<void()> onChanged;
@@ -141,34 +129,37 @@ public:
     //--------------------------------------------------------------------------
     // (used by PanelHost / Panel)
     void layoutHost (PanelHost&);
-    void dragPanel (Panel&, juce::Point<int> screenPos, bool finished);
+    void dragPanel (Panel&, juce::Point<int> screenPos, juce::Point<int> grabCell, bool finished);
+    void resizePanel (Panel&, juce::Point<int> screenPos, bool finished);
     void windowClosed (int index);
     void windowMoved();
-    void dividerDragged (PanelHost::Divider&, juce::Point<int> hostPos, bool finished);
-    void dividerReset (PanelHost::Divider&);
 
 private:
-    struct Place { juce::String panel; int window = 0; Edge edge = Edge::centre; int size = 0; };   // size: along its stack (0 = automatic)
-    std::map<int, std::array<int, 4>> edgeSizes;      // per window: thickness of the top / bottom / left / right groups (0 = automatic)
+    struct Place { juce::String panel; int window = 0; juce::Rectangle<int> cells; };
     struct Floating;
 
     Panel* find (const juce::String& id) const;
     Place* placeOf (const juce::String& id);
     PanelHost* host (int window);
+    const PanelHost* host (int window) const;
+    bool fits (const Panel&, int window, juce::Rectangle<int> cells, const Place* ignore) const;
+    bool findSpot (const Panel&, int window, juce::Rectangle<int>& cells) const;
+    void clearTargets();
     void apply();
     void save();
     std::unique_ptr<juce::XmlElement> toXml() const;
     void fromXml (const juce::XmlElement&);
     void defaults();
-    void dropTarget (juce::Point<int> screenPos, int& window, Edge& edge, juce::Rectangle<int>& zone);
+    void updateLimits();
 
     juce::ApplicationProperties& props;
     PanelHost main { *this, 0 };
     juce::Array<Panel*> panels;
     std::vector<Place> defaultPlaces;
-    std::vector<Place> places;                   // only shown panels, in stacking order
+    std::vector<Place> places;                   // only shown panels
     std::vector<std::unique_ptr<Floating>> windows;
-    std::vector<juce::Rectangle<int>> windowBounds;
+    struct WindowState { juce::Rectangle<int> bounds; bool full = false; };
+    std::vector<WindowState> windowStates;
     bool editing = false, floatingVisible = true, applying = false;
 };
 

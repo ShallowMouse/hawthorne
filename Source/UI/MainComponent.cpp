@@ -384,6 +384,15 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     fullScreenButton.setTooltip ("Full screen (F11)");
     fullScreenButton.setWantsKeyboardFocus (false);
     addAndMakeVisible (fullScreenButton);
+    for (auto* b : { &winMinButton, &winMaxButton, &winCloseButton }) addAndMakeVisible (b);
+    winMinButton.onClick = [this] { if (auto* w = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent())) w->setMinimised (true); };
+    winMaxButton.onClick = [this] { toggleMaximised(); };
+    winMaxButton.isMaximised = [this]
+    {
+        auto* w = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent());
+        return w != nullptr && (w->isFullScreen() || juce::Desktop::getInstance().getKioskModeComponent() == w);
+    };
+    winCloseButton.onClick = [] { juce::JUCEApplication::getInstance()->systemRequestedQuit(); };
     networkButton.setTooltip ("Hawthorne Link: record audio sent from other PCs");
     audioButton.onClick   = [this] { showAudioSettings(); };
 
@@ -1933,7 +1942,52 @@ void MainComponent::showCounterMenu()
 }
 
 void MainComponent::mouseMove (const juce::MouseEvent&) {}
-void MainComponent::mouseUp (const juce::MouseEvent&) {}
+void MainComponent::mouseUp (const juce::MouseEvent&) { draggingWindow = false; }
+
+// The header is the title bar: drag it to move the window, double-click to maximise / restore
+void MainComponent::mouseDown (const juce::MouseEvent& e)
+{
+    draggingWindow = false;
+    auto* w = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent());
+    if (w == nullptr || ! headerArea.contains (e.getPosition()) || e.mods.isPopupMenu()
+         || juce::Desktop::getInstance().getKioskModeComponent() == w) return;
+    draggingWindow = true;
+    windowDragger.startDraggingComponent (w, e.getEventRelativeTo (w));
+}
+
+void MainComponent::mouseDrag (const juce::MouseEvent& e)
+{
+    auto* w = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent());
+    if (! draggingWindow || w == nullptr || e.getDistanceFromDragStart() < 4) return;
+    if (w->isFullScreen())
+    {
+        // dragging a maximised window: restore it under the mouse, then carry on
+        const auto screen = e.getScreenPosition();
+        const float fx = (float) e.getMouseDownX() / (float) juce::jmax (1, getWidth());
+        w->setFullScreen (false);
+        auto b = w->getBounds();
+        if (b.getWidth() >= w->getParentMonitorArea().getWidth() - 20)
+            b = b.withSizeKeepingCentre (b.getWidth() * 3 / 4, b.getHeight() * 3 / 4);
+        b.setPosition (screen.x - (int) (fx * (float) b.getWidth()), screen.y - e.getMouseDownY());
+        w->setBounds (b);
+        windowDragger.startDraggingComponent (w, e.getEventRelativeTo (w));
+    }
+    windowDragger.dragComponent (w, e.getEventRelativeTo (w), nullptr);
+}
+
+void MainComponent::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    if (headerArea.contains (e.getPosition())) toggleMaximised();
+}
+
+void MainComponent::toggleMaximised()
+{
+    auto* w = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent());
+    if (w == nullptr) return;
+    if (juce::Desktop::getInstance().getKioskModeComponent() == w) { toggleFullScreen(); return; }
+    w->setFullScreen (! w->isFullScreen());
+    winMaxButton.repaint();
+}
 
 void MainComponent::transportMouseMove (const juce::MouseEvent& e)
 {
@@ -1971,8 +2025,7 @@ void MainComponent::setupPanels()
                                 (juce::Component*) &variKnob, (juce::Component*) &variPctLabel, (juce::Component*) &variStLabel,
                                 (juce::Component*) &stDownButton, (juce::Component*) &stUpButton, (juce::Component*) &variResetButton })
         transportPanel.addAndMakeVisible (c);
-    transportPanel.prefH = 96;
-    transportPanel.sideOK = false;
+    transportPanel.minW = 1240; transportPanel.minH = 86; transportPanel.maxH = 220;
     transportPanel.onPaint  = [this] (juce::Graphics& g) { paintTransport (g); };
     transportPanel.onLayout = [this] { layoutTransport(); };
     transportPanel.onMouseMove = [this] (const juce::MouseEvent& e) { transportMouseMove (e); };
@@ -1982,8 +2035,7 @@ void MainComponent::setupPanels()
     for (juce::Component* c : { (juce::Component*) &masterL, (juce::Component*) &masterR, (juce::Component*) &masterButton,
                                 (juce::Component*) &masterArmKey, (juce::Component*) &monitorKey })
         masterPanel.addAndMakeVisible (c);
-    masterPanel.prefW = 300; masterPanel.prefH = 204;
-    masterPanel.fixedW = masterPanel.fixedH = true;
+    masterPanel.minW = 260; masterPanel.minH = 190; masterPanel.maxW = 1000; masterPanel.maxH = 700;
     masterPanel.onPaint  = [this] (juce::Graphics& g) { paintMaster (g); };
     masterPanel.onLayout = [this] { layoutMaster(); };
     masterPanel.onMouseMove = [this] (const juce::MouseEvent& e)
@@ -1999,31 +2051,39 @@ void MainComponent::setupPanels()
     for (juce::Component* c : { (juce::Component*) &inKey, (juce::Component*) &outKey, (juce::Component*) &autoKey,
                                 (juce::Component*) &rehKey, (juce::Component*) &loopKey })
         locatorPanel.addAndMakeVisible (c);
-    locatorPanel.prefW = 300; locatorPanel.prefH = 94;
-    locatorPanel.fixedW = locatorPanel.fixedH = true;
+    locatorPanel.minW = 260; locatorPanel.minH = 90; locatorPanel.maxW = 700; locatorPanel.maxH = 200;
     locatorPanel.onPaint  = [this] (juce::Graphics& g) { paintLocator (g); };
     locatorPanel.onLayout = [this] { layoutLocator(); };
 
     // markers
     markersPanel.addAndMakeVisible (markers);
-    markersPanel.prefW = 300; markersPanel.prefH = 200;
-    markersPanel.fixedW = true;
+    markersPanel.minW = 220; markersPanel.minH = 150;
     markersPanel.onLayout = [this] { markers.setBounds (markersPanel.getLocalBounds()); };
 
     // the meter bridge
     bridgePanel.addAndMakeVisible (bridgeView);
-    bridgePanel.prefW = 600; bridgePanel.prefH = 400;
+    bridgePanel.minW = 400; bridgePanel.minH = 250;
     bridgePanel.onLayout = [this] { layoutBridgePanel(); };
     bridgePanel.onMouseUp = [this] (const juce::MouseEvent& e) { if (e.mods.isPopupMenu()) showLayoutMenu(); };
 
-    layout.addPanel (bridgePanel, 0, Edge::centre);
-    layout.addPanel (transportPanel, 0, Edge::bottom);
-    layout.addPanel (masterPanel, 0, Edge::right);
-    layout.addPanel (locatorPanel, 0, Edge::right);
-    layout.addPanel (markersPanel, 0, Edge::right);
+    // the default: a 12 x 8 grid in the main window
+    layout.addPanel (bridgePanel,    { 0, 0, 10, 7 });
+    layout.addPanel (masterPanel,    { 10, 0, 2, 2 });
+    layout.addPanel (locatorPanel,   { 10, 2, 2, 1 });
+    layout.addPanel (markersPanel,   { 10, 3, 2, 4 });
+    layout.addPanel (transportPanel, { 0, 7, 12, 1 });
     layout.onKey = [this] (const juce::KeyPress& k) { return keyPressed (k); };
     layout.onChanged = [this]
     {
+        // the main window can't be made smaller than its panels work at (up to the screen's size)
+        if (auto* w = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent()))
+        {
+            const auto m = layout.minimumHostSize (0);
+            const auto* d = juce::Desktop::getInstance().getDisplays().getDisplayForRect (w->getScreenBounds());
+            const auto screen = d != nullptr ? d->userArea : juce::Rectangle<int> (0, 0, 1920, 1080);
+            w->setResizeLimits (juce::jlimit (1000, juce::jmax (1000, screen.getWidth()), m.x),
+                                juce::jlimit (500, juce::jmax (500, screen.getHeight()), m.y + 72), 20000, 20000);
+        }
         layoutButton.setButtonText (layout.isEditing() ? "DONE" : "LAYOUT");
         layoutButton.setColour (juce::TextButton::buttonColourId, layout.isEditing() ? Colours::mustard : Colours::panelLight);
         layoutButton.setColour (juce::TextButton::textColourOffId, layout.isEditing() ? juce::Colours::black : Colours::text);
@@ -2039,7 +2099,7 @@ void MainComponent::setupPanels()
 void MainComponent::showLayoutMenu()
 {
     juce::PopupMenu m;
-    m.addItem (1, "Edit layout (drag panels between windows)...");
+    m.addItem (1, "Edit layout (move / resize panels on the grid)...");
     m.addItem (2, "New window");
     m.addSeparator();
     m.addSectionHeader ("SHOW");
@@ -2598,7 +2658,8 @@ void MainComponent::paint (juce::Graphics& g)
     g.drawText ("H A W T H O R N E", headerArea.withTrimmedLeft (70).withWidth (280), juce::Justification::centredLeft);
 
     const int firstButtonX = updateButton.isVisible() ? updateButton.getX() : libraryButton.getX();
-    auto sessionArea = headerArea.withTrimmedLeft (360).withRight (firstButtonX - 16);
+    auto sessionArea = headerArea.withTrimmedLeft (360).withRight (firstButtonX - 16).reduced (0, 6);
+    auto infoLine = sessionArea.removeFromBottom (14);
     g.setFont (monoFont (14.0f, true));
     g.setColour (Colours::text);
     g.drawText (reel != nullptr ? (session != nullptr ? session->getName() + "  -  " : juce::String()) + reel->getName()
@@ -2609,7 +2670,7 @@ void MainComponent::paint (juce::Graphics& g)
     g.drawText ((reel != nullptr ? juce::String (reel->flipped ? "FLIPPED  " : "") + tape::multitrackMachine (reel->machine).label + "  "
                                      + tape::info ((tape::Stock) reel->tapeStock).label + "  " : juce::String())
                   + juce::String (reel != nullptr ? reel->numTracks : 0) + "-TRACK  v" HAWTHORNE_VERSION,
-                sessionArea, juce::Justification::centredRight);
+                infoLine, juce::Justification::centredLeft, true);
 
     // Status bar
     g.setColour (Colours::black);
@@ -2833,6 +2894,13 @@ void MainComponent::resized()
     headerArea = r.removeFromTop (48);
     {
         auto h = headerArea.reduced (12, 9);
+        // window buttons, then FULL SCREEN
+        for (auto* b : { &winCloseButton, &winMaxButton, &winMinButton })
+        {
+            b->setBounds (h.removeFromRight (40).expanded (0, 4));
+            h.removeFromRight (2);
+        }
+        h.removeFromRight (12);
         fullScreenButton.setBounds (h.removeFromRight (150));
         h.removeFromRight (8);
         helpButton.setBounds (h.removeFromRight (40));

@@ -564,7 +564,8 @@ RoutingWindow::RoutingWindow (TapeEngine& e, std::function<Reel*()> gs)
     : juce::DocumentWindow ("Hawthorne - Routing", Colours::panel, juce::DocumentWindow::closeButton),
       content (e, gs)
 {
-    setUsingNativeTitleBar (true);
+    setUsingNativeTitleBar (false);
+        setTitleBarHeight (30);
     matrix = new RoutingMatrix (e, std::move (gs));
     content.viewport.setViewedComponent (matrix, true);
     content.latency.onPatched = [this] { matrix->repaint(); };
