@@ -26,6 +26,12 @@ void TransportKey::paintButton (juce::Graphics& g, bool highlighted, bool down)
     const auto label = getButtonText();
     auto text = [&] (juce::Colour c, juce::Rectangle<float> area, float size = 13.0f)
     {
+        if (icon != Icon::none)
+        {
+            const float sz = juce::jmin (area.getWidth() * 0.62f, area.getHeight() * 0.62f, 34.0f);
+            drawIcon (g, icon, area.withSizeKeepingCentre (sz, sz), c);
+            return;
+        }
         g.setColour (c);
         g.setFont (uiFont (size, true));
         g.drawText (label, area, juce::Justification::centred);
@@ -399,6 +405,13 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
 
     for (auto* k : { &rtzKey, &rewKey, &ffwKey, &liftKey, &stopKey, &playKey, &recKey, &markKey, &clickKey })
         addAndMakeVisible (k);
+    // icons in place of the words (the words stay as tooltips)
+    rtzKey.setIcon (Icon::rtz);   rewKey.setIcon (Icon::rew);   ffwKey.setIcon (Icon::ffw);   liftKey.setIcon (Icon::cue);
+    stopKey.setIcon (Icon::stop); playKey.setIcon (Icon::play); recKey.setIcon (Icon::rec);   markKey.setIcon (Icon::mark);
+    clickKey.setIcon (Icon::click);
+    inKey.setIcon (Icon::punchIn); outKey.setIcon (Icon::punchOut); autoKey.setIcon (Icon::autoPunch);
+    rehKey.setIcon (Icon::rehearse); loopKey.setIcon (Icon::loop); variKey.setIcon (Icon::vari);
+    masterArmKey.setIcon (Icon::arm); monitorKey.setIcon (Icon::tape);
     rtzKey.onClick  = [this] { locate (0); };
     rewKey.onClick  = [this] { nudge (-5.0); };
     ffwKey.onClick  = [this] { nudge (5.0); };
@@ -1870,7 +1883,7 @@ void MainComponent::toggleFullScreen()
         desktop.setKioskModeComponent (top, false);
 
     const bool full = desktop.getKioskModeComponent() != nullptr;
-    fullScreenButton.setButtonText (full ? "EXIT FULL SCREEN" : "FULL SCREEN");
+    fullScreenButton.setIcon (full ? Icon::exitFullScreen : Icon::fullScreen);
     fullScreenButton.setTooltip (full ? "Leave full screen (F11 / Esc)" : "Full screen (F11)");
 }
 
@@ -2094,13 +2107,13 @@ void MainComponent::setupPanels()
     layout.onKey = [this] (const juce::KeyPress& k) { return keyPressed (k); };
     layout.onChanged = [this]
     {
-        layoutButton.setButtonText (layout.isEditing() ? "DONE" : "LAYOUT");
+        layoutButton.setIcon (layout.isEditing() ? Icon::done : Icon::layout);
+        layoutButton.setTooltip (layout.isEditing() ? "Done editing the displays" : "Displays: extra windows (a second screen...) built from blocks");
         layoutButton.setColour (juce::TextButton::buttonColourId, layout.isEditing() ? Colours::mustard : Colours::panelLight);
         layoutButton.setColour (juce::TextButton::textColourOffId, layout.isEditing() ? juce::Colours::black : Colours::text);
     };
 
     bridge.setPerRow (props.getUserSettings()->getIntValue ("metersPerRow", 8));
-    layoutButton.setTooltip ("Displays: extra windows (a second screen...) built from blocks - meters, time, transport, varispeed...");
     layoutButton.onClick = [this] { if (layout.isEditing()) layout.setEditing (false); else showLayoutMenu(); };
     layout.restore();
 }
@@ -2931,27 +2944,13 @@ void MainComponent::resized()
             h.removeFromRight (2);
         }
         h.removeFromRight (12);
-        fullScreenButton.setBounds (h.removeFromRight (150));
-        h.removeFromRight (8);
-        helpButton.setBounds (h.removeFromRight (40));
-        h.removeFromRight (8);
-        audioButton.setBounds (h.removeFromRight (120));
-        h.removeFromRight (8);
-        machineButton.setBounds (h.removeFromRight (100));
-        h.removeFromRight (8);
-        layoutButton.setBounds (h.removeFromRight (90));
-        h.removeFromRight (8);
-        timecodeButton.setBounds (h.removeFromRight (100));
-        h.removeFromRight (8);
-        syncButton.setBounds (h.removeFromRight (76));
-        h.removeFromRight (8);
-        networkButton.setBounds (h.removeFromRight (100));
-        h.removeFromRight (8);
-        routingButton.setBounds (h.removeFromRight (96));
-        h.removeFromRight (8);
-        sheetButton.setBounds (h.removeFromRight (130));
-        h.removeFromRight (8);
-        libraryButton.setBounds (h.removeFromRight (100));
+        // icon buttons (their names show as tooltips)
+        for (auto* b : { &fullScreenButton, &helpButton, &audioButton, &machineButton, &layoutButton, &timecodeButton,
+                         &syncButton, &networkButton, &routingButton, &sheetButton, &libraryButton })
+        {
+            b->setBounds (h.removeFromRight (44));
+            h.removeFromRight (b == &fullScreenButton || b == &helpButton ? 14 : 6);
+        }
 
         if (updateButton.isVisible())
         {

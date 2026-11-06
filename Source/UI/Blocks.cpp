@@ -2,6 +2,7 @@
 #include "MainComponent.h"
 #include "MachineSkin.h"
 #include "UIHelpers.h"
+#include "Icons.h"
 
 namespace hawthorne
 {
@@ -28,7 +29,7 @@ static juce::Rectangle<int> paintLabel (juce::Graphics& g, juce::Rectangle<int> 
 }
 
 /** A lamp: a lit (or dark) label, like the keys' lamps on the deck. */
-static void drawLamp (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& text, bool lit, juce::Colour colour)
+static void drawLamp (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& text, bool lit, juce::Colour colour, Icon icon = Icon::none)
 {
     g.setColour (lit ? colour : juce::Colour (0xff1d1d1c));
     g.fillRoundedRectangle (r, 4.0f);
@@ -39,21 +40,29 @@ static void drawLamp (juce::Graphics& g, juce::Rectangle<float> r, const juce::S
     }
     g.setColour (juce::Colours::black.withAlpha (0.6f));
     g.drawRoundedRectangle (r, 4.0f, 1.0f);
-    g.setColour (lit ? juce::Colours::black : juce::Colour (0xff6c6a64));
+    const auto ink = lit ? juce::Colours::black : juce::Colour (0xff6c6a64);
+    if (icon != Icon::none)
+    {
+        const float sz = juce::jmin (r.getWidth(), r.getHeight()) * 0.62f;
+        drawIcon (g, icon, r.withSizeKeepingCentre (sz, sz), ink);
+        return;
+    }
+    g.setColour (ink);
     g.setFont (monoFont (juce::jlimit (10.0f, 30.0f, r.getHeight() * 0.42f), true));
     g.drawFittedText (text, r.toNearestInt().reduced (3, 0), juce::Justification::centred, 1, 0.6f);
 }
 
 /** A row of lamps filling an area (no taller than they need to be). */
 static void drawLampRow (juce::Graphics& g, juce::Rectangle<float> r, const juce::StringArray& texts,
-                         const juce::Array<bool>& lit, const juce::Array<juce::Colour>& colours, float maxH = 70.0f)
+                         const juce::Array<bool>& lit, const juce::Array<juce::Colour>& colours, float maxH = 70.0f,
+                         const juce::Array<Icon>& icons = {})
 {
     if (texts.isEmpty()) return;
     r = r.withSizeKeepingCentre (r.getWidth(), juce::jmin (r.getHeight(), maxH));
     const float gap = 6.0f, w = (r.getWidth() - gap * (float) (texts.size() - 1)) / (float) texts.size();
     for (int i = 0; i < texts.size(); ++i)
     {
-        drawLamp (g, r.removeFromLeft (w), texts[i], lit[i], colours[i]);
+        drawLamp (g, r.removeFromLeft (w), texts[i], lit[i], colours[i], i < icons.size() ? icons[i] : Icon::none);
         r.removeFromLeft (gap);
     }
 }
@@ -253,17 +262,20 @@ public:
             const int wd = e.getWindDirection();
             const bool lit[] = { wd < 0, wd > 0, ! e.isPlaying() && wd == 0, e.isPlaying(), e.isRecording(), e.getLifterDefeat(),
                                  deck.reel != nullptr && deck.reel->clickOn && deck.reel->tempoBpm > 0.0 };
+            static const Icon icons[] = { Icon::rew, Icon::ffw, Icon::stop, Icon::play, Icon::rec, Icon::cue, Icon::click };
             juce::StringArray t;
             juce::Array<bool> l;
             juce::Array<juce::Colour> c;
+            juce::Array<Icon> ic;
             for (int i = 0; i < numLamps; ++i)
                 if (shown (i))
                 {
                     t.add (names[i]);
+                    ic.add (icons[i]);
                     l.add (lit[i]);
                     c.add (i == 4 ? Colours::red : i == 3 ? juce::Colour (0xff5fcf6a) : Colours::mustard);
                 }
-            drawLampRow (g, getLocalBounds().toFloat().reduced (8.0f), t, l, c, 110.0f);
+            drawLampRow (g, getLocalBounds().toFloat().reduced (8.0f), t, l, c, 110.0f, ic);
         };
     }
     void addSettings (juce::PopupMenu& m) override
@@ -321,7 +333,8 @@ public:
             r.removeFromTop (6.0f);
             drawLampRow (g, row1, { juce::String (juce::CharPointer_UTF8 ("7\xc2\xbd")), "15", "30", "VARI" },
                          { reel != nullptr && ips == 7.5, reel != nullptr && ips == 15.0, reel != nullptr && ips == 30.0, vari },
-                         { Colours::mustard, Colours::mustard, Colours::mustard, Colours::mustard }, 60.0f);
+                         { Colours::mustard, Colours::mustard, Colours::mustard, Colours::mustard }, 60.0f,
+                         { Icon::none, Icon::none, Icon::none, Icon::vari });
             const auto ink = vari ? Colours::mustard : Colours::textDim;
             auto row2 = r.withSizeKeepingCentre (r.getWidth(), juce::jmin (r.getHeight(), 60.0f));
             drawReadout (g, row2.removeFromLeft (row2.getWidth() * 0.5f - 3.0f), deck.variPctLabel.getText(), ink);
@@ -391,16 +404,16 @@ public:
             g.setFont (monoFont (13.0f, true));
             g.drawText (deck.masterButton.getButtonText().upToFirstOccurrenceOf (juce::String (juce::CharPointer_UTF8 ("  \xe2\x96\xbe")), false, false),
                         nameArea, juce::Justification::centred, true);
-            drawLampRow (g, lampArea.toFloat(), { "ARMED", "TAPE" },
-                         { deck.engine.isMasterArmed() && (! deck.engine.isRecording() || deck.frameFlash), deck.engine.isMonitoringMaster() },
-                         { Colours::red, Colours::mustard }, 40.0f);
+            // TAPE: a small reel by the name, lit while you're hearing the master tape
+            const bool tape = deck.engine.isMonitoringMaster();
+            const auto tr = nameArea.toFloat().removeFromRight (22.0f).withSizeKeepingCentre (20.0f, 20.0f);
+            drawIcon (g, Icon::tape, tr, tape ? Colours::mustard : Colours::edge.brighter (0.15f));
+            if (tape) { g.setColour (Colours::mustard.withAlpha (0.18f)); g.fillEllipse (tr.expanded (3.0f)); }
         };
         onLayout = [this]
         {
             auto a = getLocalBounds().reduced (10, 6);
             a.removeFromTop (16);
-            lampArea = a.removeFromBottom (juce::jlimit (24, 40, a.getHeight() / 6));
-            a.removeFromBottom (4);
             nameArea = a.removeFromBottom (22);
             a.removeFromBottom (4);
             const int vuW = (a.getWidth() - 8) / 2;
@@ -415,14 +428,19 @@ public:
     {
         l.update (deck.frameMasterRms[0], deck.frameMasterPeak[0], deck.frameDt);
         r.update (deck.frameMasterRms[1], deck.frameMasterPeak[1], deck.frameDt);
-        if (++frame % 6 == 0) repaint (lampArea.getUnion (nameArea));
+        // armed / recording: the meters' own lamps
+        const auto lamp = ! deck.engine.isMasterArmed() ? VUMeter::RecLamp::off
+                        : deck.engine.isRecording() ? VUMeter::RecLamp::recording : VUMeter::RecLamp::armed;
+        l.setRecLamp (lamp, deck.frameFlash);
+        r.setRecLamp (lamp, deck.frameFlash);
+        if (++frame % 6 == 0) repaint (nameArea);
     }
     void reelChanged() override { l.skinChanged(); r.skinChanged(); repaint(); }
 
 private:
     MainComponent& deck;
     VUMeter l { "L" }, r { "R" };
-    juce::Rectangle<int> nameArea, lampArea;
+    juce::Rectangle<int> nameArea;
     int frame = 0;
 };
 
@@ -450,7 +468,8 @@ public:
             drawReadout (g, row1, "OUT  " + t (e.getPunchOut()), ink);
             drawLampRow (g, r, { "AUTO", "REH", "LOOP" },
                          { e.getAutoPunch() && (! e.isAutoPunching() || deck.frameFlash), e.getRehearse(), e.getCycle() },
-                         { Colours::red, Colours::mustard, Colours::mustard }, 60.0f);
+                         { Colours::red, Colours::mustard, Colours::mustard }, 60.0f,
+                         { Icon::autoPunch, Icon::rehearse, Icon::loop });
         };
     }
     void refresh() override { if (++frame % 6 == 0) repaint(); }

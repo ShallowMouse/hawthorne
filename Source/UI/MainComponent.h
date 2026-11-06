@@ -14,6 +14,7 @@
 #include "../Engine/Mtc.h"
 #include "../Updater.h"
 #include "Layout.h"
+#include "Icons.h"
 
 namespace hawthorne
 {
@@ -28,11 +29,15 @@ public:
 
     void setLit (bool b) { if (b != lit) { lit = b; repaint(); } }
     bool isLit() const { return lit; }
+    /** Show an icon in place of the word (the word stays as its name). */
+    void setIcon (Icon i) { icon = i; repaint(); }
+    Icon getIcon() const { return icon; }
     void paintButton (juce::Graphics&, bool highlighted, bool down) override;
 
 private:
     juce::Colour lamp;
     bool lit = false;
+    Icon icon = Icon::none;
 };
 
 //==============================================================================
@@ -219,8 +224,12 @@ private:
     std::unique_ptr<Reel> reel;          // the tape on the deck
     std::unique_ptr<Session> session;    // the session it belongs to
 
-    juce::TextButton libraryButton { "LIBRARY" }, sheetButton { "SESSION SHEET" },
-                     routingButton { "ROUTING" }, networkButton { "NETWORK" }, syncButton { "TEMPO" }, timecodeButton { "TIMECODE" }, audioButton { "SETTINGS" }, machineButton { "MACHINE" }, layoutButton { "LAYOUT" }, helpButton { "?" }, updateButton;
+    IconButton libraryButton { "Library", Icon::library }, sheetButton { "Session sheet", Icon::sheet },
+               routingButton { "Routing", Icon::routing }, networkButton { "Network (Hawthorne Link)", Icon::network },
+               syncButton { "Tempo and click", Icon::tempo }, timecodeButton { "Timecode", Icon::timecode },
+               audioButton { "Settings", Icon::settings }, machineButton { "Machine", Icon::machine },
+               layoutButton { "Displays (extra screens)", Icon::layout }, helpButton { "Manual", Icon::help };
+    juce::TextButton updateButton;
     Updater updater;
 
     TransportKey rtzKey  { "RTZ",  "Return to zero (Enter)",          Colours::mustard },
@@ -249,7 +258,7 @@ private:
     void setPunchHere (bool isIn);
     TempoBox tempoBox;
     juce::TextButton syncSourceButton;
-    juce::TextButton fullScreenButton { "FULL SCREEN" };
+    IconButton fullScreenButton { "Full screen (F11)", Icon::fullScreen };
     WindowButton winMinButton { WindowButton::minimise }, winMaxButton { WindowButton::maximise }, winCloseButton { WindowButton::close };
     juce::ComponentDragger windowDragger;
     bool draggingWindow = false;
