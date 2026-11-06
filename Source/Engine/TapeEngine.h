@@ -319,7 +319,7 @@ private:
     void endRecordPass();
     void rebuildPlaybackGraph();
     void rebuildRouting();
-    void primeReaders (juce::int64 pos);
+    void primeReaders (juce::int64 pos, bool wait = true);
     bool waitForAudioThread();
     template <typename T> void retire (std::unique_ptr<T>);
     std::shared_ptr<juce::BufferingAudioReader> getReader (const juce::File&, const juce::String& key, bool& isNew);

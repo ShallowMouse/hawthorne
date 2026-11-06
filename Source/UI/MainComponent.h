@@ -301,7 +301,7 @@ private:
     bool frameFlash = false;
     void wireModule (ChannelModule&);
     friend class MetersBlock; friend class TimeBlock; friend class TransportBlock; friend class VarispeedBlock;
-    friend class TempoBlock; friend class MasterBlock; friend class LocatorBlock; friend class MarkersBlock;
+    friend class TempoBlock; friend class MasterBlock; friend class LocatorBlock; friend class MarkersBlock; friend class ReelBlock;
     void setupPanels();
     void showLayoutMenu();
     void paintTransport (juce::Graphics&);

@@ -1290,7 +1290,7 @@ void TapeEngine::locate (juce::int64 samplePos)
     position.store (juce::jmax ((juce::int64) 0, samplePos));
 
     if (! playing)
-        primeReaders (position.load());
+        primeReaders (position.load(), false);    // (start loading there; PLAY waits if it must)
 }
 
 //==============================================================================
@@ -1375,7 +1375,7 @@ void TapeEngine::windFinish (juce::int64 at)
     wind = {};
     windActiveA = false;
     position.store (juce::jmax ((juce::int64) 0, at));
-    primeReaders (position.load());
+    primeReaders (position.load(), roll);      // (stopped: just start loading - PLAY waits if it must)
     if (roll)
         play();
 }
@@ -2240,7 +2240,7 @@ void TapeEngine::primeSegment (const Segment& seg, juce::int64 pos, bool waitUnt
         juce::Thread::sleep (1);
 }
 
-void TapeEngine::primeReaders (juce::int64 pos)
+void TapeEngine::primeReaders (juce::int64 pos, bool wait)
 {
     // Only called while stopped, so the audio thread is not reading.
     auto* active = graph.load();
@@ -2249,12 +2249,17 @@ void TapeEngine::primeReaders (juce::int64 pos)
 
     const auto window = (juce::int64) (reel->sampleRate * 0.5);
 
-    for (auto& segs : active->tracks)
-        for (auto& seg : segs)
-            primeSegment (seg, pos, seg.end > pos && seg.start < pos + window);
-    for (auto& segs : active->master)
-        for (auto& seg : segs)
-            primeSegment (seg, pos, seg.end > pos && seg.start < pos + window);
+    // First point every reader at the new place (so they all load at once, not one after
+    // another), then - if asked - wait for the ones needed straight away.
+    for (int pass = 0; pass < (wait ? 2 : 1); ++pass)
+    {
+        for (auto& segs : active->tracks)
+            for (auto& seg : segs)
+                primeSegment (seg, pos, pass == 1 && seg.end > pos && seg.start < pos + window);
+        for (auto& segs : active->master)
+            for (auto& seg : segs)
+                primeSegment (seg, pos, pass == 1 && seg.end > pos && seg.start < pos + window);
+    }
 }
 
 //==============================================================================

@@ -2114,11 +2114,12 @@ void MainComponent::setupPanels()
         { "meters",      "Meters",        { 16, 10 } },
         { "time",        "Time",          { 8, 3 } },
         { "transport",   "Transport",     { 12, 2 } },
-        { "varispeed",   "Speed / varispeed", { 6, 2 } },
+        { "varispeed",   "Tape speed",    { 6, 2 } },
         { "tempo",       "Tempo and sync", { 5, 2 } },
         { "master",      "Master",        { 4, 2 } },
         { "locator",     "Autolocator",   { 4, 2 } },
-        { "markers",     "Markers",       { 4, 6 } },
+        { "markers",     "Markers",       { 6, 6 } },
+        { "reel",        "Reel",          { 6, 3 } },
     };
     layout.createBlock = [this] (const juce::String& type) { return createDeckBlock (*this, type); };
     layout.onKey = [this] (const juce::KeyPress& k) { return keyPressed (k); };
