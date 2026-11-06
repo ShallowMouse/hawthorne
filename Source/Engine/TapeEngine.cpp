@@ -2299,6 +2299,23 @@ void TapeEngine::tick()
     chaseTick();
     windStep();
 
+    // Hawthorne Route: the reel's name and its tracks' names, arming and mix feeds, for the
+    // program on the other end (a few times a second; it only writes when something changed)
+    if (++routeInfoTicks >= 8)
+    {
+        routeInfoTicks = 0;
+        juce::StringArray names;
+        std::vector<bool> arm, mix;
+        const int nt = reel != nullptr ? juce::jmin (reel->numTracks, route::maxTracks) : 0;
+        for (int t = 0; t < nt; ++t)
+        {
+            names.add (reel->tracks[(size_t) t].name);
+            arm.push_back (isArmed (t));
+            mix.push_back (reel->tracks[(size_t) t].toMix);
+        }
+        route.publishInfo (reel != nullptr ? reel->getName() : juce::String(), nt, names, arm, mix);
+    }
+
     // Autolocator housekeeping
     if (passEnded.exchange (false) && ownedPass != nullptr)
     {
