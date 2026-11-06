@@ -402,8 +402,8 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     };
     winCloseButton.onClick = [this]
     {
-        // inside MELVILLE, closing Hawthorne's window just hides it: the tape keeps running
-        if (melville::isHosted()) { if (auto* w = getTopLevelComponent()) w->setVisible (false); }
+        // inside MELVILLE, closing Hawthorne's window sends it to its taskbar button: the tape keeps running
+        if (melville::isHosted()) { if (auto* peer = getPeer()) peer->setMinimised (true); }
         else juce::JUCEApplication::getInstance()->systemRequestedQuit();
     };
     networkButton.setTooltip ("Hawthorne Link: record audio sent from other PCs");
