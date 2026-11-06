@@ -53,7 +53,13 @@ public:
     /** FFWD (+1) / REW (-1): spool at full speed towards the end / the head of the reel
         until STOP or PLAY (always a real wind, whatever the wind physics setting). */
     void spoolWind (int direction);
-    void setWindPhysics (bool on) noexcept { windPhysics = on; windPhysicsA = on; }
+    void setWindPhysics (bool on) noexcept { windPhysics = on; windPhysicsA = on; if (on && windStyle == 0) windStyle = 2; }
+    /** How locating spools: 0 instant, 1 quick wind (fast brakes, lands straight on it),
+        2 realistic wind (a big machine: slow to speed up and stop, overshoots, creeps back). */
+    void setWindStyle (int s) noexcept { windStyle = juce::jlimit (0, 2, s); setWindPhysics (windStyle > 0); }
+    int  getWindStyle() const noexcept { return windPhysics ? windStyle : 0; }
+    /** Will it roll (PLAY) when the wind stops? */
+    bool willRollAfterWind() const noexcept { return wind.active && wind.rollAfter; }
     /** Lifter defeat: hear the tape (the "chatter") while it spools. Monitor only. */
     void setLifterDefeat (bool on);
     bool getLifterDefeat() const noexcept  { return lifterDefeat.load(); }
@@ -376,6 +382,7 @@ private:
         double pos = 0.0, vel = 0.0, lastMs = 0.0;     // samples, samples/s
     };
     bool windPhysics = false;
+    int windStyle = 2;
     Wind wind;
     std::atomic<bool> lifterDefeat { false }, windActiveA { false };
     std::atomic<double> windPosA { 0.0 }, windVelA { 0.0 };

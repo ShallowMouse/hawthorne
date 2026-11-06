@@ -1386,7 +1386,14 @@ void TapeEngine::windStep()
         return;
     if (reel == nullptr || recording) { windCancel(); return; }
 
-    using namespace windModel;
+    // (quick wind: the same top speed, but fast brakes, no overshoot)
+    const bool quick = windStyle != 2;
+    const double maxIps = windModel::maxIps;
+    const double accelTime  = quick ? 0.5  : windModel::accelTime;
+    const double brakeTime  = quick ? 0.3  : windModel::brakeTime;
+    const double brakeLate  = quick ? 1.0  : windModel::brakeLate;
+    const double creepIps   = quick ? 60.0 : windModel::creepIps;
+    const double creepAccel = quick ? 0.08 : windModel::creepAccel;
     const double now = juce::Time::getMillisecondCounterHiRes();
     const double dt = juce::jlimit (0.0, 0.1, (now - wind.lastMs) / 1000.0);
     wind.lastMs = now;

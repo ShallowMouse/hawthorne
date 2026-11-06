@@ -413,8 +413,23 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     rehKey.setIcon (Icon::rehearse); loopKey.setIcon (Icon::loop); variKey.setIcon (Icon::vari);
     masterArmKey.setIcon (Icon::arm); monitorKey.setIcon (Icon::tape);
     rtzKey.onClick  = [this] { locate (0); };
-    rewKey.onClick  = [this] { engine.spoolWind (-1); };       // spool until STOP / PLAY
-    ffwKey.onClick  = [this] { engine.spoolWind (+1); };
+    // REW / FFW: wind while held (let go: it brakes - or rolls, if PLAY was pressed meanwhile)
+    for (auto* k : { &rewKey, &ffwKey })
+        k->onStateChange = [this, k]
+        {
+            const bool down = k->isDown();
+            bool& held = k == &rewKey ? rewHeld : ffwHeld;
+            if (down && ! held)
+            {
+                held = true;
+                engine.spoolWind (k == &rewKey ? -1 : +1);
+            }
+            else if (! down && held)
+            {
+                held = false;
+                if (engine.getWindDirection() != 0 && ! engine.willRollAfterWind()) engine.stop();
+            }
+        };
     stopKey.onClick = [this] { doStop(); };
     playKey.onClick = [this] { doPlay(); };
     recKey.onClick  = [this] { doRecord(); };
@@ -630,7 +645,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
         });
 
     counterMode = juce::jlimit (0, 2, props.getUserSettings()->getIntValue ("counterMode", 0));
-    engine.setWindPhysics (props.getUserSettings()->getBoolValue ("windPhysics", true));
+    engine.setWindStyle (props.getUserSettings()->getIntValue ("windStyle", props.getUserSettings()->getBoolValue ("windPhysics", true) ? 1 : 0));
     MachineSkin::meterChoice() = juce::jlimit (0, 2, props.getUserSettings()->getIntValue ("meterStyle", 0));
     engine.setLifterDefeat (props.getUserSettings()->getBoolValue ("lifterDefeat", false));
     setSize (1600, 900);
@@ -767,13 +782,15 @@ namespace
             addAndMakeVisible (routeButton);
             refreshRoute();
             addAndMakeVisible (selector);
-            windToggle.setToggleState (engine.getWindPhysics(), juce::dontSendNotification);
-            windToggle.setTooltip ("On: locating (RTZ, markers, REW / FFW) spools the tape there like a real machine - "
-                                   "it speeds up, brakes, overshoots a touch and creeps back.\nOff: jumps there instantly.");
-            windToggle.onClick = [this]
+            windToggle.addItem ("Locating (RTZ, markers...): instant - no wind", 1);
+            windToggle.addItem ("Locating: quick wind - spools there, fast brakes, lands straight on it", 2);
+            windToggle.addItem ("Locating: realistic wind - slow to stop, overshoots and creeps back", 3);
+            windToggle.setSelectedId (engine.getWindStyle() + 1, juce::dontSendNotification);
+            windToggle.setTooltip ("How the tape gets to a locate point. (REW / FFW always wind, while held.)");
+            windToggle.onChange = [this]
             {
-                engine.setWindPhysics (windToggle.getToggleState());
-                props.setValue ("windPhysics", windToggle.getToggleState());
+                engine.setWindStyle (windToggle.getSelectedId() - 1);
+                props.setValue ("windStyle", windToggle.getSelectedId() - 1);
                 props.saveIfNeeded();
             };
             addAndMakeVisible (windToggle);
@@ -812,12 +829,12 @@ namespace
             meters.setBounds (b.removeFromBottom (36).reduced (16, 5).withTrimmedLeft (180));
             postRoll.setBounds (b.removeFromBottom (30).reduced (16, 4).withTrimmedLeft (180));
             preRoll.setBounds (b.removeFromBottom (30).reduced (16, 4).withTrimmedLeft (180));
-            windToggle.setBounds (b.removeFromBottom (36).reduced (16, 4));
+            windToggle.setBounds (b.removeFromBottom (36).reduced (16, 6));
             b.removeFromBottom (24);
             selector.setBounds (b);
         }
         juce::AudioDeviceSelectorComponent selector;
-        juce::ToggleButton windToggle { "Tape wind physics: spool to locate points (realistic FFWD / REW)" };
+        juce::ComboBox windToggle;
         juce::ComboBox meters;
         juce::TextButton routeButton;
         juce::String routeStatus;

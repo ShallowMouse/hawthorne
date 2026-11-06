@@ -1750,7 +1750,7 @@ static void testWind()
     TapeEngine e;
     e.setReel (reel.get());
     prepareEngine (e, 256, 8);
-    e.setWindPhysics (true);
+    e.setWindStyle (2);        // realistic
     for (juce::int64 target : { (juce::int64) (60 * kSR), (juce::int64) (61.5 * kSR), (juce::int64) 0 })
     {
         const auto from = e.getPosition();
@@ -1771,6 +1771,17 @@ static void testWind()
         CHECK (secs > 0.3 && secs < 10.0, "wind took %.2f s", secs);
         std::printf ("    %6.1f s -> %6.1f s: %.2f s, top speed ~%.0fx, overshoot %.2f s, landed exactly\n",
                      (double) from / kSR, (double) target / kSR, secs, maxV, (double) beyond / kSR);
+    }
+    // quick wind: lands straight on it, much sooner
+    {
+        e.setWindStyle (1);
+        e.locate (0);
+        const double t0 = juce::Time::getMillisecondCounterHiRes();
+        e.windTo ((juce::int64) (60 * kSR));
+        while (e.getWindDirection() != 0 && juce::Time::getMillisecondCounterHiRes() - t0 < 20000) { juce::Thread::sleep (10); e.tick(); }
+        const double secs = (juce::Time::getMillisecondCounterHiRes() - t0) / 1000.0;
+        CHECK (e.getPosition() == (juce::int64) (60 * kSR) && secs < 3.5, "quick wind: 0 -> 60 s in %.2f s", secs);
+        std::printf ("    quick wind: 0 -> 60 s in %.2f s, landed exactly\n", secs);
     }
     e.setWindPhysics (false);
     e.windTo ((juce::int64) (5 * kSR));

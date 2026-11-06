@@ -233,8 +233,8 @@ private:
     Updater updater;
 
     TransportKey rtzKey  { "RTZ",  "Return to zero (Enter)",          Colours::mustard },
-                 rewKey  { "<<",   "Rewind: spool back until STOP or PLAY (Left arrow: back 5 seconds)",       Colours::mustard },
-                 ffwKey  { ">>",   "Fast forward: spool on until STOP or PLAY (Right arrow: forward 5 seconds)", Colours::mustard },
+                 rewKey  { "<<",   "Rewind: winds back while held (Left arrow: back 5 seconds)",       Colours::mustard },
+                 ffwKey  { ">>",   "Fast forward: winds on while held (Right arrow: forward 5 seconds)", Colours::mustard },
                  stopKey { "STOP", "Stop (Space)",                    Colours::mustard },
                  playKey { "PLAY", "Play (Space)",                    Colours::mustard },
                  recKey  { "REC",  "Record / punch in-out (R)",       Colours::red },
@@ -258,6 +258,7 @@ private:
     void setPunchHere (bool isIn);
     TempoBox tempoBox;
     juce::TextButton syncSourceButton;
+    bool rewHeld = false, ffwHeld = false;
     IconButton fullScreenButton { "Full screen (F11)", Icon::fullScreen };
     WindowButton winMinButton { WindowButton::minimise }, winMaxButton { WindowButton::maximise }, winCloseButton { WindowButton::close };
     juce::ComponentDragger windowDragger;
