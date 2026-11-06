@@ -166,11 +166,25 @@ void TransportKey::paintButton (juce::Graphics& g, bool highlighted, bool down)
 int MeterBridge::layoutForWidth (int width, int minHeight)
 {
     const int pad = 10, gap = 8;
-    const float moduleW = ((float) (width - 2 * pad) - (float) (perRow - 1) * gap) / (float) perRow;
-    const int meterH = (int) (moduleW / ChannelModule::meterAspect);
-    const int moduleH = meterH + ChannelModule::controlsHeight + ChannelModule::nrHeight + 4;   // NR strip's place always kept
-    const int rows = (modules.size() + perRow - 1) / perRow;
-    const int needed = pad + rows * (moduleH + 2 * gap);
+    auto sizes = [&] (int per, float& mw, int& mh, int& rows, int& need)
+    {
+        mw = ((float) (width - 2 * pad) - (float) (per - 1) * gap) / (float) per;
+        mh = (int) (mw / ChannelModule::meterAspect) + ChannelModule::controlsHeight + ChannelModule::nrHeight + 4;   // NR strip's place always kept
+        rows = (modules.size() + per - 1) / per;
+        need = pad + rows * (mh + 2 * gap);
+    };
+    float moduleW = 0; int moduleH = 0, rows = 0, needed = 0;
+    perRow = perRowSetting > 0 ? perRowSetting : 8;
+    if (perRowSetting == 0)
+    {
+        // fit: the fewest per row that shows every track without scrolling (the biggest meters)
+        for (perRow = 1; perRow < juce::jmax (1, modules.size()); ++perRow)
+        {
+            sizes (perRow, moduleW, moduleH, rows, needed);
+            if (needed <= minHeight) break;
+        }
+    }
+    sizes (perRow, moduleW, moduleH, rows, needed);
     const int top = juce::jmax (0, (minHeight - needed) / 2);   // centre when there's room
 
     rowPanels.clear();
@@ -349,7 +363,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     juce::LookAndFeel::setDefaultLookAndFeel (&lnf);
     setWantsKeyboardFocus (true);
 
-    for (auto* b : { &libraryButton, &sheetButton, &routingButton, &networkButton, &syncButton, &timecodeButton, &audioButton, &machineButton, &helpButton })
+    for (auto* b : { &libraryButton, &sheetButton, &routingButton, &networkButton, &syncButton, &timecodeButton, &audioButton, &machineButton, &layoutButton, &helpButton })
     {
         b->setWantsKeyboardFocus (false);
         addAndMakeVisible (b);
@@ -408,7 +422,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
         if (save) tempoEdited();
         for (auto* w : { tempoWindow.get(), timecodeWindow.get() }) if (w != nullptr) w->getPanel().refresh();
         markers.refresh();
-        repaint (counterArea);
+        transportPanel.repaint (counterArea);
     };
     addAndMakeVisible (tempoBox);
     syncSourceButton.setWantsKeyboardFocus (false);
@@ -581,6 +595,8 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
                     "Hawthorne Route", err.isEmpty() ? juce::String ("Updated. Re-open Hawthorne Route in the other program to see the new channels.") : err);
             }));
     });
+
+    setupPanels();
 
     // (development: open a reel straight away, for screenshots)
     if (auto open = juce::SystemStats::getEnvironmentVariable ("HAWTHORNE_OPEN_REEL", {}); open.isNotEmpty())
@@ -831,10 +847,12 @@ void MainComponent::showLibrary (bool show)
         library.setVisible (true);
         library.toFront (true);
         library.grabKeyboardFocus();
+        layout.setFloatingVisible (false);
     }
     else if (reel != nullptr)
     {
         library.setVisible (false);
+        layout.setFloatingVisible (true);
         grabKeyboardFocus();
     }
 }
@@ -896,7 +914,7 @@ void MainComponent::setReel (std::unique_ptr<Reel> r, std::unique_ptr<Session> s
 
     if (routingWindow != nullptr) { routingWindow->getMatrix().tracksChanged(); routingWindow->getLatencyPanel().refresh(); }
     if (sheetWindow != nullptr)   sheetWindow->getSheet().refresh();
-    repaint();
+    repaintPanels();
 }
 
 void MainComponent::saveReel()
@@ -941,7 +959,7 @@ void MainComponent::handleTempoRequests()
         markers.refresh();
         pushReelSync();
         tempoSaveDueMs = juce::Time::getMillisecondCounterHiRes() + 1500.0;   // a knob may still be turning
-        repaint (reelInfoArea);
+        transportPanel.repaint (reelInfoArea);
     }
 
     if (tempoSaveDueMs > 0.0 && juce::Time::getMillisecondCounterHiRes() >= tempoSaveDueMs)
@@ -1105,7 +1123,7 @@ void MainComponent::refreshSpeedSection()
     if (! variStLabel.isBeingEdited())  variStLabel.setText (signedFixed (st) + " st", juce::dontSendNotification);
     for (auto* l : { &variPctLabel, &variStLabel })
         l->setColour (juce::Label::textColourId, has && reel->variOn ? Colours::mustard : Colours::textDim);
-    repaint (reelInfoArea);
+    transportPanel.repaint (reelInfoArea);
 }
 
 void MainComponent::stepSemitone (int direction)
@@ -1142,7 +1160,7 @@ void MainComponent::refreshMasterSection()
     masterButton.setEnabled (reel != nullptr);
     masterArmKey.setEnabled (reel != nullptr);
     monitorKey.setEnabled (has);
-    repaint (masterLabelArea);
+    masterPanel.repaint (masterLabelArea);
 }
 
 void MainComponent::showMasterMenu()
@@ -1193,7 +1211,7 @@ void MainComponent::showMasterMenu()
         else if (r == 1002) renameMaster();
         else if (r == 1003) deleteMaster();
         else if (r == 1004) showMachines();
-        else if (r >= 1100 && r < 1100 + nr::numSystems) { engine.setMasterNr (r - 1100); refreshMasterSection(); repaint(); }
+        else if (r >= 1100 && r < 1100 + nr::numSystems) { engine.setMasterNr (r - 1100); refreshMasterSection(); repaintPanels(); }
         else if (reel->activeMaster >= 0)
         {
             const auto& name = reel->masters[(size_t) reel->activeMaster].name;
@@ -1251,7 +1269,7 @@ void MainComponent::applySkin()
     masterR.skinChanged();
     bridge.repaint();
     tempoBox.repaint();
-    repaint();
+    repaintPanels();
 }
 
 void MainComponent::showManual()
@@ -1306,7 +1324,7 @@ void MainComponent::setNoiseReduction (int system)
     layoutBridge();
     for (auto* m : bridge.modules) m->resized();
     if (sheetWindow != nullptr) sheetWindow->getSheet().refresh();
-    repaint();
+    repaintPanels();
 }
 
 void MainComponent::showTrackMenu (int track)
@@ -1370,7 +1388,7 @@ void MainComponent::runTapeJob (const juce::String& title, std::function<juce::S
         markers.setReel (reel.get());
         rebuildModules();
         if (sheetWindow != nullptr) sheetWindow->getSheet().refresh();
-        repaint();
+        repaintPanels();
         if (err.isNotEmpty()) showAlert (title, err);
     };
     job->launchThread();
@@ -1905,30 +1923,173 @@ void MainComponent::showCounterMenu()
     m.addItem (1, "Minutes : seconds", true, counterMode == 0);
     m.addItem (2, "Bars . beats", reel != nullptr && reel->tempoBpm > 0.0, counterMode == 1);
     m.addItem (3, "Timecode", true, counterMode == 2);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (counterArea)), [this] (int r)
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (transportPanel.localAreaToGlobal (counterArea)), [this] (int r)
     {
         if (r <= 0) return;
         counterMode = r - 1;
         props.getUserSettings()->setValue ("counterMode", counterMode);
-        repaint (counterArea);
+        transportPanel.repaint (counterArea);
     });
 }
 
-void MainComponent::mouseMove (const juce::MouseEvent& e)
+void MainComponent::mouseMove (const juce::MouseEvent&) {}
+void MainComponent::mouseUp (const juce::MouseEvent&) {}
+
+void MainComponent::transportMouseMove (const juce::MouseEvent& e)
 {
-    const bool overBadge = deckBadgeArea.contains (e.getPosition()) || masterBadgeArea.contains (e.getPosition());
-    setMouseCursor (overBadge || counterArea.contains (e.getPosition()) ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+    const bool over = deckBadgeArea.contains (e.getPosition()) || counterArea.contains (e.getPosition());
+    transportPanel.setMouseCursor (over ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
 }
 
-void MainComponent::mouseUp (const juce::MouseEvent& e)
+void MainComponent::transportMouseUp (const juce::MouseEvent& e)
 {
     // (on release, so the release doesn't pick an item from the menu it opened)
     if (counterArea.contains (e.getPosition()) && counterArea.contains (e.getMouseDownPosition()))
         showCounterMenu();
-    // the machine badges: change machines
-    for (auto b : { deckBadgeArea, masterBadgeArea })
-        if (b.contains (e.getPosition()) && b.contains (e.getMouseDownPosition()))
-            showMachines();
+    // the machine badge: change machines
+    if (deckBadgeArea.contains (e.getPosition()) && deckBadgeArea.contains (e.getMouseDownPosition()))
+        showMachines();
+}
+
+//==============================================================================
+// Layout: panels in the main window or other windows
+
+void MainComponent::repaintPanels()
+{
+    repaint();
+    for (auto* p : { &bridgePanel, &transportPanel, &masterPanel, &locatorPanel, &markersPanel })
+        p->repaint();
+}
+
+void MainComponent::setupPanels()
+{
+    // the transport deck
+    for (juce::Component* c : { (juce::Component*) &rtzKey, (juce::Component*) &rewKey, (juce::Component*) &ffwKey, (juce::Component*) &liftKey,
+                                (juce::Component*) &stopKey, (juce::Component*) &playKey, (juce::Component*) &recKey, (juce::Component*) &markKey,
+                                (juce::Component*) &clickKey, (juce::Component*) &tempoBox, (juce::Component*) &syncSourceButton,
+                                (juce::Component*) &ips7Key, (juce::Component*) &ips15Key, (juce::Component*) &ips30Key, (juce::Component*) &variKey,
+                                (juce::Component*) &variKnob, (juce::Component*) &variPctLabel, (juce::Component*) &variStLabel,
+                                (juce::Component*) &stDownButton, (juce::Component*) &stUpButton, (juce::Component*) &variResetButton })
+        transportPanel.addAndMakeVisible (c);
+    transportPanel.prefH = 96;
+    transportPanel.sideOK = false;
+    transportPanel.onPaint  = [this] (juce::Graphics& g) { paintTransport (g); };
+    transportPanel.onLayout = [this] { layoutTransport(); };
+    transportPanel.onMouseMove = [this] (const juce::MouseEvent& e) { transportMouseMove (e); };
+    transportPanel.onMouseUp   = [this] (const juce::MouseEvent& e) { transportMouseUp (e); };
+
+    // the master section
+    for (juce::Component* c : { (juce::Component*) &masterL, (juce::Component*) &masterR, (juce::Component*) &masterButton,
+                                (juce::Component*) &masterArmKey, (juce::Component*) &monitorKey })
+        masterPanel.addAndMakeVisible (c);
+    masterPanel.prefW = 300; masterPanel.prefH = 204;
+    masterPanel.fixedW = masterPanel.fixedH = true;
+    masterPanel.onPaint  = [this] (juce::Graphics& g) { paintMaster (g); };
+    masterPanel.onLayout = [this] { layoutMaster(); };
+    masterPanel.onMouseMove = [this] (const juce::MouseEvent& e)
+    {
+        masterPanel.setMouseCursor (masterBadgeArea.contains (e.getPosition()) ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+    };
+    masterPanel.onMouseUp = [this] (const juce::MouseEvent& e)
+    {
+        if (masterBadgeArea.contains (e.getPosition()) && masterBadgeArea.contains (e.getMouseDownPosition())) showMachines();
+    };
+
+    // the autolocator
+    for (juce::Component* c : { (juce::Component*) &inKey, (juce::Component*) &outKey, (juce::Component*) &autoKey,
+                                (juce::Component*) &rehKey, (juce::Component*) &loopKey })
+        locatorPanel.addAndMakeVisible (c);
+    locatorPanel.prefW = 300; locatorPanel.prefH = 94;
+    locatorPanel.fixedW = locatorPanel.fixedH = true;
+    locatorPanel.onPaint  = [this] (juce::Graphics& g) { paintLocator (g); };
+    locatorPanel.onLayout = [this] { layoutLocator(); };
+
+    // markers
+    markersPanel.addAndMakeVisible (markers);
+    markersPanel.prefW = 300; markersPanel.prefH = 200;
+    markersPanel.fixedW = true;
+    markersPanel.onLayout = [this] { markers.setBounds (markersPanel.getLocalBounds()); };
+
+    // the meter bridge
+    bridgePanel.addAndMakeVisible (bridgeView);
+    bridgePanel.prefW = 600; bridgePanel.prefH = 400;
+    bridgePanel.onLayout = [this] { layoutBridgePanel(); };
+    bridgePanel.onMouseUp = [this] (const juce::MouseEvent& e) { if (e.mods.isPopupMenu()) showLayoutMenu(); };
+
+    layout.addPanel (bridgePanel, 0, Edge::centre);
+    layout.addPanel (transportPanel, 0, Edge::bottom);
+    layout.addPanel (masterPanel, 0, Edge::right);
+    layout.addPanel (locatorPanel, 0, Edge::right);
+    layout.addPanel (markersPanel, 0, Edge::right);
+    layout.onKey = [this] (const juce::KeyPress& k) { return keyPressed (k); };
+    layout.onChanged = [this]
+    {
+        layoutButton.setButtonText (layout.isEditing() ? "DONE" : "LAYOUT");
+        layoutButton.setColour (juce::TextButton::buttonColourId, layout.isEditing() ? Colours::mustard : Colours::panelLight);
+        layoutButton.setColour (juce::TextButton::textColourOffId, layout.isEditing() ? juce::Colours::black : Colours::text);
+    };
+    addAndMakeVisible (layout.mainHost(), 0);         // (behind the library)
+
+    bridge.setPerRow (props.getUserSettings()->getIntValue ("metersPerRow", 8));
+    layoutButton.setTooltip ("Layout: show / hide panels, put them in other windows (second screen), save layouts");
+    layoutButton.onClick = [this] { if (layout.isEditing()) layout.setEditing (false); else showLayoutMenu(); };
+    layout.restore();
+}
+
+void MainComponent::showLayoutMenu()
+{
+    juce::PopupMenu m;
+    m.addItem (1, "Edit layout (drag panels between windows)...");
+    m.addItem (2, "New window");
+    m.addSeparator();
+    m.addSectionHeader ("SHOW");
+    int id = 10;
+    for (auto* p : { &bridgePanel, &transportPanel, &masterPanel, &locatorPanel, &markersPanel })
+        m.addItem (id++, p->title, true, layout.isShown (*p));
+    m.addSeparator();
+    juce::PopupMenu rows;
+    for (int n : { 8, 12, 16, 24 })
+        rows.addItem (100 + n, juce::String (n) + " per row", true, bridge.getPerRow() == n);
+    rows.addItem (100, "Fit (no scrolling)", true, bridge.getPerRow() == 0);
+    m.addSubMenu ("Meters per row", rows);
+    m.addSeparator();
+    const auto presets = layout.presetNames();
+    juce::PopupMenu load, del;
+    for (int i = 0; i < presets.size(); ++i) { load.addItem (300 + i, presets[i]); del.addItem (400 + i, presets[i]); }
+    m.addSubMenu ("Load layout", load, ! presets.isEmpty());
+    m.addItem (3, "Save layout as...");
+    m.addSubMenu ("Delete layout", del, ! presets.isEmpty());
+    m.addItem (4, "Reset to default");
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&layoutButton), [this, presets] (int r)
+    {
+        if (r <= 0) return;
+        Panel* ps[] = { &bridgePanel, &transportPanel, &masterPanel, &locatorPanel, &markersPanel };
+        if (r == 1) layout.setEditing (true);
+        else if (r == 2) layout.newWindow();
+        else if (r == 4) layout.resetToDefault();
+        else if (r >= 10 && r < 15) layout.setShown (*ps[r - 10], ! layout.isShown (*ps[r - 10]));
+        else if (r >= 100 && r < 200)
+        {
+            bridge.setPerRow (r - 100);
+            props.getUserSettings()->setValue ("metersPerRow", r - 100);
+            props.saveIfNeeded();
+            layoutBridge();
+        }
+        else if (r >= 300 && r < 400) layout.loadPreset (presets[r - 300]);
+        else if (r >= 400 && r < 500) layout.deletePreset (presets[r - 400]);
+        else if (r == 3)
+        {
+            auto* w = new juce::AlertWindow ("Save layout", "A name for this layout (windows, panels and where they are):", juce::MessageBoxIconType::NoIcon, this);
+            w->addTextEditor ("name", "Layout " + juce::String (presets.size() + 1));
+            w->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+            w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+            w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int res)
+            {
+                const auto name = w->getTextEditorContents ("name").trim();
+                if (res == 1 && name.isNotEmpty()) layout.savePreset (name);
+            }), true);
+        }
+    });
 }
 
 void MainComponent::tempoEdited()
@@ -1938,7 +2099,7 @@ void MainComponent::tempoEdited()
     pushReelSync();          // a synced drum machine follows
     saveReel();
     markers.refresh();
-    repaint();
+    repaintPanels();
 }
 
 void MainComponent::loadSyncSettings()
@@ -2231,7 +2392,7 @@ void MainComponent::setPunchHere (bool isIn)
     if (isIn) { in = here; if (out >= 0 && out <= in) out = -1; }
     else      { out = here; if (in >= 0 && in >= out) in = -1; }
     engine.setPunchPoints (in, out);
-    repaint (locatorArea);
+    locatorPanel.repaint();
 }
 
 void MainComponent::locate (juce::int64 pos)
@@ -2308,7 +2469,7 @@ void MainComponent::timerCallback()
     autoKey.setLit (engine.getAutoPunch() && (! engine.isAutoPunching() || flash));
     rehKey.setLit (engine.getRehearse());
     loopKey.setLit (engine.getCycle());
-    if (frame % 10 == 0) repaint (locatorArea);
+    if (frame % 10 == 0) locatorPanel.repaint();
     ffwKey.setLit (windDir > 0);
     clickKey.setLit (reel != nullptr && reel->clickOn && reel->tempoBpm > 0.0);
     if (frame % 5 == 0)
@@ -2370,10 +2531,10 @@ void MainComponent::timerCallback()
     {
         statusText = buildStatus();
         repaint (statusArea);
-        repaint (reelInfoArea);
+        transportPanel.repaint (reelInfoArea);
     }
 
-    repaint (counterArea);
+    transportPanel.repaint (counterArea);
 }
 
 juce::String MainComponent::buildStatus() const
@@ -2450,6 +2611,17 @@ void MainComponent::paint (juce::Graphics& g)
                   + juce::String (reel != nullptr ? reel->numTracks : 0) + "-TRACK  v" HAWTHORNE_VERSION,
                 sessionArea, juce::Justification::centredRight);
 
+    // Status bar
+    g.setColour (Colours::black);
+    g.fillRect (statusArea);
+    const bool warn = statusText.contains ("!!") || statusText.startsWith ("NO AUDIO");
+    g.setColour (warn ? Colours::red : Colours::textDim);
+    g.setFont (monoFont (12.0f, warn));
+    g.drawText (statusText, statusArea.reduced (12, 0), juce::Justification::centredLeft);
+}
+
+void MainComponent::paintTransport (juce::Graphics& g)
+{
     // Transport deck, styled after the machine
     const auto& sk = MachineSkin::current();
     {
@@ -2466,9 +2638,9 @@ void MainComponent::paint (juce::Graphics& g)
             }
         }
         g.setColour (sk.deckEdge);
-        g.drawHorizontalLine (deckArea.getY(), 0.0f, (float) getWidth());
+        g.drawHorizontalLine (deckArea.getY(), 0.0f, (float) deckArea.getWidth());
         g.setColour (sk.deck.brighter (0.25f).withAlpha (0.5f));
-        g.drawHorizontalLine (deckArea.getY() + 1, 0.0f, (float) getWidth());
+        g.drawHorizontalLine (deckArea.getY() + 1, 0.0f, (float) deckArea.getWidth());
     }
 
     // counter window
@@ -2561,7 +2733,7 @@ void MainComponent::paint (juce::Graphics& g)
             g.setFont (juce::Font (juce::FontOptions ("Arial", 15.0f, juce::Font::bold)));
             const juce::String badgeText = juce::String (sk.brand) + "  " + sk.model;
             const int bw = juce::jmin (reelInfoArea.getWidth(), (int) juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), badgeText) + 22);
-            auto badge = juce::Rectangle<int> (bw, 22).withPosition (reelInfoArea.getRight() - bw, deckArea.getY() + 8);
+            auto badge = juce::Rectangle<int> (bw, 22).withPosition (reelInfoArea.getRight() - bw, deckBand.getY() + 8);
             deckBadgeArea = badge;
             g.setColour (sk.badge);
             g.fillRoundedRectangle (badge.toFloat(), 3.0f);
@@ -2582,6 +2754,10 @@ void MainComponent::paint (juce::Graphics& g)
         g.drawText ("SPEED", speedLabelArea, juce::Justification::centredLeft);
     }
 
+}
+
+void MainComponent::paintMaster (juce::Graphics& g)
+{
     // Master section (top of the sidebar)
     g.setColour (Colours::panel);
     g.fillRect (masterPanelArea);
@@ -2619,6 +2795,10 @@ void MainComponent::paint (juce::Graphics& g)
         }
     }
 
+}
+
+void MainComponent::paintLocator (juce::Graphics& g)
+{
     // Autolocator
     g.setColour (Colours::panel);
     g.fillRect (locatorArea);
@@ -2644,13 +2824,6 @@ void MainComponent::paint (juce::Graphics& g)
         }
     }
 
-    // Status bar
-    g.setColour (Colours::black);
-    g.fillRect (statusArea);
-    const bool warn = statusText.contains ("!!") || statusText.startsWith ("NO AUDIO");
-    g.setColour (warn ? Colours::red : Colours::textDim);
-    g.setFont (monoFont (12.0f, warn));
-    g.drawText (statusText, statusArea.reduced (12, 0), juce::Justification::centredLeft);
 }
 
 void MainComponent::resized()
@@ -2667,6 +2840,8 @@ void MainComponent::resized()
         audioButton.setBounds (h.removeFromRight (120));
         h.removeFromRight (8);
         machineButton.setBounds (h.removeFromRight (100));
+        h.removeFromRight (8);
+        layoutButton.setBounds (h.removeFromRight (90));
         h.removeFromRight (8);
         timecodeButton.setBounds (h.removeFromRight (100));
         h.removeFromRight (8);
@@ -2688,13 +2863,21 @@ void MainComponent::resized()
     }
 
     statusArea = r.removeFromBottom (24);
+    layout.mainHost().setBounds (r);
 
+    if (library.isVisible())
+        library.setBounds (getLocalBounds());
+}
+
+void MainComponent::layoutTransport()
+{
     // Compact transport deck
-    deckArea = r.removeFromBottom (96);
+    deckArea = transportPanel.getLocalBounds();
+    deckBand = deckArea.withSizeKeepingCentre (deckArea.getWidth(), juce::jmin (deckArea.getHeight(), 96));
     {
-        auto d = deckArea.reduced (14, 9);
+        auto d = deckBand.reduced (14, 9);
 
-        const bool compact = getWidth() < 1700;
+        const bool compact = deckArea.getWidth() < 1700;
         counterArea = d.removeFromLeft (compact ? 250 : 300).reduced (0, 2);
         d.removeFromLeft (8);
 
@@ -2747,11 +2930,14 @@ void MainComponent::resized()
         reelInfoArea = d;
     }
 
-    // Sidebar on the right: master section on top, markers below
-    auto sidebar = r.removeFromRight (300);
+}
+
+void MainComponent::layoutMaster()
+{
     {
-        auto ms = sidebar.removeFromTop (204);
+        auto ms = masterPanel.getLocalBounds();
         masterPanelArea = ms;
+        ms = ms.withSizeKeepingCentre (juce::jmin (ms.getWidth(), 460), juce::jmin (ms.getHeight(), 340));
         ms = ms.reduced (12, 8).withTrimmedLeft (1);
         masterLabelArea = ms.removeFromTop (18);
         ms.removeFromTop (4);
@@ -2768,9 +2954,14 @@ void MainComponent::resized()
         controls.removeFromLeft (6);
         monitorKey.setBounds (controls);
     }
+}
+
+void MainComponent::layoutLocator()
+{
     {
-        auto la = sidebar.removeFromTop (94);
+        auto la = locatorPanel.getLocalBounds();
         locatorArea = la;
+        la = la.withSizeKeepingCentre (juce::jmin (la.getWidth(), 420), juce::jmin (la.getHeight(), 94));
         la = la.reduced (12, 6).withTrimmedLeft (1);
         locatorLabelArea = la.removeFromTop (16);
         la.removeFromTop (4);
@@ -2788,13 +2979,12 @@ void MainComponent::resized()
         rehKey.setBounds (row2.removeFromLeft (w3));  row2.removeFromLeft (6);
         loopKey.setBounds (row2);
     }
-    markers.setBounds (sidebar);
+}
 
-    bridgeView.setBounds (r);
+void MainComponent::layoutBridgePanel()
+{
+    bridgeView.setBounds (bridgePanel.getLocalBounds());
     layoutBridge();
-
-    if (library.isVisible())
-        library.setBounds (getLocalBounds());
 }
 
 } // namespace hawthorne

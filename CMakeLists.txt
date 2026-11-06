@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(Hawthorne VERSION 1.23.0)
+project(Hawthorne VERSION 1.24.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -75,6 +75,7 @@ if(HAWTHORNE_BUILD_APP)
         Source/UI/SyncWindow.cpp
         Source/UI/MainComponent.h
         Source/UI/MainComponent.cpp
+        Source/UI/Layout.cpp
     )
 
     target_compile_definitions(Hawthorne PRIVATE ${COMMON_DEFS}

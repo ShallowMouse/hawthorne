@@ -13,6 +13,7 @@
 #include "SyncWindow.h"
 #include "../Engine/Mtc.h"
 #include "../Updater.h"
+#include "Layout.h"
 
 namespace hawthorne
 {
@@ -39,7 +40,10 @@ class MeterBridge : public juce::Component
 {
 public:
     juce::OwnedArray<ChannelModule> modules;
-    static constexpr int perRow = 8;
+    /** Meters per row (8 / 12 / 16 / 24), or 0: fit them all in without scrolling. */
+    void setPerRow (int n) { perRowSetting = n == 0 || n == 8 || n == 12 || n == 16 || n == 24 ? n : 8; }
+    int  getPerRow() const { return perRowSetting; }
+    int  perRowSetting = 8, perRow = 8;
     bool nrStrip = false;          // the reel uses noise reduction: a strip under each meter
 
     /** Lays out for a given width; returns the height needed. */
@@ -215,7 +219,7 @@ private:
     std::unique_ptr<Session> session;    // the session it belongs to
 
     juce::TextButton libraryButton { "LIBRARY" }, sheetButton { "SESSION SHEET" },
-                     routingButton { "ROUTING" }, networkButton { "NETWORK" }, syncButton { "TEMPO" }, timecodeButton { "TIMECODE" }, audioButton { "SETTINGS" }, machineButton { "MACHINE" }, helpButton { "?" }, updateButton;
+                     routingButton { "ROUTING" }, networkButton { "NETWORK" }, syncButton { "TEMPO" }, timecodeButton { "TIMECODE" }, audioButton { "SETTINGS" }, machineButton { "MACHINE" }, layoutButton { "LAYOUT" }, helpButton { "?" }, updateButton;
     Updater updater;
 
     TransportKey rtzKey  { "RTZ",  "Return to zero (Enter)",          Colours::mustard },
@@ -264,7 +268,24 @@ private:
     std::unique_ptr<SessionSheetWindow> sheetWindow;
     std::unique_ptr<juce::FileChooser> chooser;
 
-    juce::Rectangle<int> headerArea, deckArea, counterArea, reelInfoArea, statusArea;
+    juce::Rectangle<int> headerArea, deckArea, deckBand, counterArea, reelInfoArea, statusArea;
+
+    // Layout: the panels, docked in the main window or other windows (LAYOUT)
+    Panel bridgePanel { "bridge", "Meters" }, transportPanel { "transport", "Transport" }, masterPanel { "master", "Master" },
+          locatorPanel { "locator", "Autolocator" }, markersPanel { "markers", "Markers" };
+    LayoutManager layout { props };
+    void setupPanels();
+    void showLayoutMenu();
+    void paintTransport (juce::Graphics&);
+    void paintMaster (juce::Graphics&);
+    void paintLocator (juce::Graphics&);
+    void layoutTransport();
+    void layoutMaster();
+    void layoutLocator();
+    void layoutBridgePanel();
+    void repaintPanels();
+    void transportMouseMove (const juce::MouseEvent&);
+    void transportMouseUp (const juce::MouseEvent&);
     juce::String statusText;
     int frame = 0;
     double lastTickMs = 0.0;
