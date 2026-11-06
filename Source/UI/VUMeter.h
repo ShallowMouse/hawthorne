@@ -52,7 +52,14 @@ private:
     juce::String label;
     juce::Image faceCache;
 
-    MachineSkin skin() const { return MachineSkin::forMeters (isMaster ? MachineSkin::currentMaster() : MachineSkin::current()); }
+    MachineSkin skin() const { return MachineSkin::forMeters (isMaster ? MachineSkin::currentMaster() : MachineSkin::current(), style); }
+    int style = -1;
+    bool labelShown = true;
+public:
+    /** This meter's own style (-1 as SETTINGS, 0 as the machine, 1 VU, 2 PPM), and its name plate text. */
+    void setStyle (int s) { if (s != style) { style = s; skinChanged(); } }
+    void showLabel (bool b) { if (b != labelShown) { labelShown = b; repaint(); } }
+private:
     void renderLedFace (juce::Graphics&);
     void renderPpmFace (juce::Graphics&);
     float ppmPos() const;

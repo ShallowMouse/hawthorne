@@ -57,7 +57,7 @@ th { background:#ece2c8; font:700 13px "Courier New", monospace; }
   <a href="#importexport">Import and export</a>
   <div class="h">STUDIO</div>
   <a href="#routing">Routing</a>
-  <a href="#layout">Layout</a>
+  <a href="#layout">Displays</a>
   <a href="#nr">Noise reduction</a>
   <a href="#align">Alignment</a>
   <a href="#latency">Latency and outboard</a>
@@ -184,18 +184,23 @@ th { background:#ece2c8; font:700 13px "Courier New", monospace; }
 
 <p><b>No machine (bit-perfect)</b> is in both columns too: with it, nothing is added on playback or recording &mdash; no saturation, EQ, hiss or wow &mdash; whatever tape the reel is on. The machine room lists the machines oldest first.</p>
 
-<h2 id="layout">Layout (a grid of panels, windows, second screens)</h2>
-<p>The deck is made of panels: <b>Meters</b>, <b>Transport</b>, <b>Master</b>, <b>Autolocator</b> and <b>Markers</b>. Every window is a grid of 12 &times; 8 cells, and each panel covers a block of cells &mdash; in the main window or in any number of extra windows &mdash; or is hidden. <b>LAYOUT</b> in the header:</p>
+<h2 id="layout">Displays (second screens built from blocks)</h2>
+<p>The main window is always the classic deck. <b>Displays</b> are extra windows you build yourself from blocks &mdash; e.g. a wall of meters and a big clock on one screen, the autolocator and markers on another. Every block is live: its keys, knobs and switches work the deck just like the main window's. <b>LAYOUT</b> in the header:</p>
 <ul>
-  <li><b>Edit layout</b>: the grid shows. Drag a panel to move it (into another window too, or outside every window for a new one); drag its corner to change how many cells it covers. Green = it fits; red = it doesn't (over another panel, too small for it to work, or far bigger than it needs) and nothing changes. Right-click a panel to move it to another window or hide it. Press <b>DONE</b> when finished.</li>
-  <li><b>New window</b>: an empty window to put panels in (e.g. the meters on a second screen). Its maximise button (or <b>F11</b>) makes it full screen on the monitor it's on, with no title bar; <b>Esc</b> / F11 or a right-click on an empty cell to leave. Each window remembers its place and full screen. Close a window and its panels go back to the main window where they fit.</li>
-  <li><b>Show</b>: tick panels on or off.</li>
-  <li><b>Meters per row</b>: 8, 12, 16, 24 or <b>Fit</b> (as big as they can be with every track showing, no scrolling).</li>
-  <li><b>Save layout as / Load layout / Delete layout / Reset to default</b>: named layouts, e.g. "Tracking - 2 screens" or "Laptop".</li>
+  <li><b>Edit displays</b>: the grid shows (12 &times; 8 cells on every display). <b>Right-click an empty cell</b> to add a block there; drag a block to move it (to another display too); drag its corner to resize; right-click a block for its settings, to move it to another display, or to remove it. Green = it fits; red = it doesn't (over another block, too small to work, or far bigger than it needs). Press <b>DONE</b> when finished.</li>
+  <li><b>Blocks</b> (use any as often as you like):
+    <ul>
+      <li><b>Meters</b> &mdash; per row (4, 6, 8, 12, 16, 24 or Fit), from / to track (e.g. 1&ndash;12 on one, 13&ndash;24 on another), meter style (as SETTINGS, as the machine, VU, PPM), track names on / off. ARM and NR work as on the main bridge.</li>
+      <li><b>Time</b> &mdash; the counter, as big as its cells; min:sec, bars.beats or timecode (click it to change).</li>
+      <li><b>Transport keys</b> &mdash; choose which keys (RTZ, rewind, fast forward, CUE, STOP, PLAY, REC, MARK, CLICK).</li>
+      <li><b>Speed / varispeed</b>, <b>Tempo and sync</b>, <b>Master</b> (meters, which master, ARM, TAPE), <b>Autolocator</b>, <b>Markers</b>.</li>
+    </ul></li>
+  <li><b>New display</b>; each display's menu has <b>Full screen</b> (or its maximise button, or F11: the whole monitor it's on, no title bar; Esc / F11 or right-click to leave) and <b>Close</b>. Displays remember where they were and whether they were full screen.</li>
+  <li><b>Save displays as / Load displays / Delete saved displays / Close all displays</b>: named setups, e.g. "Tracking - 2 screens".</li>
+  <li><b>Main window: meters per row</b>: 8, 12, 16, 24 or Fit.</li>
 </ul>
-<p>Windows can't be made smaller than their panels work at; if a screen is smaller still, panels scale down rather than break. The transport grows with its cells (bigger counter and keys).</p>
+<p>A display can't be made smaller than its blocks work at; on a small screen they scale down rather than break. Displays are yours, not the reel's: they stay whichever reel is loaded. Transport keys (space, R, M...) work from any display.</p>
 <p><b>Window buttons</b>: Hawthorne draws its own title bars. In the main window, minimise / maximise / close sit right of FULL SCREEN; drag the header to move the window, double-click it to maximise or restore.</p>
-<p>The layout is yours, not the reel's: it stays the same whichever reel is loaded. Transport keys (space, R, M...) work from any window.</p>
 
 <h2 id="nr">Noise reduction (Dolby A, Dolby SR, dbx)</h2>
 <p>Each reel can use a noise-reduction system, chosen when it's made (New Reel, New Session, Import recordings) and changeable from <b>MACHINE &rarr; Noise reduction</b>. Like the real racks, it <b>encodes</b> what you record (printed into the tape files) and <b>decodes</b> on playback, after the tape and its hiss &mdash; so the programme comes back as it went in and the hiss is pushed down.</p>

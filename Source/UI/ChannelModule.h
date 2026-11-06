@@ -18,6 +18,7 @@ class ChannelModule : public juce::Component
 {
 public:
     explicit ChannelModule (int index);
+    int getIndex() const { return index; }
 
     VUMeter& getMeter() { return meter; }
 

@@ -146,10 +146,10 @@ struct MachineSkin
     static int& meterChoice() { static int m = 0; return m; }
 
     /** A skin with the meter style chosen in SETTINGS applied. */
-    static MachineSkin forMeters (const MachineSkin& base)
+    static MachineSkin forMeters (const MachineSkin& base, int choice = -1)
     {
         auto s = base;
-        const int choice = meterChoice();
+        if (choice < 0) choice = meterChoice();
         // Keep the machine's own face (colours, lighting, needle); only the scale and the
         // ballistics change.
         if (choice == 1 && s.meter != Meter::vu)

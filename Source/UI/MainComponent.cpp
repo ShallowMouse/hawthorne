@@ -1,5 +1,6 @@
 #include "MainComponent.h"
 #include "AlignmentPanel.h"
+#include "Blocks.h"
 #include "UIHelpers.h"
 #include "TapeChoice.h"
 #include "MachineSkin.h"
@@ -856,12 +857,12 @@ void MainComponent::showLibrary (bool show)
         library.setVisible (true);
         library.toFront (true);
         library.grabKeyboardFocus();
-        layout.setFloatingVisible (false);
+        layout.setVisible (false);
     }
     else if (reel != nullptr)
     {
         library.setVisible (false);
-        layout.setFloatingVisible (true);
+        layout.setVisible (true);
         grabKeyboardFocus();
     }
 }
@@ -1004,14 +1005,7 @@ void MainComponent::rebuildModules()
     for (int t = 0; t < n; ++t)
     {
         auto* m = bridge.modules.add (new ChannelModule (t));
-        m->onArm = [this] (int track, bool arm)
-        {
-            if (! engine.isRecording())     // arming is locked during a take
-                engine.setArmed (track, arm);
-        };
-        m->onRenameRequest = [this] (int track) { renameTrack (track); };
-        m->onMenuRequest   = [this] (int track) { showTrackMenu (track); };
-        m->onNrMode        = [this] (int track, int mode) { engine.setTrackNr (track, mode); };
+        wireModule (*m);
         bridge.addAndMakeVisible (m);
     }
 
@@ -1019,6 +1013,19 @@ void MainComponent::rebuildModules()
     refreshTrackNames();
     refreshInputChoices();
     layoutBridge();
+    for (auto* b : layout.getBlocks()) b->reelChanged();
+}
+
+void MainComponent::wireModule (ChannelModule& m)
+{
+    m.onArm = [this] (int track, bool arm)
+    {
+        if (! engine.isRecording())     // arming is locked during a take
+            engine.setArmed (track, arm);
+    };
+    m.onRenameRequest = [this] (int track) { renameTrack (track); };
+    m.onMenuRequest   = [this] (int track) { showTrackMenu (track); };
+    m.onNrMode        = [this] (int track, int mode) { engine.setTrackNr (track, mode); };
 }
 
 void MainComponent::layoutBridge()
@@ -1041,6 +1048,7 @@ void MainComponent::refreshTrackNames()
 
     for (int t = 0; t < bridge.modules.size(); ++t)
         bridge.modules[t]->setTrackName (reel->tracks[(size_t) t].name);
+    for (auto* b : layout.getBlocks()) b->reelChanged();
 
     if (routingWindow != nullptr)
         routingWindow->getMatrix().repaint();
@@ -1279,6 +1287,7 @@ void MainComponent::applySkin()
     bridge.repaint();
     tempoBox.repaint();
     repaintPanels();
+    for (auto* b : layout.getBlocks()) b->reelChanged();
 }
 
 void MainComponent::showManual()
@@ -2066,32 +2075,32 @@ void MainComponent::setupPanels()
     bridgePanel.onLayout = [this] { layoutBridgePanel(); };
     bridgePanel.onMouseUp = [this] (const juce::MouseEvent& e) { if (e.mods.isPopupMenu()) showLayoutMenu(); };
 
-    // the default: a 12 x 8 grid in the main window
-    layout.addPanel (bridgePanel,    { 0, 0, 10, 7 });
-    layout.addPanel (masterPanel,    { 10, 0, 2, 2 });
-    layout.addPanel (locatorPanel,   { 10, 2, 2, 1 });
-    layout.addPanel (markersPanel,   { 10, 3, 2, 4 });
-    layout.addPanel (transportPanel, { 0, 7, 12, 1 });
+    // the main window: the classic deck (a fixed layout - see resized())
+    for (auto* p : { &bridgePanel, &transportPanel, &masterPanel, &locatorPanel, &markersPanel })
+        addAndMakeVisible (p, 0);         // (behind the library)
+
+    // Displays: extra windows built from blocks
+    layout.blockTypes = {
+        { "meters",      "Meters",        { 8, 5 } },
+        { "time",        "Time",          { 4, 2 } },
+        { "transport",   "Transport keys", { 6, 1 } },
+        { "varispeed",   "Speed / varispeed", { 3, 1 } },
+        { "tempo",       "Tempo and sync", { 2, 1 } },
+        { "master",      "Master",        { 2, 2 } },
+        { "locator",     "Autolocator",   { 2, 1 } },
+        { "markers",     "Markers",       { 2, 3 } },
+    };
+    layout.createBlock = [this] (const juce::String& type) { return createDeckBlock (*this, type); };
     layout.onKey = [this] (const juce::KeyPress& k) { return keyPressed (k); };
     layout.onChanged = [this]
     {
-        // the main window can't be made smaller than its panels work at (up to the screen's size)
-        if (auto* w = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent()))
-        {
-            const auto m = layout.minimumHostSize (0);
-            const auto* d = juce::Desktop::getInstance().getDisplays().getDisplayForRect (w->getScreenBounds());
-            const auto screen = d != nullptr ? d->userArea : juce::Rectangle<int> (0, 0, 1920, 1080);
-            w->setResizeLimits (juce::jlimit (1000, juce::jmax (1000, screen.getWidth()), m.x),
-                                juce::jlimit (500, juce::jmax (500, screen.getHeight()), m.y + 72), 20000, 20000);
-        }
         layoutButton.setButtonText (layout.isEditing() ? "DONE" : "LAYOUT");
         layoutButton.setColour (juce::TextButton::buttonColourId, layout.isEditing() ? Colours::mustard : Colours::panelLight);
         layoutButton.setColour (juce::TextButton::textColourOffId, layout.isEditing() ? juce::Colours::black : Colours::text);
     };
-    addAndMakeVisible (layout.mainHost(), 0);         // (behind the library)
 
     bridge.setPerRow (props.getUserSettings()->getIntValue ("metersPerRow", 8));
-    layoutButton.setTooltip ("Layout: show / hide panels, put them in other windows (second screen), save layouts");
+    layoutButton.setTooltip ("Displays: extra windows (a second screen...) built from blocks - meters, time, transport, varispeed...");
     layoutButton.onClick = [this] { if (layout.isEditing()) layout.setEditing (false); else showLayoutMenu(); };
     layout.restore();
 }
@@ -2099,35 +2108,36 @@ void MainComponent::setupPanels()
 void MainComponent::showLayoutMenu()
 {
     juce::PopupMenu m;
-    m.addItem (1, "Edit layout (move / resize panels on the grid)...");
-    m.addItem (2, "New window");
+    m.addSectionHeader ("DISPLAYS");
+    m.addItem (1, "Edit displays (add / move / size blocks)...");
+    m.addItem (2, "New display");
+    for (int d = 1; d <= layout.numDisplays(); ++d)
+    {
+        juce::PopupMenu dm;
+        dm.addItem (500 + d, layout.isFull (d) ? "Exit full screen" : "Full screen");
+        dm.addItem (600 + d, "Close");
+        m.addSubMenu ("Display " + juce::String (d), dm);
+    }
     m.addSeparator();
-    m.addSectionHeader ("SHOW");
-    int id = 10;
-    for (auto* p : { &bridgePanel, &transportPanel, &masterPanel, &locatorPanel, &markersPanel })
-        m.addItem (id++, p->title, true, layout.isShown (*p));
+    const auto presets = layout.presetNames();
+    juce::PopupMenu load, del;
+    for (int i = 0; i < presets.size(); ++i) { load.addItem (300 + i, presets[i]); del.addItem (400 + i, presets[i]); }
+    m.addSubMenu ("Load displays", load, ! presets.isEmpty());
+    m.addItem (3, "Save displays as...");
+    m.addSubMenu ("Delete saved displays", del, ! presets.isEmpty());
+    m.addItem (4, "Close all displays", layout.numDisplays() > 0);
     m.addSeparator();
     juce::PopupMenu rows;
     for (int n : { 8, 12, 16, 24 })
         rows.addItem (100 + n, juce::String (n) + " per row", true, bridge.getPerRow() == n);
     rows.addItem (100, "Fit (no scrolling)", true, bridge.getPerRow() == 0);
-    m.addSubMenu ("Meters per row", rows);
-    m.addSeparator();
-    const auto presets = layout.presetNames();
-    juce::PopupMenu load, del;
-    for (int i = 0; i < presets.size(); ++i) { load.addItem (300 + i, presets[i]); del.addItem (400 + i, presets[i]); }
-    m.addSubMenu ("Load layout", load, ! presets.isEmpty());
-    m.addItem (3, "Save layout as...");
-    m.addSubMenu ("Delete layout", del, ! presets.isEmpty());
-    m.addItem (4, "Reset to default");
+    m.addSubMenu ("Main window: meters per row", rows);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&layoutButton), [this, presets] (int r)
     {
         if (r <= 0) return;
-        Panel* ps[] = { &bridgePanel, &transportPanel, &masterPanel, &locatorPanel, &markersPanel };
         if (r == 1) layout.setEditing (true);
-        else if (r == 2) layout.newWindow();
-        else if (r == 4) layout.resetToDefault();
-        else if (r >= 10 && r < 15) layout.setShown (*ps[r - 10], ! layout.isShown (*ps[r - 10]));
+        else if (r == 2) layout.newDisplay();
+        else if (r == 4) layout.removeAllDisplays();
         else if (r >= 100 && r < 200)
         {
             bridge.setPerRow (r - 100);
@@ -2137,10 +2147,12 @@ void MainComponent::showLayoutMenu()
         }
         else if (r >= 300 && r < 400) layout.loadPreset (presets[r - 300]);
         else if (r >= 400 && r < 500) layout.deletePreset (presets[r - 400]);
+        else if (r >= 500 && r < 600) layout.toggleFullScreen (r - 500);
+        else if (r >= 600 && r < 700) layout.closeDisplay (r - 600);
         else if (r == 3)
         {
-            auto* w = new juce::AlertWindow ("Save layout", "A name for this layout (windows, panels and where they are):", juce::MessageBoxIconType::NoIcon, this);
-            w->addTextEditor ("name", "Layout " + juce::String (presets.size() + 1));
+            auto* w = new juce::AlertWindow ("Save displays", "A name for these displays (windows, blocks and their settings):", juce::MessageBoxIconType::NoIcon, this);
+            w->addTextEditor ("name", "Displays " + juce::String (presets.size() + 1));
             w->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
             w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
             w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int res)
@@ -2553,6 +2565,16 @@ void MainComponent::timerCallback()
     recKey.setLit (rec);
     stopKey.setLit (! rolling && windDir == 0);
 
+    frameDt = dt;
+    frameFlash = flash;
+    for (int t = 0; t < juce::jmin (96, bridge.modules.size()); ++t)
+    {
+        frameRms[(size_t) t] = engine.popTrackRms (t);
+        framePeak[(size_t) t] = engine.popTrackPeak (t);
+    }
+    frameMasterRms = { engine.popMasterRms (0), engine.popMasterRms (1) };
+    frameMasterPeak = { engine.popMasterPeak (0), engine.popMasterPeak (1) };
+
     for (int t = 0; t < bridge.modules.size(); ++t)
     {
         auto* m = bridge.modules[t];
@@ -2568,7 +2590,7 @@ void MainComponent::timerCallback()
             }
             m->setNr (sys, mode, lamp);
         }
-        m->getMeter().update (engine.popTrackRms (t), engine.popTrackPeak (t), dt);
+        m->getMeter().update (frameRms[(size_t) juce::jmin (t, 95)], framePeak[(size_t) juce::jmin (t, 95)], dt);
     }
 
     masterArmKey.setLit (engine.isMasterArmed() && (! rec || flash));
@@ -2578,8 +2600,9 @@ void MainComponent::timerCallback()
                                 (juce::Component*) &variResetButton })
         c->setEnabled (reel != nullptr && ! rec);       // speed is held while recording
     monitorKey.setLit (engine.isMonitoringMaster());
-    masterL.update (engine.popMasterRms (0), engine.popMasterPeak (0), dt);
-    masterR.update (engine.popMasterRms (1), engine.popMasterPeak (1), dt);
+    masterL.update (frameMasterRms[0], frameMasterPeak[0], dt);
+    masterR.update (frameMasterRms[1], frameMasterPeak[1], dt);
+    for (auto* b : layout.getBlocks()) b->refresh();            // the displays
     markers.setPlayhead (engine.getPosition());
 
     if (frame % 15 == 0)
@@ -2681,29 +2704,9 @@ void MainComponent::paint (juce::Graphics& g)
     g.drawText (statusText, statusArea.reduced (12, 0), juce::Justification::centredLeft);
 }
 
-void MainComponent::paintTransport (juce::Graphics& g)
+void MainComponent::paintCounter (juce::Graphics& g, juce::Rectangle<int> counterArea, int modeWanted)
 {
-    // Transport deck, styled after the machine
     const auto& sk = MachineSkin::current();
-    {
-        juce::ColourGradient deckGrad (sk.deck, 0.0f, (float) deckArea.getY(), sk.deckLow, 0.0f, (float) deckArea.getBottom(), false);
-        g.setGradientFill (deckGrad);
-        g.fillRect (deckArea);
-        if (sk.brushed)
-        {
-            juce::Random rnd (1234);
-            for (int y = deckArea.getY(); y < deckArea.getBottom(); ++y)
-            {
-                g.setColour ((rnd.nextBool() ? juce::Colours::white : juce::Colours::black).withAlpha (0.02f + 0.04f * rnd.nextFloat()));
-                g.drawHorizontalLine (y, (float) deckArea.getX(), (float) deckArea.getRight());
-            }
-        }
-        g.setColour (sk.deckEdge);
-        g.drawHorizontalLine (deckArea.getY(), 0.0f, (float) deckArea.getWidth());
-        g.setColour (sk.deck.brighter (0.25f).withAlpha (0.5f));
-        g.drawHorizontalLine (deckArea.getY() + 1, 0.0f, (float) deckArea.getWidth());
-    }
-
     // counter window
     const bool drum = sk.counter == MachineSkin::Counter::drum;
     g.setColour (sk.deckEdge.darker (0.4f));
@@ -2726,7 +2729,7 @@ void MainComponent::paintTransport (juce::Graphics& g)
         const auto rate = engine.getTimecodeRate();
         const juce::String tc = timecode::fromFrames ((juce::int64) std::floor (engine.timecodeFramesAt ((double) pos) + 1.0e-9), rate)
                                     .toString (timecode::isDrop (rate));
-        const int mode = (counterMode == 1 && bbt.isEmpty()) ? 0 : counterMode;
+        const int mode = (modeWanted == 1 && bbt.isEmpty()) ? 0 : modeWanted;
         const juce::String big = mode == 1 ? bbt : (mode == 2 ? tc : ms);
 
         const auto bigFont = monoFont (juce::jmin ((float) c.getHeight() * 0.95f, (float) c.getWidth() / 7.6f), true);
@@ -2786,6 +2789,33 @@ void MainComponent::paintTransport (juce::Graphics& g)
         g.setColour (ink.withAlpha (0.5f));
         g.drawText (mode == 2 ? bbtLine : "TC " + tc, bottom, juce::Justification::centredRight);
     }
+
+}
+
+void MainComponent::paintTransport (juce::Graphics& g)
+{
+    // Transport deck, styled after the machine
+    const auto& sk = MachineSkin::current();
+    {
+        juce::ColourGradient deckGrad (sk.deck, 0.0f, (float) deckArea.getY(), sk.deckLow, 0.0f, (float) deckArea.getBottom(), false);
+        g.setGradientFill (deckGrad);
+        g.fillRect (deckArea);
+        if (sk.brushed)
+        {
+            juce::Random rnd (1234);
+            for (int y = deckArea.getY(); y < deckArea.getBottom(); ++y)
+            {
+                g.setColour ((rnd.nextBool() ? juce::Colours::white : juce::Colours::black).withAlpha (0.02f + 0.04f * rnd.nextFloat()));
+                g.drawHorizontalLine (y, (float) deckArea.getX(), (float) deckArea.getRight());
+            }
+        }
+        g.setColour (sk.deckEdge);
+        g.drawHorizontalLine (deckArea.getY(), 0.0f, (float) deckArea.getWidth());
+        g.setColour (sk.deck.brighter (0.25f).withAlpha (0.5f));
+        g.drawHorizontalLine (deckArea.getY() + 1, 0.0f, (float) deckArea.getWidth());
+    }
+
+    paintCounter (g, counterArea, counterMode);
 
     if (reel != nullptr)
     {
@@ -2931,7 +2961,14 @@ void MainComponent::resized()
     }
 
     statusArea = r.removeFromBottom (24);
-    layout.mainHost().setBounds (r);
+    // the classic deck: transport along the bottom, master / autolocator / markers on the
+    // right, the meter bridge filling the rest
+    transportPanel.setBounds (r.removeFromBottom (96));
+    auto sidebar = r.removeFromRight (300);
+    masterPanel.setBounds (sidebar.removeFromTop (204));
+    locatorPanel.setBounds (sidebar.removeFromTop (94));
+    markersPanel.setBounds (sidebar);
+    bridgePanel.setBounds (r);
 
     if (library.isVisible())
         library.setBounds (getLocalBounds());

@@ -76,6 +76,7 @@ if(HAWTHORNE_BUILD_APP)
         Source/UI/MainComponent.h
         Source/UI/MainComponent.cpp
         Source/UI/Layout.cpp
+        Source/UI/Blocks.cpp
     )
 
     target_compile_definitions(Hawthorne PRIVATE ${COMMON_DEFS}

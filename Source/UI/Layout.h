@@ -8,44 +8,62 @@ namespace hawthorne
 
 //==============================================================================
 /**
-    Hawthorne's layout: a grid in every window. The UI is split into panels (meters,
-    transport, master, autolocator, markers); each one covers a block of grid cells in the
-    main window or in any number of extra windows, or is hidden. Layouts are global, with
-    named presets.
+    Displays: extra windows (second screens...) built from blocks - meters, time,
+    transport, varispeed, tempo, master, autolocator, markers. The main window stays the
+    classic Hawthorne deck.
 
-    LAYOUT -> Edit layout: the grid shows; drag a panel to move it (into any window, or out
-    of every window for a new one), drag its corner to change how many cells it covers. A
-    panel only goes where it fits: never over another, never smaller than it can work at or
-    bigger than makes sense. Windows can't be made too small for what's in them, and if a
-    screen is still too small, a panel scales down rather than breaking.
+    Every display is a grid of 12 x 8 cells. A block covers a block of cells; it has its own
+    settings (meters per row, which tracks, VU / PPM, the time's format, which transport
+    keys...), and any kind can be used as often as you like. LAYOUT -> Edit displays: right-click
+    an empty cell to add a block there, drag a block to move it (to another display too),
+    drag its corner to resize, right-click it for its settings. A block only goes where it
+    fits: never over another, never smaller than it works at or far bigger than it needs.
+    A display can't be made smaller than its blocks work at; on a small screen they scale
+    down rather than break. Layouts are global, with named presets.
 */
 class LayoutManager;
 
 //==============================================================================
-/** One panel. Its owner fills in how it paints and lays out (in its own coordinates). */
+/** A block. Its type fills in how it paints, lays out and what settings it has. */
 class Panel : public juce::Component
 {
 public:
-    Panel (const juce::String& id, const juce::String& title);
+    Panel (const juce::String& type, const juce::String& title);
 
-    const juce::String id, title;
+    juce::String id;                     // unique in the layout
+    const juce::String type, title;
+    juce::NamedValueSet settings;
 
     // Sizes it works at, in pixels (0 = no maximum)
     int minW = 200, minH = 100, maxW = 0, maxH = 0;
+
+    /** Settings for the block's menu (ids 1..999), and what to do when one's picked. */
+    virtual void addSettings (juce::PopupMenu&) {}
+    virtual void settingChosen (int) {}
+    /** Settings loaded / changed: rebuild. */
+    virtual void settingsChanged() {}
+    /** About 30 times a second: follow the deck. */
+    virtual void refresh() {}
+    /** A different reel (or its tracks / machines changed). */
+    virtual void reelChanged() {}
 
     std::function<void (juce::Graphics&)> onPaint;
     std::function<void()> onLayout;
     std::function<void (const juce::MouseEvent&)> onMouseMove, onMouseUp;
 
-    void paint (juce::Graphics& g) override  { if (onPaint) onPaint (g); }
-    void resized() override                  { if (onLayout) onLayout(); overlay.setBounds (getLocalBounds()); }
     void mouseMove (const juce::MouseEvent& e) override { if (onMouseMove) onMouseMove (e); }
     void mouseUp (const juce::MouseEvent& e) override   { if (onMouseUp) onMouseUp (e); }
+    void paint (juce::Graphics& g) override  { if (onPaint) onPaint (g); }
+    void resized() override                  { if (onLayout) onLayout(); overlay.setBounds (getLocalBounds()); }
 
     void setEditing (bool on) { overlay.setVisible (on); if (on) overlay.toFront (false); }
 
+    int  setting (const juce::Identifier& n, int def) const { return settings.getWithDefault (n, def); }
+    void set (const juce::Identifier& n, const juce::var& v);    // and save, re-layout
+
+    LayoutManager* manager = nullptr;
+
 private:
-    friend class LayoutManager;
     struct Overlay : juce::Component
     {
         Panel& panel;
@@ -57,14 +75,13 @@ private:
         void mouseUp (const juce::MouseEvent&) override;
         bool overCorner (juce::Point<int>) const;
         bool dragging = false, resizing = false;
-        juce::Point<int> grabCell;           // which of the panel's cells it was picked up by
+        juce::Point<int> grabCell;
     };
     Overlay overlay { *this };
-    LayoutManager* manager = nullptr;
 };
 
 //==============================================================================
-/** One window's grid. */
+/** One display's grid. */
 class PanelHost : public juce::Component
 {
 public:
@@ -76,14 +93,14 @@ public:
     void paintOverChildren (juce::Graphics&) override;
     void mouseUp (const juce::MouseEvent&) override;
 
-    juce::Rectangle<int> cellArea (juce::Rectangle<int> cells) const;    // cells -> pixels
-    juce::Point<int> cellAt (juce::Point<int> local) const;              // pixels -> cell (clamped)
+    juce::Rectangle<int> cellArea (juce::Rectangle<int> cells) const;
+    juce::Point<int> cellAt (juce::Point<int> local) const;
     float cellW() const { return (float) getWidth() / (float) cols; }
     float cellH() const { return (float) getHeight() / (float) rows; }
 
     LayoutManager& manager;
-    int windowIndex;                      // 0 = the main window
-    juce::Rectangle<int> target;          // while dragging: the cells it would go to
+    int windowIndex;                      // 1, 2 ... (display number)
+    juce::Rectangle<int> target;
     bool targetOK = false;
 };
 
@@ -91,16 +108,17 @@ public:
 class LayoutManager
 {
 public:
+    struct BlockType { juce::String type, name; juce::Point<int> defaultCells; };
+
     explicit LayoutManager (juce::ApplicationProperties&);
     ~LayoutManager();
 
-    /** cells: where it goes in the main window by default. */
-    void addPanel (Panel&, juce::Rectangle<int> defaultCells);
-    PanelHost& mainHost() { return main; }
+    /** The kinds of block, and how to make one. */
+    std::vector<BlockType> blockTypes;
+    std::function<std::unique_ptr<Panel> (const juce::String& type)> createBlock;
 
-    /** Load the saved layout (or the default) and put everything in place. */
     void restore();
-    void resetToDefault();
+    void removeAllDisplays();
 
     // Presets
     juce::StringArray presetNames() const;
@@ -108,22 +126,26 @@ public:
     void loadPreset (const juce::String& name);
     void deletePreset (const juce::String& name);
 
+    // Displays
+    int  numDisplays() const { return (int) windows.size(); }
+    int  newDisplay (juce::Point<int> screenPos = {});
+    void closeDisplay (int index);
+    bool isFull (int index) const;
+    void toggleFullScreen (int index);
+    void setVisible (bool);               // (hidden while the library is up)
+
     // Editing
     bool isEditing() const { return editing; }
     void setEditing (bool);
-    bool isShown (const Panel&) const;
-    void setShown (Panel&, bool);
-    int  newWindow (juce::Point<int> screenPos = {});
-    int  numWindows() const { return (int) windows.size() + 1; }
-    void showPanelMenu (Panel&);
-    void showWindowMenu (int window);
-    void setFloatingVisible (bool);       // (hidden while the library is up)
-    void toggleWindowFullScreen (int window);
+    void addBlock (const juce::String& type, int display, juce::Point<int> cell);
+    void removeBlock (Panel&);
+    void showBlockMenu (Panel&);
+    void showDisplayMenu (int display, juce::Point<int> cell);
 
-    /** The smallest the main window's grid can be for what's in it (so nothing gets cramped). */
-    juce::Point<int> minimumHostSize (int window) const;
+    /** Every block (for the deck to keep them up to date). */
+    const juce::OwnedArray<Panel>& getBlocks() const { return blocks; }
 
-    std::function<bool (const juce::KeyPress&)> onKey;     // keys pressed in other windows
+    std::function<bool (const juce::KeyPress&)> onKey;     // keys pressed in the displays
     std::function<void()> onChanged;
 
     //--------------------------------------------------------------------------
@@ -131,11 +153,11 @@ public:
     void layoutHost (PanelHost&);
     void dragPanel (Panel&, juce::Point<int> screenPos, juce::Point<int> grabCell, bool finished);
     void resizePanel (Panel&, juce::Point<int> screenPos, bool finished);
-    void windowClosed (int index);
     void windowMoved();
+    void settingsChanged (Panel&);
 
 private:
-    struct Place { juce::String panel; int window = 0; juce::Rectangle<int> cells; };
+    struct Place { juce::String block; int window = 1; juce::Rectangle<int> cells; };
     struct Floating;
 
     Panel* find (const juce::String& id) const;
@@ -144,23 +166,22 @@ private:
     const PanelHost* host (int window) const;
     bool fits (const Panel&, int window, juce::Rectangle<int> cells, const Place* ignore) const;
     bool findSpot (const Panel&, int window, juce::Rectangle<int>& cells) const;
+    juce::Point<int> minimumHostSize (int window) const;
     void clearTargets();
     void apply();
     void save();
     std::unique_ptr<juce::XmlElement> toXml() const;
     void fromXml (const juce::XmlElement&);
-    void defaults();
     void updateLimits();
+    juce::String newId() const;
 
     juce::ApplicationProperties& props;
-    PanelHost main { *this, 0 };
-    juce::Array<Panel*> panels;
-    std::vector<Place> defaultPlaces;
-    std::vector<Place> places;                   // only shown panels
+    juce::OwnedArray<Panel> blocks;
+    std::vector<Place> places;
     std::vector<std::unique_ptr<Floating>> windows;
     struct WindowState { juce::Rectangle<int> bounds; bool full = false; };
     std::vector<WindowState> windowStates;
-    bool editing = false, floatingVisible = true, applying = false;
+    bool editing = false, visible = true, applying = false;
 };
 
 } // namespace hawthorne

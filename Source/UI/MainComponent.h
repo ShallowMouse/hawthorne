@@ -27,6 +27,7 @@ public:
         : juce::Button (label), lamp (lampColour) { setTooltip (tip); setWantsKeyboardFocus (false); }
 
     void setLit (bool b) { if (b != lit) { lit = b; repaint(); } }
+    bool isLit() const { return lit; }
     void paintButton (juce::Graphics&, bool highlighted, bool down) override;
 
 private:
@@ -278,9 +279,19 @@ private:
     juce::Rectangle<int> headerArea, deckArea, deckBand, counterArea, reelInfoArea, statusArea;
 
     // Layout: the panels, docked in the main window or other windows (LAYOUT)
+    // the main window's sections (a fixed layout), and the extra displays built from blocks
     Panel bridgePanel { "bridge", "Meters" }, transportPanel { "transport", "Transport" }, masterPanel { "master", "Master" },
           locatorPanel { "locator", "Autolocator" }, markersPanel { "markers", "Markers" };
     LayoutManager layout { props };
+    void paintCounter (juce::Graphics&, juce::Rectangle<int> area, int mode);
+    // this frame's meter readings (read once, shown on the main window and the displays)
+    std::array<float, 96> frameRms {}, framePeak {};
+    std::array<float, 2> frameMasterRms {}, frameMasterPeak {};
+    float frameDt = 1.0f / 30.0f;
+    bool frameFlash = false;
+    void wireModule (ChannelModule&);
+    friend class MetersBlock; friend class TimeBlock; friend class TransportBlock; friend class VarispeedBlock;
+    friend class TempoBlock; friend class MasterBlock; friend class LocatorBlock; friend class MarkersBlock;
     void setupPanels();
     void showLayoutMenu();
     void paintTransport (juce::Graphics&);

@@ -429,7 +429,7 @@ void VUMeter::paint (juce::Graphics& g)
 
     g.setColour (sk.plateText);
     g.setFont (monoFont (juce::jmin (plate.getHeight() * 0.75f, 14.0f), true));
-    g.drawText (label, plate.reduced (lampD * 2.2f, 0.0f), juce::Justification::centred, true);
+    if (labelShown) g.drawText (label, plate.reduced (lampD * 2.2f, 0.0f), juce::Justification::centred, true);
 
     drawnNeedle = needle;
 }
