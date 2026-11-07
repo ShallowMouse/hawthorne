@@ -1,4 +1,5 @@
 #include "NetworkWindow.h"
+#include "../Melville.h"
 #include "UIHelpers.h"
 
 namespace hawthorne
@@ -14,7 +15,7 @@ NetworkPanel::NetworkPanel (NetReceiver& r) : rx (r)
     latency.setRange (1.0, 100.0, 0.5);
     latency.setValue (rx.getTargetLatencyMs(), juce::dontSendNotification);
     latency.setTextValueSuffix (" ms");
-    latency.setTooltip ("Smallest network buffer. Hawthorne measures each sender and uses the smallest buffer that won't drop out "
+    latency.setTooltip ("Smallest network buffer. It measures each sender and uses the smallest buffer that won't drop out "
                         "(it grows by itself if needed). Raise this only for extra safety.");
     latency.onValueChange = [this] { rx.setTargetLatencyMs (latency.getValue()); };
     latency.onDragEnd = [this] { if (onChanged) onChanged(); };
@@ -27,7 +28,7 @@ NetworkPanel::NetworkPanel (NetReceiver& r) : rx (r)
 
 void NetworkPanel::addByAddress()
 {
-    auto* w = new juce::AlertWindow ("Add sender by address", "IP address of the PC running Hawthorne Link:",
+    auto* w = new juce::AlertWindow ("Add sender by address", melville::isHosted() ? "IP address of the PC running the Link sender:" : "IP address of the PC running Hawthorne Link:",
                                      juce::MessageBoxIconType::NoIcon, this);
     w->addTextEditor ("ip", "", "Address:");
     w->addButton ("Add", 1, juce::KeyPress (juce::KeyPress::returnKey));
@@ -141,14 +142,18 @@ void NetworkPanel::paint (juce::Graphics& g)
 
     g.setColour (Colours::mustard);
     g.setFont (monoFont (15.0f, true));
-    g.drawText ("HAWTHORNE LINK", 16, 12, 300, 24, juce::Justification::centredLeft);
+    g.drawText (melville::isHosted() ? "MELVILLE LINK" : "HAWTHORNE LINK", 16, 12, 300, 24, juce::Justification::centredLeft);
 
     g.setColour (Colours::textDim);
     g.setFont (uiFont (13.0f));
-    g.drawFittedText (rx.isRunning()
-                          ? "Run Hawthorne Link on the other PC. Senders on this network appear below; connect one and its "
-                            "channels appear as NET inputs in ROUTING. Link both MOTUs with word clock for bit-perfect transfer."
-                          : "The network couldn't be opened (is another copy of Hawthorne running?).",
+    g.drawFittedText (! rx.isRunning()
+                          ? (melville::isHosted() ? "The network couldn't be opened (is another copy of MELVILLE or Hawthorne running?)."
+                                                  : "The network couldn't be opened (is another copy of Hawthorne running?).")
+                          : melville::isHosted()
+                              ? "Run the Link sender on the other PC (THOREAU, PEQUOD Host). Senders on this network appear below; connect one and its "
+                                "channels appear as jacks on the MELVILLE LINK patch panel. Link both interfaces with word clock for bit-perfect transfer."
+                              : "Run Hawthorne Link on the other PC. Senders on this network appear below; connect one and its "
+                                "channels appear as NET inputs in ROUTING. Link both MOTUs with word clock for bit-perfect transfer.",
                       helpArea, juce::Justification::topLeft, 3);
 
     g.setFont (monoFont (11.0f, true));
