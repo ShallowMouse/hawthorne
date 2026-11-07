@@ -139,8 +139,9 @@ public:
     void setNetworkProcessedElsewhere (bool b) noexcept { netElsewhere = b; }
     /** Inside MELVILLE: each track records whatever is cabled to its TRACK IN jack on
         MELVILLE's patchbay (device input t), and the 2-track master takes its MASTER IN jacks
-        (ROUTE master L / R), and LTC chase reads its LTC IN jack (device input 96), whatever
-        the reel's own routing says. */
+        (ROUTE master L / R), LTC chase reads its LTC IN jack (device input 96), and the only
+        device output is the click (its CLICK jack); tracks, master and LTC leave by their own
+        jacks. Whatever the reel's own routing says. */
     void setInputsFromPatchbay (bool b) { patchbayInputs = b; rebuildRouting(); }
     bool areInputsFromPatchbay() const noexcept { return patchbayInputs; }
     int trackInputChannel (int t) const noexcept;

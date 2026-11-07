@@ -620,6 +620,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
         engine.setNetworkProcessedElsewhere (true);
         engine.setInputsFromPatchbay (true);
         networkButton.setVisible (false);
+        audioButton.setVisible (false);     // (MELVILLE's INTERFACE picks the device)
     }
     else
     {

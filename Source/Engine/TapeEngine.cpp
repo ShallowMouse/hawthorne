@@ -1839,6 +1839,16 @@ void TapeEngine::rebuildRouting()
         r->ltcOut.assign (reel->ltcOutputs.begin(), reel->ltcOutputs.end());
     }
 
+    if (patchbayInputs)
+    {
+        // Inside MELVILLE: the tracks, the master and LTC leave by their patchbay jacks (TRACK OUT,
+        // MASTER OUT, LTC OUT); Hawthorne's only device output is its CLICK (output 0)
+        for (auto& o : r->outputs) o.clear();
+        for (auto& o : r->masterOut) o.clear();
+        r->ltcOut.clear();
+        r->clickOut = { 0 };
+    }
+
     auto old = std::move (ownedRouting);
     ownedRouting = std::move (r);
     routing.store (ownedRouting.get());
