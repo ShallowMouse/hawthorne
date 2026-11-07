@@ -134,6 +134,9 @@ public:
     /** Hawthorne Link: network inputs (ids NetReceiver::inputBase + ...) become available
         anywhere a device input can be patched. Set before the audio starts. */
     void setNetworkReceiver (NetReceiver* r) noexcept { netRx = r; }
+    /** Inside MELVILLE: MELVILLE runs the receiver's audio each block; Hawthorne only tells
+        the senders where the tape is. */
+    void setNetworkProcessedElsewhere (bool b) noexcept { netElsewhere = b; }
 
     //==========================================================================
     // Masters: stereo mixes recorded onto the reel, aligned with its tracks
@@ -368,6 +371,7 @@ private:
     double posFrac = 0.0;                                  // audio thread: sub-sample tape position
     std::atomic<double> targetRate { 1.0 }, currentRate { 1.0 };
     std::atomic<NetReceiver*> netRx { nullptr };
+    std::atomic<bool> netElsewhere { false };
 
     // Tempo / click (audio thread reads)
     std::atomic<double> tempoSpb { 0.0 }, tempoBarOne { 0.0 }, clickGain { 0.25 };

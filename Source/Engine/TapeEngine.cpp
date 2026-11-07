@@ -154,7 +154,7 @@ void TapeEngine::prepare (double sampleRate, int maxBlockSize,
     ltcDecoder.prepare (sampleRate);
     ltcDecoderCount = 0;
     static_assert (vsChunk <= NetReceiver::maxBlock, "network blocks");
-    if (auto* net = netRx.load())
+    if (auto* net = netRx.load(); net != nullptr && ! netElsewhere.load())
         net->prepare (sampleRate);
 
     auto buildMap = [] (std::array<int, 256>& map, const juce::BigInteger& active)
@@ -580,7 +580,8 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     auto* net = netRx.load (std::memory_order_relaxed);
     if (net != nullptr)
     {
-        net->process (n);
+        if (! netElsewhere.load (std::memory_order_relaxed))
+            net->process (n);
 
         // Hawthorne Sync: where an input sample at the start of this block is recorded on
         // tape (latency compensation included: input sample u lands at P0 + rate * (u - RT)).

@@ -614,6 +614,13 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
 
     // Hawthorne Link: network inputs, ready before the audio starts
     engine.setNetworkReceiver (&netRx);
+    if (melville::isHosted())
+    {
+        // MELVILLE runs the receiver and its settings, and patches its channels where you like
+        engine.setNetworkProcessedElsewhere (true);
+        networkButton.setVisible (false);
+    }
+    else
     {
         juce::String netErr;
         netRx.start (netErr);
@@ -679,8 +686,11 @@ void MainComponent::shutdown()
     deviceManager.closeAudioDevice();
     mtcOutput.close();
     mtcInput.close();
-    saveNetworkSettings();
-    netRx.stop();
+    if (! melville::isHosted())
+    {
+        saveNetworkSettings();
+        netRx.stop();
+    }
     juce::Desktop::setScreenSaverEnabled (true);
 }
 
@@ -2288,7 +2298,7 @@ void MainComponent::updateNetworkInputs()
     // Network channels become inputs in the routing matrix while their sender is connected.
     std::vector<RoutingMatrix::NetInput> inputs;
     juce::String key;
-    for (int slot = 0; slot < NetReceiver::maxSlots; ++slot)
+    for (int slot = 0; slot < NetReceiver::maxSlots && ! melville::isHosted(); ++slot)   // (in MELVILLE they come in on its patchbay)
     {
         const auto st = netRx.getStatus (slot);
         if (st.state == NetReceiver::State::off || st.channels <= 0)
@@ -2991,6 +3001,7 @@ void MainComponent::resized()
         for (auto* b : { &fullScreenButton, &helpButton, &audioButton, &machineButton, &layoutButton, &timecodeButton,
                          &syncButton, &networkButton, &routingButton, &sheetButton, &libraryButton })
         {
+            if (! b->isVisible()) continue;     // (Network, inside MELVILLE)
             b->setBounds (h.removeFromRight (44));
             h.removeFromRight (b == &fullScreenButton || b == &helpButton ? 14 : 6);
         }

@@ -10,6 +10,7 @@
 #include "SessionSheet.h"
 #include "LibraryView.h"
 #include "NetworkWindow.h"
+#include "../Melville.h"
 #include "SyncWindow.h"
 #include "../Engine/Mtc.h"
 #include "../Updater.h"
@@ -215,7 +216,11 @@ private:
     HawthorneLookAndFeel lnf;
     juce::TooltipWindow tooltips { this, 600 };
 
-    NetReceiver netRx;                   // outlives the engine (which reads it on the audio thread)
+    // Hawthorne Link. Inside MELVILLE the receiver is MELVILLE's (its NETWORK panel); Hawthorne
+    // still tells the senders where the tape is and takes their tempo changes.
+    // Outlives the engine (which reads it on the audio thread).
+    std::unique_ptr<NetReceiver> ownNetRx { melville::networkReceiver() == nullptr ? std::make_unique<NetReceiver>() : nullptr };
+    NetReceiver& netRx { ownNetRx != nullptr ? *ownNetRx : *melville::networkReceiver() };
     TapeEngine engine;
     MtcOutput mtcOutput { engine };
     MtcInput mtcInput { engine };
