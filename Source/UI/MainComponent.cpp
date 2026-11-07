@@ -635,7 +635,8 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
         };
         t.setTempo = [this] (double bpm, int bpb, double barOne)
         {
-            juce::MessageManager::callAsync ([sp = juce::Component::SafePointer<MainComponent> (this), bpm, bpb, barOne]
+            juce::Component::SafePointer<MainComponent> sp (this);
+            juce::MessageManager::callAsync ([sp, bpm, bpb, barOne]
             {
                 if (sp != nullptr && sp->reel != nullptr) sp->applyTempo (bpm, bpb, barOne);
             });
