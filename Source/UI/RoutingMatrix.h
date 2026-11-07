@@ -27,6 +27,8 @@ public:
     /** Network inputs (Hawthorne Link) shown after the device inputs. */
     struct NetInput { int id; juce::String name; int slot; int channel; bool live; };
     void setNetworkInputs (const std::vector<NetInput>&);
+    /** Inside MELVILLE: no input columns, the patchbay feeds each track. */
+    void setInputsFromPatchbay (bool b) { patchbayInputs = b; repaint(); }
 
     std::function<void()> onChanged;
 
@@ -68,6 +70,7 @@ private:
     juce::StringArray inNames, outNames;
     juce::BigInteger inActive, outActive;
     int numIn = 0, numOut = 0;
+    bool patchbayInputs = false;
     int hoverRow = -1;
     Col hoverCol;
 

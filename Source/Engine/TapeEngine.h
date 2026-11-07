@@ -137,6 +137,13 @@ public:
     /** Inside MELVILLE: MELVILLE runs the receiver's audio each block; Hawthorne only tells
         the senders where the tape is. */
     void setNetworkProcessedElsewhere (bool b) noexcept { netElsewhere = b; }
+    /** Inside MELVILLE: each track records whatever is cabled to its TRACK IN jack on
+        MELVILLE's patchbay (device input t), and the 2-track master takes its MASTER IN jacks
+        (ROUTE master L / R), and LTC chase reads its LTC IN jack (device input 96), whatever
+        the reel's own routing says. */
+    void setInputsFromPatchbay (bool b) { patchbayInputs = b; rebuildRouting(); }
+    bool areInputsFromPatchbay() const noexcept { return patchbayInputs; }
+    int trackInputChannel (int t) const noexcept;
 
     //==========================================================================
     // Masters: stereo mixes recorded onto the reel, aligned with its tracks
@@ -372,6 +379,7 @@ private:
     std::atomic<double> targetRate { 1.0 }, currentRate { 1.0 };
     std::atomic<NetReceiver*> netRx { nullptr };
     std::atomic<bool> netElsewhere { false };
+    bool patchbayInputs = false;
 
     // Tempo / click (audio thread reads)
     std::atomic<double> tempoSpb { 0.0 }, tempoBarOne { 0.0 }, clickGain { 0.25 };

@@ -618,6 +618,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     {
         // MELVILLE runs the receiver and its settings, and patches its channels where you like
         engine.setNetworkProcessedElsewhere (true);
+        engine.setInputsFromPatchbay (true);
         networkButton.setVisible (false);
     }
     else
@@ -2320,7 +2321,7 @@ void MainComponent::updateNetworkInputs()
         for (int side = 0; side < 2; ++side)
             for (auto ch : reel->master.inputs[(size_t) side]) routeUsed = routeUsed || route::isRouteInput (ch);
     const bool routeLive = engine.isRouteConnected();
-    if (routeLive || routeUsed)
+    if ((routeLive || routeUsed) && ! melville::isHosted())     // (in MELVILLE: the patchbay's jacks)
     {
         const int nt = reel != nullptr ? reel->numTracks : route::defaultTracks;
         for (int ch = 0; ch < juce::jmin (nt, route::maxTracks); ++ch)
@@ -2377,7 +2378,11 @@ void MainComponent::updateRoutingDevice()
 
     if (auto* dev = deviceManager.getCurrentAudioDevice())
     {
-        routingWindow->getMatrix().setDevice (dev->getInputChannelNames(), dev->getActiveInputChannels(),
+        // (inside MELVILLE the patchbay picks each track's input, so no input columns)
+        const bool fromPatchbay = melville::isHosted();
+        routingWindow->getMatrix().setInputsFromPatchbay (fromPatchbay);
+        routingWindow->getMatrix().setDevice (fromPatchbay ? juce::StringArray() : dev->getInputChannelNames(),
+                                              fromPatchbay ? juce::BigInteger() : dev->getActiveInputChannels(),
                                               dev->getOutputChannelNames(), dev->getActiveOutputChannels());
         routingWindow->getLatencyPanel().setDevice (dev->getInputChannelNames(), dev->getActiveInputChannels(),
                                                     dev->getOutputChannelNames(), dev->getActiveOutputChannels());

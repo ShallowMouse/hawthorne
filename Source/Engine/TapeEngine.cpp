@@ -1087,7 +1087,8 @@ double TapeEngine::timecodeFramesAt (double tapePos) const noexcept
 
 void TapeEngine::setChase (ChaseSource src, int ltcInputChannel)
 {
-    ltcInput = ltcInputChannel;
+    // inside MELVILLE, LTC comes in on its own jack (device input 96, after the 96 TRACK INs)
+    ltcInput = patchbayInputs ? route::maxTracks : ltcInputChannel;
     chaseSource = (int) src;
     obsDev = -1;
     obsPrevDev = -1;
@@ -1677,6 +1678,12 @@ void TapeEngine::setArmed (int t, bool shouldArm)
     }
 }
 
+int TapeEngine::trackInputChannel (int t) const noexcept
+{
+    if (patchbayInputs) return t;     // MELVILLE: the track's own TRACK IN jack
+    return reel != nullptr ? reel->tracks[(size_t) t].input : t;
+}
+
 void TapeEngine::setInput (int t, int ch)
 {
     if (reel == nullptr || ! juce::isPositiveAndBelow (t, numTracks.load()) || (recording && armed[(size_t) t]))
@@ -1796,7 +1803,7 @@ void TapeEngine::rebuildRouting()
         if (reel != nullptr)
         {
             const auto& tr = reel->tracks[(size_t) t];
-            r->input[(size_t) t] = tr.input;
+            r->input[(size_t) t] = trackInputChannel (t);
             r->toMix[(size_t) t] = tr.toMix;
             r->outputs[(size_t) t].assign (tr.outputs.begin(), tr.outputs.end());
         }
@@ -1812,9 +1819,12 @@ void TapeEngine::rebuildRouting()
         if (reel != nullptr)
         {
             const auto& m = reel->master;
-            r->masterIn[(size_t) side].assign (m.inputs[(size_t) side].begin(), m.inputs[(size_t) side].end());
+            if (patchbayInputs)
+                r->masterIn[(size_t) side] = { route::inputBase + (side == 0 ? route::toMasterLeft : route::toMasterRight) };
+            else
+                r->masterIn[(size_t) side].assign (m.inputs[(size_t) side].begin(), m.inputs[(size_t) side].end());
             r->masterOut[(size_t) side].assign (m.outputs[(size_t) side].begin(), m.outputs[(size_t) side].end());
-            r->hasReturns = r->hasReturns || ! m.inputs[(size_t) side].isEmpty();
+            r->hasReturns = r->hasReturns || patchbayInputs || ! m.inputs[(size_t) side].isEmpty();
         }
         else
         {
@@ -1869,7 +1879,7 @@ juce::String TapeEngine::beginRecordPass (bool pendingStart)
             continue;
 
         ++numArmed;
-        const int ch = reel->tracks[(size_t) t].input;
+        const int ch = trackInputChannel (t);
 
         if (route::isRouteInput (ch))
         {

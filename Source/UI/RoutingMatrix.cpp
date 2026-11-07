@@ -215,7 +215,14 @@ void RoutingMatrix::paint (juce::Graphics& g)
     drawColHeader ({ ColKind::mix, 0 }, "MIX");
     for (int i = 0; i < numOut; ++i) drawColHeader ({ ColKind::output, i }, juce::String (i + 1));
 
-    if (numIn == 0 || numOut == 0)
+    if (patchbayInputs && numOut > 0)
+    {
+        g.setColour (Colours::textDim);
+        g.setFont (uiFont (13.0f));
+        g.drawText ("Inputs: each track records its TRACK IN jack on MELVILLE's patchbay; the master records MASTER IN",
+                    labelW, gridTop - 18, 900, 16, juce::Justification::centredLeft);
+    }
+    else if (numIn == 0 || numOut == 0)
     {
         g.setColour (Colours::red);
         g.setFont (uiFont (13.0f));
