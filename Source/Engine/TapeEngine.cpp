@@ -590,6 +590,7 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         const int flags = (isRolling ? hawthorne::net::TapeSync::rolling : 0) | (isRec ? hawthorne::net::TapeSync::recording : 0)
                         | (g != nullptr ? hawthorne::net::TapeSync::reelLoaded : 0);
         net->publishTape (tapeAtStart, rate, flags);
+        if (onTapeSync) onTapeSync (tapeAtStart, rate, flags);       // (MELVILLE's transport)
     }
 
     route.beginBlock (n);      // Hawthorne Route: what another program is playing into the driver
@@ -1804,7 +1805,7 @@ void TapeEngine::rebuildRouting()
         {
             const auto& tr = reel->tracks[(size_t) t];
             r->input[(size_t) t] = trackInputChannel (t);
-            r->toMix[(size_t) t] = tr.toMix;
+            r->toMix[(size_t) t] = tr.toMix && ! patchbayInputs;     // (in MELVILLE the mix is the desk's, back on MASTER IN)
             r->outputs[(size_t) t].assign (tr.outputs.begin(), tr.outputs.end());
         }
         else

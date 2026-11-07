@@ -619,8 +619,40 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
         // MELVILLE runs the receiver and its settings, and patches its channels where you like
         engine.setNetworkProcessedElsewhere (true);
         engine.setInputsFromPatchbay (true);
+
+       #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
+        // MELVILLE's transport is this machine's: its bar's keys press these, and THOREAU and
+        // IRVING follow the tape position published every block
+        auto& t = melville::transport();
+        t.play = [this] { doPlay(); };
+        t.stop = [this] { doStop(); };
+        t.record = [this] { doRecord(); };
+        t.returnToZero = [this] { locate (0); };
+        t.wind = [this] (int dir)
+        {
+            if (dir != 0) engine.spoolWind (dir);
+            else if (engine.getWindDirection() != 0 && ! engine.willRollAfterWind()) engine.stop();
+        };
+        t.setTempo = [this] (double bpm, int bpb, double barOne)
+        {
+            juce::MessageManager::callAsync ([sp = juce::Component::SafePointer<MainComponent> (this), bpm, bpb, barOne]
+            {
+                if (sp != nullptr && sp->reel != nullptr) sp->applyTempo (bpm, bpb, barOne);
+            });
+        };
+        engine.onTapeSync = [] (double tapeAtStart, double tapePerSample, int flags)
+        {
+            auto& tr = melville::transport();
+            tr.tapePos.store (tapeAtStart, std::memory_order_relaxed);
+            tr.tapePerSample.store (tapePerSample, std::memory_order_relaxed);
+            tr.flags.store (flags, std::memory_order_relaxed);
+            tr.publishedFrame.store (melville::currentFrame(), std::memory_order_release);
+        };
+        t.available = true;
+       #endif
         networkButton.setVisible (false);
         audioButton.setVisible (false);     // (MELVILLE's INTERFACE picks the device)
+        routingButton.setVisible (false);   // (MELVILLE's patchbay does the routing; the desk does the mixing)
     }
     else
     {
@@ -669,6 +701,9 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
 
 MainComponent::~MainComponent()
 {
+   #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
+    melville::detach (deviceManager);     // (and out of MELVILLE's session)
+   #endif
     shutdown();
     sheetWindow = nullptr;
     routingWindow = nullptr;
@@ -682,6 +717,15 @@ MainComponent::~MainComponent()
 void MainComponent::shutdown()
 {
     stopTimer();
+   #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
+    {
+        auto& t = melville::transport();
+        t.available = false;
+        t.play = t.stop = t.record = t.returnToZero = nullptr;
+        t.wind = nullptr;
+        t.setTempo = nullptr;
+    }
+   #endif
     engine.stop();                      // finalises any take in progress
     deviceManager.removeAudioCallback (&engine);
     deviceManager.removeChangeListener (this);
@@ -706,6 +750,18 @@ void MainComponent::initialiseAudio()
     // inside MELVILLE: MELVILLE's HAWTHORNE device (MELVILLE owns the interface)
     const auto err = melville::attach (deviceManager, "hawthorne") ? juce::String()
                                                                    : deviceManager.initialise (kDefaultTracks, 2, saved.get(), true);
+   #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
+    // MELVILLE's session file keeps which reel is on the deck
+    melville::addToSession (deviceManager, {
+        [this] { auto x = std::make_unique<juce::XmlElement> ("HAWTHORNE");
+                 if (reel != nullptr) x->setAttribute ("reel", reel->getFile().getFullPathName());
+                 return x; },
+        [this] (const juce::XmlElement& x)
+        {
+            const juce::File f (x.getStringAttribute ("reel"));
+            if (f.existsAsFile() && (reel == nullptr || reel->getFile() != f)) loadReel (f);
+        } });
+   #endif
 
     if (saved == nullptr && ! melville::isHosted())
     {
@@ -993,6 +1049,32 @@ void MainComponent::pushReelSync()
         netRx.setReelSync (true, reel->getName(), reel->tempoBpm, reel->beatsPerBar, reel->barOne);
     else
         netRx.setReelSync (false, {}, 0.0, 4, 0.0);
+
+   #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
+    // MELVILLE's transport: the reel's tempo (THOREAU and IRVING follow it)
+    auto& t = melville::transport();
+    t.reelLoaded = reel != nullptr;
+    t.bpm = reel != nullptr ? reel->tempoBpm : 0.0;
+    t.beatsPerBar = reel != nullptr ? reel->beatsPerBar : 4;
+    t.barOne = reel != nullptr ? reel->barOne : 0.0;
+    t.reelRate = sessionRate();
+    ++t.tempoRev;
+   #endif
+}
+
+void MainComponent::applyTempo (double bpm, int beatsPerBar, double barOne)
+{
+    if (reel == nullptr) return;
+    if (reel->tempoBpm == bpm && reel->beatsPerBar == beatsPerBar && reel->barOne == barOne) return;
+    reel->tempoBpm = bpm;
+    reel->beatsPerBar = beatsPerBar;
+    reel->barOne = barOne;
+    engine.setTempo (reel->tempoBpm, reel->beatsPerBar, reel->barOne);
+    for (auto* w : { tempoWindow.get(), timecodeWindow.get() }) if (w != nullptr) w->getPanel().refresh();
+    markers.refresh();
+    pushReelSync();
+    tempoSaveDueMs = juce::Time::getMillisecondCounterHiRes() + 1500.0;   // a knob may still be turning
+    transportPanel.repaint (reelInfoArea);
 }
 
 void MainComponent::handleTempoRequests()
@@ -2570,6 +2652,14 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
 
 void MainComponent::timerCallback()
 {
+   #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
+    {
+        auto& t = melville::transport();          // (MELVILLE's counter and lamps)
+        t.position = engine.getPosition();
+        t.rolling = engine.isPlaying();
+        t.recording = engine.isRecording();
+    }
+   #endif
     engine.tick();
     ++frame;
 

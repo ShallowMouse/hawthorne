@@ -120,6 +120,7 @@ private:
     // Library / reels
     void showLibrary (bool show);
     void loadReel (const juce::File& reelFile);
+    void applyTempo (double bpm, int beatsPerBar, double barOne);   // the reel's tempo (and everyone following it)
     void setReel (std::unique_ptr<Reel>, std::unique_ptr<Session>);
     void saveReel();
     void saveSessionInfo();

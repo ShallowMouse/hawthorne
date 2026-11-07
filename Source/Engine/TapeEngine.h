@@ -137,11 +137,15 @@ public:
     /** Inside MELVILLE: MELVILLE runs the receiver's audio each block; Hawthorne only tells
         the senders where the tape is. */
     void setNetworkProcessedElsewhere (bool b) noexcept { netElsewhere = b; }
+    /** Inside MELVILLE: called on the audio thread each block, with where an input sample at
+        the block's start lands on tape, the tape speed (0 stopped) and the sync flags. */
+    std::function<void (double tapeAtStart, double tapePerSample, int flags)> onTapeSync;
     /** Inside MELVILLE: each track records whatever is cabled to its TRACK IN jack on
         MELVILLE's patchbay (device input t), and the 2-track master takes its MASTER IN jacks
         (ROUTE master L / R), LTC chase reads its LTC IN jack (device input 96), and the only
         device output is the click (its CLICK jack); tracks, master and LTC leave by their own
-        jacks. Whatever the reel's own routing says. */
+        jacks, and no track feeds Hawthorne's own mix (the desk mixes). Whatever the reel's own
+        routing says. */
     void setInputsFromPatchbay (bool b) { patchbayInputs = b; rebuildRouting(); }
     bool areInputsFromPatchbay() const noexcept { return patchbayInputs; }
     int trackInputChannel (int t) const noexcept;
