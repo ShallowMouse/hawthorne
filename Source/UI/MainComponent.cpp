@@ -683,7 +683,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
         t.available = true;
        #endif
         networkButton.setVisible (false);
-        audioButton.setVisible (false);     // (MELVILLE's INTERFACE picks the device)
+        audioButton.setTooltip ("Settings: wind, pre / post-roll, meters (MELVILLE's INTERFACE picks the audio device)");
         routingButton.setVisible (false);   // (MELVILLE's patchbay does the routing; the desk does the mixing)
         // tempo, click and timecode are MELVILLE's (its CLOCK); the library and session sheet too
         for (juce::Component* c : { (juce::Component*) &syncButton, (juce::Component*) &timecodeButton,
@@ -958,10 +958,21 @@ namespace
             preRoll.setValue (engine.getPreRoll(), juce::dontSendNotification);
             postRoll.setValue (engine.getPostRoll(), juce::dontSendNotification);
             setSize (560, 780);
+            if (melville::isHosted())
+            {
+                // inside MELVILLE the device is its INTERFACE's: here, just the tape machine's own settings
+                selector.setVisible (false);
+                setSize (560, 250);
+            }
         }
         void paint (juce::Graphics& g) override
         {
             g.setColour (Colours::textDim);
+            if (melville::isHosted())
+            {
+                g.setFont (juce::FontOptions (12.0f));
+                g.drawText ("The audio device and its channels are MELVILLE's: INTERFACE on its bar.", 16, 10, getWidth() - 32, 18, juce::Justification::centredLeft);
+            }
             g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
             g.drawText ("TRANSPORT", 16, getHeight() - 192, 200, 16, juce::Justification::centredLeft);
             g.setFont (juce::FontOptions (13.0f));
