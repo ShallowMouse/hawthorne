@@ -2976,27 +2976,33 @@ void MainComponent::paint (juce::Graphics& g)
 {
     g.fillAll (Colours::bg);
 
-    // Header: the bar every part has (PartHeader.h), with Hawthorne's mark
-    partui::drawBar (g, headerArea, partui::accent ("hawthorne"));
-    g.setColour (Colours::mustard);
-    drawLogoMark (g, headerArea.withTrimmedBottom (2).toFloat().withTrimmedLeft (12).withWidth (52).reduced (0, 8));
-    partui::drawWordmark (g, headerArea.withTrimmedLeft (74).withWidth (280), "H A W T H O R N E", "TAPE MACHINE",
-                          partui::accent ("hawthorne"), monoFont (22.0f, true));
+    // Header: the bar, wordmark and two status lines every part has (PartHeader.h)
+    const auto accent = partui::accent ("hawthorne");
+    partui::drawBar (g, headerArea, accent);
+    partui::drawWordmark (g, headerArea.reduced (18, 0).removeFromLeft (190), "HAWTHORNE",
+                          melville::isHosted() ? juce::String ("TAPE MACHINE") : juce::String ("TAPE MACHINE  v" HAWTHORNE_VERSION),
+                          accent, monoFont (30.0f, true));
 
-    const int firstButtonX = updateButton.isVisible() ? updateButton.getX() : libraryButton.getX();
-    auto sessionArea = headerArea.withTrimmedLeft (360).withRight (firstButtonX - 16).reduced (0, 6);
-    auto infoLine = sessionArea.removeFromBottom (14);
-    g.setFont (monoFont (14.0f, true));
-    g.setColour (Colours::text);
-    g.drawText (reel != nullptr ? (session != nullptr ? session->getName() + "  -  " : juce::String()) + reel->getName()
-                                : juce::String ("No reel on the deck"),
-                sessionArea, juce::Justification::centredLeft, true);
+    int firstButtonX = headerArea.getRight();     // (the leftmost header key that's showing: inside MELVILLE some aren't)
+    for (juce::Component* c : { (juce::Component*) &updateButton, (juce::Component*) &fullScreenButton, (juce::Component*) &helpButton,
+                                (juce::Component*) &audioButton, (juce::Component*) &machineButton, (juce::Component*) &layoutButton,
+                                (juce::Component*) &timecodeButton, (juce::Component*) &syncButton, (juce::Component*) &networkButton,
+                                (juce::Component*) &routingButton, (juce::Component*) &sheetButton, (juce::Component*) &libraryButton })
+        if (c->isVisible() && c->getWidth() > 0) firstButtonX = juce::jmin (firstButtonX, c->getX());
+    auto status = headerArea.withTrimmedBottom (2).withTrimmedLeft (14 + 200).withRight (firstButtonX - 16);
+    status = status.withSizeKeepingCentre (status.getWidth(), 40);
+    const auto dot = juce::String ("  ") + juce::String (juce::CharPointer_UTF8 ("\xc2\xb7")) + "  ";
+    g.setFont (monoFont (13.0f, true));
+    g.setColour (accent);
+    g.drawText (reel != nullptr ? (session != nullptr ? (session->getName() + dot).toUpperCase() : juce::String()) + reel->getName().toUpperCase()
+                                : juce::String ("NO REEL ON THE DECK"),
+                status.withHeight (status.getHeight() / 2).translated (0, 4), juce::Justification::centredLeft, true);
     g.setColour (Colours::textDim);
-    g.setFont (monoFont (11.0f));
-    g.drawText ((reel != nullptr ? juce::String (reel->flipped ? "FLIPPED  " : "") + tape::multitrackMachine (reel->machine).label + "  "
-                                     + tape::info ((tape::Stock) reel->tapeStock).label + "  " : juce::String())
-                  + juce::String (reel != nullptr ? reel->numTracks : 0) + "-TRACK  v" HAWTHORNE_VERSION,
-                infoLine, juce::Justification::centredLeft, true);
+    g.setFont (bodyFont (12.0f));
+    g.drawText ((reel != nullptr ? juce::String (reel->flipped ? "Flipped" + dot : juce::String()) + tape::multitrackMachine (reel->machine).label + dot
+                                     + tape::info ((tape::Stock) reel->tapeStock).label + dot : juce::String())
+                  + juce::String (reel != nullptr ? reel->numTracks : 0) + " tracks",
+                status.withTrimmedTop (status.getHeight() / 2).translated (0, -2), juce::Justification::centredLeft, true);
 
     // Status bar
     g.setColour (Colours::black);
