@@ -732,6 +732,8 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     showLibrary (true);   // the tape library is the first thing you see
 
     // Hawthorne Route: an older driver left registered from before an update
+    // (not inside MELVILLE: it carries Hawthorne's audio itself, no driver)
+    if (! melville::isHosted())
     juce::MessageManager::callAsync ([]
     {
         if (! RouteHost::isDriverInstalled() || RouteHost::isDriverCurrent()) return;
@@ -918,7 +920,7 @@ namespace
 
             routeButton.onClick = [this]
             {
-                const bool installed = RouteHost::isDriverInstalled() && RouteHost::isDriverCurrent();
+                const bool installed = RouteHost::isDriverInstalled() && (RouteHost::isDriverCurrent() || melville::isHosted());
                 const auto err = installed ? RouteHost::uninstallDriver() : RouteHost::installDriver();
                 if (err.isNotEmpty())
                     juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Hawthorne Route", err);
@@ -966,7 +968,8 @@ namespace
             g.drawText ("Pre-roll (auto punch)", preRoll.getBounds().withX (16).withWidth (170), juce::Justification::centredLeft);
             g.drawText ("Post-roll", postRoll.getBounds().withX (16).withWidth (170), juce::Justification::centredLeft);
             g.drawText ("Meters", meters.getBounds().withX (16).withWidth (170), juce::Justification::centredLeft);
-            g.drawText ("Hawthorne Route", routeButton.getBounds().withX (16).withWidth (170), juce::Justification::centredLeft);
+            if (routeButton.isVisible())
+                g.drawText ("Hawthorne Route", routeButton.getBounds().withX (16).withWidth (170), juce::Justification::centredLeft);
             g.setColour (Colours::textDim);
             g.setFont (juce::FontOptions (12.0f));
             g.drawText (routeStatus, routeButton.getBounds().withX (routeButton.getRight() + 10).withRight (getWidth() - 10),
@@ -991,6 +994,15 @@ namespace
         void refreshRoute()
         {
             const bool installed = RouteHost::isDriverInstalled();
+            if (melville::isHosted())
+            {
+                // inside MELVILLE the driver isn't used: just a way to remove one left installed
+                routeButton.setVisible (installed);
+                routeButton.setButtonText ("UNINSTALL");
+                routeStatus = installed ? juce::String ("not needed inside MELVILLE - you can remove it") : juce::String();
+                repaint();
+                return;
+            }
             const bool old = installed && ! RouteHost::isDriverCurrent();
             routeButton.setButtonText (old ? "UPDATE DRIVER" : installed ? "UNINSTALL" : "INSTALL DRIVER");
             routeStatus = old ? juce::String ("an older version is installed - update it (close Reaper first)")
