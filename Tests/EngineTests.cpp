@@ -2266,6 +2266,81 @@ static void testAlignment()
     e.setReel (nullptr);
 }
 
+//==============================================================================
+static void testReversePlay()
+{
+    std::printf ("[25] reverse play: the tape backwards, turning round, stopping at the head\n");
+    juce::String err;
+    auto reel = Reel::create (makeTempDir ("reverse"), "Reverse", kSR, 8, err);
+    {
+        // track 1: every sample says where it is on the tape
+        const auto f = reel->getTapeFile (0);
+        f.getParentDirectory().createDirectory();
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::OutputStream> os (f.createOutputStream().release());
+        std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (os.get(), kSR, 1, 24, {}, 0));
+        os.release();
+        const int n = (int) (20 * kSR);
+        juce::AudioBuffer<float> b (1, n);
+        for (int i = 0; i < n; ++i) b.setSample (0, i, encode (0, i));
+        w->writeFromAudioSampleBuffer (b, 0, n);
+    }
+    TapeEngine e;
+    e.setReel (reel.get());
+    prepareEngine (e, 512, 8);
+    for (int t = 0; t < 8; ++t) { e.setTrackToMix (t, false); e.setTrackOutputs (t, {}); }
+    e.setTrackOutputs (0, ChannelList { 0 });
+
+    juce::AudioBuffer<float> in (8, 512), out (4, 512);
+    in.clear();
+    std::vector<int64> heard;
+    auto run = [&] (double seconds)
+    {
+        for (int b = 0; b < (int) (seconds * kSR / 512); ++b)
+        {
+            e.process (in.getArrayOfReadPointers(), 8, out.getArrayOfWritePointers(), 4, 512);
+            for (int k = 0; k < 512; ++k) heard.push_back (decode (0, out.getSample (0, k)));
+            if (b % 4 == 0) { e.tick(); juce::Thread::sleep (4); }    // (about 10x real time)
+        }
+    };
+    auto steps = [&] (size_t from, size_t to, int64 step)
+    {
+        int bad = 0;
+        for (size_t k = from + 1; k < to && k < heard.size(); ++k) if (heard[k] - heard[k - 1] != step) ++bad;
+        return bad;
+    };
+
+    const auto start = (int64) (12 * kSR);
+    e.locate (start);
+    CHECK (e.playReverse().isEmpty(), "reverse play from stop");
+    run (6.0);                                           // (past several of the feeder's windows)
+    const int badBack = steps (64, heard.size(), -1);
+    CHECK (badBack == 0, "backwards, sample by sample (%d bad steps)", badBack);
+    CHECK (e.getPosition() < start - (int64) (5.5 * kSR), "the tape went back (%.2f s)", (double) e.getPosition() / kSR);
+    std::printf ("    backwards from 12 s: %d bad steps in %d samples, now at %.2f s\n", badBack, (int) heard.size(), (double) e.getPosition() / kSR);
+
+    CHECK (e.record().isNotEmpty(), "no recording while reversing");
+    heard.clear();
+    CHECK (e.play().isEmpty() && e.isPlaying() && ! e.isReversing(), "PLAY turns it round");
+    run (3.0);
+    const size_t settled = (size_t) (1.5 * kSR);
+    const int badFwd = steps (settled, heard.size(), 1);
+    int silent = 0;
+    for (auto v : heard) if (v == decode (0, 0.0f)) ++silent;
+    CHECK (silent == 0, "no gap turning round (%d silent samples)", silent);
+    CHECK (badFwd == 0, "forwards again after turning round (%d bad steps)", badFwd);
+    std::printf ("    turned round: forwards again, %d bad steps once up to speed\n", badFwd);
+
+    e.stop();
+    e.locate ((int64) (0.3 * kSR));
+    CHECK (e.playReverse().isEmpty(), "reverse near the head");
+    heard.clear();
+    run (1.0);
+    CHECK (! e.isPlaying() && e.getPosition() == 0 && ! e.isReversing(), "stops at the head of the reel (pos %lld)", (long long) e.getPosition());
+    std::printf ("    at the head of the reel: stopped at %lld\n", (long long) e.getPosition());
+    e.setReel (nullptr);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -2280,6 +2355,7 @@ int main()
         if (only.contains ("22")) testImportExportFlip();
         if (only.contains ("23")) testNoiseReduction();
         if (only.contains ("24")) testAlignment();
+        if (only.contains ("25")) testReversePlay();
         if (only.contains ("3"))  testTapeMachine();
         std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURE(S)\n", failures);
         return failures == 0 ? 0 : 1;
@@ -2304,6 +2380,7 @@ int main()
     testImportExportFlip();
     testNoiseReduction();
     testAlignment();
+    testReversePlay();
    #if JUCE_LINUX || JUCE_MAC
     testCrashRecovery();
    #endif

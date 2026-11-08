@@ -9,6 +9,7 @@
 #include "TapeStock.h"
 #include "NoiseReduction.h"
 #include "SpoolMonitor.h"
+#include "ReverseFeeder.h"
 #include "RouteHost.h"
 #include "../Network/NetReceiver.h"
 #include <map>
@@ -40,7 +41,11 @@ public:
 
     //==========================================================================
     // Transport. Return an empty string on success, or a user-facing error.
-    juce::String play();
+    juce::String play();            // (while playing backwards: forwards again, still rolling)
+    /** Reverse play: roll the tape backwards (from stop, or turning round while playing).
+        Never records; PLAY goes forwards again, STOP stops. */
+    juce::String playReverse();
+    bool isReversing() const noexcept { return reverseA.load(); }
     juce::String record();          // from stop: roll + record; while playing: punch in
     void punchOut();                // stop recording, keep rolling
     void stop();
@@ -414,6 +419,10 @@ private:
     std::atomic<bool> lifterDefeat { false }, windActiveA { false }, inputMonitor { false }, clockElsewhere { false }, masterAlwaysTape { false };
     std::atomic<double> windPosA { 0.0 }, windVelA { 0.0 };
     SpoolMonitor spool;
+    ReverseFeeder reverseFeed;
+    std::atomic<bool> reverseA { false };
+    int reverseHold = 0;                     // audio thread: samples still read from the feeder after turning forwards
+    void feedReverseFiles();
     RouteHost route;
     int routeInfoTicks = 0;
     juce::HeapBlock<float> spoolBuf;
@@ -504,7 +513,7 @@ private:
     juce::AudioBuffer<float> clickBuf;
     static constexpr int vsChunk = 256;                    // varispeed processes at most this many samples at once
     int vsMaxHalfSpan = 0;
-    juce::HeapBlock<float> vsWeights, vsSpan;
+    juce::HeapBlock<float> vsWeights, vsSpan, pokeBuf;
     juce::HeapBlock<int> vsOffset;
     bool readTapeSpan (const std::vector<Segment>&, juce::int64 start, int len, float* dest) noexcept;
     std::atomic<int> numTracks { kDefaultTracks };

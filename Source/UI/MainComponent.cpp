@@ -410,8 +410,10 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     networkButton.setTooltip ("Hawthorne Link: record audio sent from other PCs");
     audioButton.onClick   = [this] { showAudioSettings(); };
 
-    for (auto* k : { &rtzKey, &rewKey, &ffwKey, &liftKey, &stopKey, &playKey, &recKey, &markKey, &clickKey, &inputKey })
+    for (auto* k : { &rtzKey, &rewKey, &ffwKey, &liftKey, &stopKey, &revKey, &playKey, &recKey, &markKey, &clickKey, &inputKey })
         addAndMakeVisible (k);
+    revKey.setIcon (Icon::reverse);
+    revKey.onClick = [this] { doReverse(); };
     inputKey.setIcon (Icon::input);
     inputKey.onClick = [this]
     {
@@ -1576,8 +1578,11 @@ void MainComponent::showMachineMenu()
     m.addSeparator();
     m.addItem (2, "Import audio onto a track...", ! rec);
     m.addItem (3, "Export all tracks (stems)...", ! rec);
-    m.addSeparator();
-    m.addItem (4, reel->flipped ? "Turn the reel back over (play forwards)..." : "Flip the reel over (reverse tape)...", ! rec);
+    if (reel->flipped)     // (reverse is the REVERSE key now; a reel flipped before can still be turned back)
+    {
+        m.addSeparator();
+        m.addItem (4, "Turn the reel back over (play forwards)...", ! rec);
+    }
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (machineButton), [this] (int r)
     {
         if (reel == nullptr) return;
@@ -2296,7 +2301,7 @@ void MainComponent::setupPanels()
 {
     // the transport deck
     for (juce::Component* c : { (juce::Component*) &rtzKey, (juce::Component*) &rewKey, (juce::Component*) &ffwKey, (juce::Component*) &liftKey,
-                                (juce::Component*) &stopKey, (juce::Component*) &playKey, (juce::Component*) &recKey, (juce::Component*) &markKey,
+                                (juce::Component*) &stopKey, (juce::Component*) &revKey, (juce::Component*) &playKey, (juce::Component*) &recKey, (juce::Component*) &markKey,
                                 (juce::Component*) &clickKey, (juce::Component*) &inputKey, (juce::Component*) &tempoBox, (juce::Component*) &syncSourceButton,
                                 (juce::Component*) &ips7Key, (juce::Component*) &ips15Key, (juce::Component*) &ips30Key, (juce::Component*) &variKey,
                                 (juce::Component*) &variKnob, (juce::Component*) &variPctLabel, (juce::Component*) &variStLabel,
@@ -2305,7 +2310,7 @@ void MainComponent::setupPanels()
     if (melville::isHosted())     // (MELVILLE's CLOCK has the tempo, click and timecode)
         for (juce::Component* c : { (juce::Component*) &clickKey, (juce::Component*) &tempoBox, (juce::Component*) &syncSourceButton })
             c->setVisible (false);
-    transportPanel.minW = 1310; transportPanel.minH = 86; transportPanel.maxH = 220;
+    transportPanel.minW = 1390; transportPanel.minH = 86; transportPanel.maxH = 220;
     transportPanel.onPaint  = [this] (juce::Graphics& g) { paintTransport (g); };
     transportPanel.onLayout = [this] { layoutTransport(); };
     transportPanel.onMouseMove = [this] (const juce::MouseEvent& e) { transportMouseMove (e); };
@@ -2685,10 +2690,19 @@ void MainComponent::showAlert (const juce::String& title, const juce::String& me
 //==============================================================================
 // Transport
 
+void MainComponent::doReverse()
+{
+    if (auto err = engine.playReverse(); err.isNotEmpty())
+        showAlert ("Cannot play backwards", err);
+}
+
 void MainComponent::doPlay()
 {
     if (engine.isPlaying())
+    {
+        if (engine.isReversing()) engine.play();     // turn round: forwards again
         return;
+    }
     if (auto err = engine.play(); err.isNotEmpty())
         showAlert ("Cannot play", err);
 }
@@ -2776,6 +2790,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
 
     const auto c = k.getTextCharacter();
 
+    if (k == juce::KeyPress (juce::KeyPress::spaceKey, juce::ModifierKeys::shiftModifier, 0)) { if (engine.isReversing()) doStop(); else doReverse(); return true; }
     if (k == juce::KeyPress::spaceKey)                       { if (engine.isPlaying()) doStop(); else doPlay(); return true; }
     if (c == 'r' || c == 'R' || k.getKeyCode() == juce::KeyPress::numberPadMultiply) { doRecord(); return true; }
     if (c == 'm' || c == 'M')                                { addMarker(); return true; }
@@ -2820,7 +2835,8 @@ void MainComponent::timerCallback()
         lastRolling = rolling;
     }
 
-    playKey.setLit (rolling);
+    playKey.setLit (rolling && ! engine.isReversing());
+    revKey.setLit (rolling && engine.isReversing());
     const int windDir = engine.getWindDirection();
     rewKey.setLit (windDir < 0);
     liftKey.setLit (engine.getLifterDefeat());
@@ -3298,7 +3314,7 @@ void MainComponent::layoutTransport()
         };
         key (rtzKey, kw); key (rewKey, kw); key (ffwKey, kw); key (liftKey, kw);
         d.removeFromLeft (gap);
-        key (stopKey, kwBig); key (playKey, kwBig); key (recKey, kwBig);
+        key (stopKey, kwBig); key (revKey, kwBig); key (playKey, kwBig); key (recKey, kwBig);
         d.removeFromLeft (gap);
         key (markKey, kw);
         key (clickKey, kw);

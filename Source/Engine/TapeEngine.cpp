@@ -136,6 +136,7 @@ void TapeEngine::prepare (double sampleRate, int maxBlockSize,
     vsMaxHalfSpan = SincKernel::halfSpan (1.0 / maxSpeedRatio);
     vsWeights.calloc ((size_t) vsChunk * (size_t) (2 * vsMaxHalfSpan));
     vsSpan.calloc ((size_t) std::ceil (vsChunk * maxSpeedRatio) + (size_t) (2 * vsMaxHalfSpan) + 16);
+    pokeBuf.calloc ((size_t) std::ceil (vsChunk * maxSpeedRatio) + (size_t) (2 * vsMaxHalfSpan) + 16);
     vsOffset.calloc ((size_t) vsChunk);
     tapePosBuf.calloc ((size_t) vsChunk);
     tapeRecBuf.calloc ((size_t) juce::jmax (vsChunk, maxBlock));
@@ -311,7 +312,8 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     }
 
     // Autolocator: punch in / out exactly at the points (transport time = tape + latency)
-    if (playing.load() && apSession.load (std::memory_order_relaxed))
+    if (playing.load() && apSession.load (std::memory_order_relaxed) && ! reverseA.load (std::memory_order_relaxed)
+        && currentRate.load (std::memory_order_relaxed) > 0.0)
     {
         const auto p = position.load();
         if (pendingPass.load() != nullptr && p >= apInB.load() && p < apOutB.load())
@@ -369,7 +371,9 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         chaseRate = 1.0;
     }
 
-    const double target = chasing ? chaseRate : targetRate.load (std::memory_order_relaxed);
+    // Reverse play: the same speed, the other way (the motor glides through zero as it turns round)
+    const bool reversing = reverseA.load (std::memory_order_relaxed);
+    const double target = chasing ? chaseRate : targetRate.load (std::memory_order_relaxed) * (reversing ? -1.0 : 1.0);
     double r0 = currentRate.load (std::memory_order_relaxed), r1 = target;
 
     if (! isRolling)
@@ -385,9 +389,14 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     {
         const double sr = juce::jmax (1000.0, deviceSampleRate.load (std::memory_order_relaxed));
         r1 = target + (r0 - target) * std::exp (-(double) n / (0.08 * sr));
-        if (std::abs (r1 - target) < 1.0e-9 * target)
+        if (std::abs (r1 - target) < 1.0e-9 * std::abs (target))
             r1 = target;
     }
+    // Turning round from reverse: settle onto the speed (then back onto whole samples, below)
+    if (isRolling && rp == nullptr && ! reversing && reverseHold > 0 && r1 > 0.0
+        && std::abs (r1 - target) < 2.0e-3 * std::abs (target))
+        r1 = target;
+    const bool atSpeed = r1 == target;
     currentRate.store (r1, std::memory_order_relaxed);
 
     // Tape: the stock's settings for the speed the tape is really running at,
@@ -433,7 +442,7 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     if (tapeOn)
     {
         const double sr = juce::jmax (1000.0, deviceSampleRate.load (std::memory_order_relaxed));
-        const double ips = reelIps.load (std::memory_order_relaxed) * (isRolling ? r1 : targetRate.load (std::memory_order_relaxed));
+        const double ips = reelIps.load (std::memory_order_relaxed) * juce::jmax (0.05, std::abs (isRolling ? r1 : targetRate.load (std::memory_order_relaxed)));
         const int mach = machineA.load (std::memory_order_relaxed);
         const int key = stockNow * 64 + mach + 4096 * (alignVersion.load (std::memory_order_relaxed) & 0xffff);
         if (key != tapeSharedStock || std::abs (ips - tapeSharedIps) > 0.003 * ips || tapeShared.sr != sr)
@@ -464,7 +473,7 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     if (masterTapeOn)
     {
         const double sr = juce::jmax (1000.0, deviceSampleRate.load (std::memory_order_relaxed));
-        const double ips = reelIps.load (std::memory_order_relaxed) * (isRolling ? r1 : targetRate.load (std::memory_order_relaxed));
+        const double ips = reelIps.load (std::memory_order_relaxed) * juce::jmax (0.05, std::abs (isRolling ? r1 : targetRate.load (std::memory_order_relaxed)));
         const int key = mStock * 64 + masterMachineA.load (std::memory_order_relaxed);
         if (key != masterSharedKey || std::abs (ips - masterShared.ips) > 0.003 * ips || masterShared.sr != sr)
         {
@@ -521,32 +530,55 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     if (vs)
     {
         const auto& kernel = SincKernel::get();
-        const double rmax = juce::jmax (r0, r1);
+        const double rmax = juce::jmax (std::abs (r0), std::abs (r1), 1.0e-3);
         const double scale = juce::jmin (1.0, 1.0 / rmax);
         const int hs = juce::jmin (vsMaxHalfSpan, SincKernel::halfSpan (scale));
         vsTaps = 2 * hs;
 
-        double f = posFrac;          // tape position relative to `pos`
+        double f = posFrac;          // tape position relative to `pos` (it runs down when reversing)
+        int lo = 0, hi = 0;
         for (int k = 0; k < n; ++k)
         {
             const double fl = std::floor (f);
             const auto first = (juce::int64) fl - hs + 1;
-            if (k == 0) vsLo = first;
-            vsOffset[k] = (int) (first - vsLo);
+            vsOffset[k] = (int) first;
+            lo = k == 0 ? (int) first : juce::jmin (lo, (int) first);
+            hi = k == 0 ? (int) first : juce::jmax (hi, (int) first);
             kernel.weights (f - fl, scale, hs, vsWeights + (size_t) k * (size_t) vsTaps);
             f += r0 + (r1 - r0) * ((double) k + 0.5) / (double) n;
         }
+        for (int k = 0; k < n; ++k) vsOffset[k] -= lo;
         endFrac = f;
-        vsSpanLen = vsOffset[n - 1] + vsTaps;
-        vsLo += pos;
+        vsSpanLen = hi - lo + vsTaps;
+        vsLo = pos + lo;
     }
 
-    auto readTape = [&] (const std::vector<Segment>& segs, float* dest) -> bool
+    // Reverse play reads from the feeder (it holds the tape behind us), and for a moment after
+    // turning forwards again, while the normal readers catch up (they're pointed there meanwhile).
+    if (! isRolling) reverseHold = 0;
+    if (isRolling && (reversing || r0 < 0.0 || r1 < 0.0))
+        reverseHold = (int) (0.4 * juce::jmax (1000.0, deviceSampleRate.load (std::memory_order_relaxed)));
+    const bool fromFeeder = isRolling && reverseHold > 0;
+    if (fromFeeder) reverseFeed.setPosition (pos);
+    bool pokeMissed = false;      // a normal reader not loaded there yet: stay on the feeder
+    auto span = [&] (const std::vector<Segment>& segs, int ch, juce::int64 start, int len, float* dest) -> bool
+    {
+        if (! fromFeeder) return readTapeSpan (segs, start, len, dest);
+        if (! reversing && ! segs.empty())                   // (point the normal readers here: forwards next)
+            for (const auto& seg : segs)
+                if (start >= seg.start && start + len <= seg.end)
+                {
+                    float* pb = pokeBuf.get();
+                    if (! seg.reader->read (&pb, 1, seg.fileStart + (start - seg.start), len)) pokeMissed = true;
+                }
+        return reverseFeed.read (ch, start, len, dest);
+    };
+    auto readTape = [&] (const std::vector<Segment>& segs, int ch, float* dest) -> bool
     {
         if (! vs)
-            return readTapeSpan (segs, pos, n, dest);
+            return span (segs, ch, pos, n, dest);
 
-        if (! readTapeSpan (segs, vsLo, vsSpanLen, vsSpan))
+        if (! span (segs, ch, vsLo, vsSpanLen, vsSpan))
             return false;
         for (int k = 0; k < n; ++k)
             dest[k] = dotProduct (vsWeights + (size_t) k * (size_t) vsTaps, vsSpan + vsOffset[k], vsTaps);
@@ -647,7 +679,7 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         // (Tape is read even under a recording track so its reader stays warm
         //  for a seamless punch-out.)
         float* tb = trackBuffers.getWritePointer (t);
-        const bool hasTape = isRolling && g != nullptr && readTape (g->tracks[(size_t) t], tb);
+        const bool hasTape = isRolling && g != nullptr && readTape (g->tracks[(size_t) t], t, tb);
         float* ring = rawRing != nullptr ? rawRing.get() + (size_t) t * (size_t) ringLen : nullptr;
         if (ringOk && ring != nullptr)
             for (int k = 0; k < n; ++k)
@@ -810,7 +842,7 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         if (monitorTape && isRolling && g != nullptr && ! g->master[(size_t) side].empty())
         {
             float* tb = masterTapeBus.getWritePointer (side);
-            if (! readTape (g->master[(size_t) side], tb))
+            if (! readTape (g->master[(size_t) side], kMaxTracks + side, tb))
                 juce::FloatVectorOperations::clear (tb, n);
             else
             {
@@ -854,7 +886,7 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         const int bpb = juce::jmax (1, tempoBpb.load (std::memory_order_relaxed));
         const float gain = (float) clickGain.load (std::memory_order_relaxed);
         // The click is "on the tape": its pitch and length follow the tape speed (varispeed).
-        const double speed = isRolling ? juce::jlimit (0.25, 4.0, currentRate.load (std::memory_order_relaxed)) : 1.0;
+        const double speed = isRolling ? juce::jlimit (0.25, 4.0, std::abs (currentRate.load (std::memory_order_relaxed))) : 1.0;
         const double decay = std::exp (-speed / (0.012 * sr));
 
         for (int k = 0; k < n; ++k)
@@ -868,9 +900,10 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
                     clickLastBeat = (juce::int64) std::ceil (beats - 1.0e-9) - 1;   // a start exactly on a beat clicks
                     clickWasRolling = true;
                 }
-                if (b > clickLastBeat)
+                if (b != clickLastBeat)          // a beat crossed (either way: the tape may be running backwards)
                 {
-                    const bool accent = ((b % bpb) + bpb) % bpb == 0;
+                    const auto beat = juce::jmax (b, clickLastBeat);
+                    const bool accent = ((beat % bpb) + bpb) % bpb == 0;
                     clickFreq = accent ? 1760.0 : 1175.0;
                     clickPhase = 0.0;
                     clickEnv = accent ? 1.0 : 0.7;
@@ -991,15 +1024,37 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     if (isRolling)
     {
         const double whole = std::floor (endFrac);
-        if (position.compare_exchange_strong (pos, pos + (juce::int64) whole))
-            posFrac = endFrac - whole;
+        if (position.compare_exchange_strong (pos, juce::jmax ((juce::int64) 0, pos + (juce::int64) whole)))
+            posFrac = pos + (juce::int64) whole < 0 ? 0.0 : endFrac - whole;
         else
             posFrac = 0.0;
+        if (fromFeeder)
+        {
+            if (! reversing && r0 > 0.0 && r1 > 0.0) reverseHold = juce::jmax (1, reverseHold - n);
+            if (reverseHold <= 1 && atSpeed && ! reversing && ! pokeMissed)
+            {
+                reverseHold = 0;
+                reverseFeed.setActive (false);
+                if (posFrac != 0.0)       // forwards and up to speed: back on whole samples
+                {
+                    auto p = position.load();
+                    if (posFrac >= 0.5) position.compare_exchange_strong (p, p + 1);
+                    posFrac = 0.0;
+                }
+            }
+        }
+        if (reversing && position.load() <= 0)
+        {
+            playing = false;            // backwards off the head of the reel: it stops there
+            reverseA = false;
+            reverseHold = 0;
+            reverseFeed.setActive (false);
+        }
         ringNextPos = position.load();
 
         // Cycle: back to the loop start (the standby readers are already there).
         const auto ls = loopS.load (std::memory_order_relaxed), le = loopE.load (std::memory_order_relaxed);
-        if (cycleOn.load (std::memory_order_relaxed) && ls >= 0 && le > ls)
+        if (cycleOn.load (std::memory_order_relaxed) && ls >= 0 && le > ls && ! reversing)
         {
             auto p = position.load();
             if (p >= le)
@@ -1227,7 +1282,11 @@ juce::String TapeEngine::checkCanRoll() const
 juce::String TapeEngine::play()
 {
     if (playing)
+    {
+        reverseA = false;           // rolling backwards: turn round, forwards again
         return {};
+    }
+    reverseA = false;
 
     if (auto err = checkCanRoll(); err.isNotEmpty())
         return err;
@@ -1245,10 +1304,36 @@ juce::String TapeEngine::play()
     return {};
 }
 
+juce::String TapeEngine::playReverse()
+{
+    if (reverseA.load())
+        return {};
+    if (recording)
+        return "Hawthorne is recording - punch out first, then play the tape backwards.";
+    if (chaseSource.load() != 0)
+        return "Hawthorne is chasing timecode - the tape can't play backwards while it follows another clock.";
+    if (auto err = checkCanRoll(); err.isNotEmpty())
+        return err;
+
+    windCancel();
+    apSession = false;
+    reverseFeed.prime (position.load());       // the tape behind us, in memory before we roll
+    reverseFeed.setActive (true);
+    reverseA = true;
+    if (! playing)
+    {
+        currentRate = -std::abs (targetRate.load());   // from stop: straight off backwards, as PLAY starts straight off
+        playing = true;
+    }
+    return {};
+}
+
 juce::String TapeEngine::record()
 {
     if (recording)
         return {};
+    if (reverseA.load() || (playing && currentRate.load() < 0.0))
+        return "The tape is playing backwards - play it forwards to record.";
 
     if (auto err = checkCanRoll(); err.isNotEmpty())
         return err;
@@ -1277,6 +1362,8 @@ void TapeEngine::stop()
     apSession = false;
     punchOut();
     playing = false;
+    reverseA = false;
+    reverseFeed.setActive (false);
 
     if (wind.active)
     {
@@ -1320,12 +1407,15 @@ void TapeEngine::spoolWind (int direction)
     // to the head of the tape, or on to the end of what's on it (and past, if it's already there)
     const auto end = juce::jmax (getReelLength(), pos + (juce::int64) (600.0 * sr));
     if (playing) playing = false;
+    reverseA = false;
     windTo (direction < 0 ? 0 : end, false, true);
     wind.rollAfter = false;
 }
 
 void TapeEngine::windTo (juce::int64 target, bool rollAfter, bool spoolAlways)
 {
+    reverseA = false;            // (a wind drops out of reverse play: it rolls forwards after, if it rolls)
+    reverseFeed.setActive (false);
     if (recording)
         return;
 
@@ -2219,11 +2309,28 @@ void TapeEngine::rebuildPlaybackGraph()
 
     if (lifterDefeat.load())
         requestSpool();
+    feedReverseFiles();
 
     masterStockA = reel != nullptr && juce::isPositiveAndBelow (reel->activeMaster, (int) reel->masters.size())
                      ? reel->masters[(size_t) reel->activeMaster].stock : 0;
     masterNrA = reel != nullptr && juce::isPositiveAndBelow (reel->activeMaster, (int) reel->masters.size())
                      ? reel->masters[(size_t) reel->activeMaster].nr : 0;
+}
+
+void TapeEngine::feedReverseFiles()
+{
+    // the same tape for reverse play: each track's file, then the active master's two
+    std::vector<juce::File> files ((size_t) kMaxTracks + 2);
+    if (reel != nullptr)
+    {
+        for (int t = 0; t < reel->numTracks && t < kMaxTracks; ++t)
+            files[(size_t) t] = reel->getTapeFile (t);
+        if (juce::isPositiveAndBelow (reel->activeMaster, (int) reel->masters.size()))
+            for (int side = 0; side < 2; ++side)
+                files[(size_t) kMaxTracks + (size_t) side] = reel->getMasterFile (reel->activeMaster, side);
+    }
+    reverseFeed.setFiles (files, reel != nullptr ? reel->sampleRate : 48000.0);
+    if (reverseA.load()) reverseFeed.prime (position.load());
 }
 
 juce::int64 TapeEngine::getReelLength() const

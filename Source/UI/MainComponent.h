@@ -169,6 +169,7 @@ private:
     void importAudio (int track);
     void exportTracks (juce::Array<int> tracks);
     void flipReel();
+    void doReverse();
     void runTapeJob (const juce::String& title, std::function<juce::String (std::function<bool (double)>)> work,
                      std::function<void (bool ok)> after);
     void refreshMasterSection();
@@ -246,6 +247,8 @@ private:
                  ffwKey  { ">>",   "Fast forward: winds on while held (Right arrow: forward 5 seconds)", Colours::mustard },
                  stopKey { "STOP", "Stop (Space)",                    Colours::mustard },
                  playKey { "PLAY", "Play (Space)",                    Colours::mustard },
+                 revKey  { "REVERSE", "Reverse play: the tape runs backwards past the heads (Shift+Space) - reverse guitar, backwards cymbals. "
+                                      "Never records; PLAY turns it round, STOP stops.", Colours::mustard },
                  recKey  { "REC",  "Record / punch in-out (R)",       Colours::red },
                  markKey { "MARK", "Drop a marker here (M)",          Colours::mustard },
                  clickKey { "CLICK", "Click on / off (needs a tempo - TEMPO)", Colours::mustard },

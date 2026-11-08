@@ -14,7 +14,7 @@ enum class Icon
 {
     none,
     // transport
-    rtz, rew, ffw, cue, stop, play, rec, mark, click,
+    rtz, rew, ffw, cue, stop, play, reverse, rec, mark, click,
     // header
     library, sheet, routing, network, tempo, timecode, layout, done, machine, settings, help, fullScreen, exitFullScreen,
     // autolocator, speed, master
@@ -52,6 +52,7 @@ inline void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area,
         case Icon::ffw:   tri (0.16f, 0.52f, 0.25f, 0.75f, true);  tri (0.52f, 0.88f, 0.25f, 0.75f, true); break;
         case Icon::stop:  g.fillRoundedRectangle (juce::Rectangle<float> (P (0.27f, 0.27f), P (0.73f, 0.73f)), s * 0.04f); break;
         case Icon::play:  tri (0.3f, 0.78f, 0.22f, 0.78f, true); break;
+        case Icon::reverse: tri (0.22f, 0.70f, 0.22f, 0.78f, false); break;
         case Icon::rec:   dot (0.5f, 0.5f, 0.24f); break;
         case Icon::cue:
             // headphones: hear the tape while it spools
