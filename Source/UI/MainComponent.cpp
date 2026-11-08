@@ -628,6 +628,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
         // MELVILLE runs the receiver and its settings, and patches its channels where you like
         engine.setNetworkProcessedElsewhere (true);
         engine.setInputsFromPatchbay (true);
+        engine.setClockElsewhere (true);    // (MELVILLE's CLOCK: tempo, click, timecode)
 
        #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
         // MELVILLE's transport is this machine's: its bar's keys press these, and THOREAU and
@@ -650,6 +651,23 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
                 if (sp != nullptr && sp->reel != nullptr) sp->applyTempo (bpm, bpb, barOne);
             });
         };
+        t.writeTimecode = [this] (int rate, double start)
+        {
+            juce::Component::SafePointer<MainComponent> sp (this);
+            juce::MessageManager::callAsync ([sp, rate, start]
+            {
+                if (sp != nullptr) sp->engine.setTimecodeFormat ((timecode::Rate) rate, start);   // (onto the reel; chase reads it)
+            });
+        };
+        t.setChase = [this] (int source, const juce::String& mtcIn)
+        {
+            auto s = syncSettings;
+            s.chase = (TapeEngine::ChaseSource) juce::jlimit (0, 2, source);
+            s.ltcIn = route::maxTracks;      // the LTC IN jack (on MELVILLE's panel)
+            s.mtcIn = mtcIn;
+            s.mtcOut = {};                   // (MELVILLE sends MTC)
+            applySyncSettings (s);
+        };
         engine.onTapeSync = [] (double tapeAtStart, double tapePerSample, int flags)
         {
             if ((flags & hawthorne::net::TapeSync::reelLoaded) == 0) return;    // (no reel: MELVILLE's own clock)
@@ -664,6 +682,9 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
         networkButton.setVisible (false);
         audioButton.setVisible (false);     // (MELVILLE's INTERFACE picks the device)
         routingButton.setVisible (false);   // (MELVILLE's patchbay does the routing; the desk does the mixing)
+        // tempo, click and timecode are MELVILLE's (its CLOCK)
+        for (juce::Component* c : { (juce::Component*) &syncButton, (juce::Component*) &timecodeButton })
+            c->setVisible (false);
     }
     else
     {
@@ -737,6 +758,8 @@ void MainComponent::shutdown()
         t.play = t.stop = t.record = t.returnToZero = nullptr;
         t.wind = nullptr;
         t.writeTempo = nullptr;
+        t.writeTimecode = nullptr;
+        t.setChase = nullptr;
     }
    #endif
     engine.stop();                      // finalises any take in progress
@@ -1072,6 +1095,7 @@ void MainComponent::pushReelSync()
     {
         t.reelRate = sessionRate();
         melville::reelTempo (reel->tempoBpm, reel->beatsPerBar, reel->barOne);
+        melville::reelTimecode (reel->tcRate, reel->tcStartSeconds);
     }
    #endif
 }
@@ -2180,6 +2204,9 @@ void MainComponent::setupPanels()
                                 (juce::Component*) &variKnob, (juce::Component*) &variPctLabel, (juce::Component*) &variStLabel,
                                 (juce::Component*) &stDownButton, (juce::Component*) &stUpButton, (juce::Component*) &variResetButton })
         transportPanel.addAndMakeVisible (c);
+    if (melville::isHosted())     // (MELVILLE's CLOCK has the tempo, click and timecode)
+        for (juce::Component* c : { (juce::Component*) &clickKey, (juce::Component*) &tempoBox, (juce::Component*) &syncSourceButton })
+            c->setVisible (false);
     transportPanel.minW = 1310; transportPanel.minH = 86; transportPanel.maxH = 220;
     transportPanel.onPaint  = [this] (juce::Graphics& g) { paintTransport (g); };
     transportPanel.onLayout = [this] { layoutTransport(); };
@@ -3168,6 +3195,7 @@ void MainComponent::layoutTransport()
         const int kw = compact ? 56 : 64, kwBig = compact ? 62 : 72, gap = compact ? 10 : 14;
         auto key = [&] (TransportKey& k, int w)
         {
+            if (! k.isVisible()) return;
             k.setBounds (d.removeFromLeft (w).reduced (0, 6));
             d.removeFromLeft (6);
         };

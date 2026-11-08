@@ -67,6 +67,8 @@ public:
     /** INPUT: armed tracks always play their inputs. Off (auto input, as on tape): an armed
         track hears its input when stopped or recording, and the tape when just playing back. */
     void setInputMonitor (bool on)          { inputMonitor = on; }
+    /** MELVILLE makes the click and LTC from its own clock: this machine makes neither. */
+    void setClockElsewhere (bool b)         { clockElsewhere = b; }
     bool getInputMonitor() const noexcept   { return inputMonitor.load(); }
     bool isSpoolOverviewReady() const noexcept { return spool.isReady(); }
     /** Hawthorne Route: another program is playing into the virtual ASIO driver (inputs ROUTE 1-32). */
@@ -406,7 +408,7 @@ private:
     bool windPhysics = false;
     int windStyle = 2;
     Wind wind;
-    std::atomic<bool> lifterDefeat { false }, windActiveA { false }, inputMonitor { false };
+    std::atomic<bool> lifterDefeat { false }, windActiveA { false }, inputMonitor { false }, clockElsewhere { false };
     std::atomic<double> windPosA { 0.0 }, windVelA { 0.0 };
     SpoolMonitor spool;
     RouteHost route;

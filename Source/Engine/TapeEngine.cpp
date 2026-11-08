@@ -845,7 +845,7 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
 
     // --- Click: on every beat of the reel's tempo, following the tape (and its speed)
     const double spb = tempoSpb.load (std::memory_order_relaxed);
-    if (rt != nullptr && clickOn.load (std::memory_order_relaxed) && spb > 0.0)
+    if (rt != nullptr && clickOn.load (std::memory_order_relaxed) && spb > 0.0 && ! clockElsewhere.load (std::memory_order_relaxed))
     {
         float* cb = clickBuf.getWritePointer (0);
         juce::FloatVectorOperations::clear (cb, n);
@@ -903,7 +903,7 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     // --- LTC out: timecode of the tape position, while it rolls (to its outputs, and on
     //     Hawthorne Route's LTC channel)
     const bool ltcToRoute = route.wantsOutput();
-    if (rt != nullptr && (! rt->ltcOut.empty() || ltcToRoute))
+    if (rt != nullptr && (! rt->ltcOut.empty() || ltcToRoute) && ! clockElsewhere.load (std::memory_order_relaxed))
     {
         float* lb = clickBuf.getWritePointer (1);
         if (isRolling)
