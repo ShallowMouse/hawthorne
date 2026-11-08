@@ -682,9 +682,19 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
         networkButton.setVisible (false);
         audioButton.setVisible (false);     // (MELVILLE's INTERFACE picks the device)
         routingButton.setVisible (false);   // (MELVILLE's patchbay does the routing; the desk does the mixing)
-        // tempo, click and timecode are MELVILLE's (its CLOCK)
-        for (juce::Component* c : { (juce::Component*) &syncButton, (juce::Component*) &timecodeButton })
+        // tempo, click and timecode are MELVILLE's (its CLOCK); the library and session sheet too
+        for (juce::Component* c : { (juce::Component*) &syncButton, (juce::Component*) &timecodeButton,
+                                    (juce::Component*) &libraryButton, (juce::Component*) &sheetButton })
             c->setVisible (false);
+       #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
+        {
+            auto& l = melville::library();
+            l.view = [this] () -> juce::Component* { return &library; };
+            l.showSheet = [this] { showSheet(); };
+            l.refresh = [this] { library.refresh(); };
+            l.currentReel = [this] { return reel != nullptr ? reel->getFile() : juce::File(); };
+        }
+       #endif
     }
     else
     {
@@ -760,6 +770,8 @@ void MainComponent::shutdown()
         t.writeTempo = nullptr;
         t.writeTimecode = nullptr;
         t.setChase = nullptr;
+        auto& l = melville::library();
+        l.view = nullptr; l.showSheet = l.refresh = nullptr; l.currentReel = nullptr;
     }
    #endif
     engine.stop();                      // finalises any take in progress
@@ -988,6 +1000,18 @@ void MainComponent::showAudioSettings()
 
 void MainComponent::showLibrary (bool show)
 {
+   #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
+    if (melville::isHosted())
+    {
+        // the library is MELVILLE's (its LIBRARY window); here, just the deck
+        library.refresh();
+        if (reel != nullptr) library.select (reel->getFile());
+        else library.select (juce::File (props.getUserSettings()->getValue ("lastReel")));
+        if (show) { if (auto& f = melville::library().show) f(); }
+        else if (auto& f = melville::library().showDeck) f();
+        return;
+    }
+   #endif
     if (show)
     {
         library.refresh();
@@ -1032,7 +1056,17 @@ void MainComponent::loadReel (const juce::File& reelFile)
         return;
     }
 
+   #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
+    // MELVILLE keeps the whole studio with each reel: the old one's goes back with it
+    const auto oldReel = reel != nullptr ? reel->getFile() : juce::File();
+    if (oldReel != juce::File() && oldReel != reelFile)
+        if (auto& f = melville::library().reelLeaving) f (oldReel);
+   #endif
     setReel (std::move (newReel), std::move (newSession));
+   #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
+    if (oldReel != reelFile)
+        if (auto& f = melville::library().reelArrived) f (reelFile);
+   #endif
     showLibrary (false);
 }
 
@@ -2667,7 +2701,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
 
     if (k == juce::KeyPress::F1Key) { showManual(); return true; }
 
-    if (library.isVisible())
+    if (library.isVisible() && library.getParentComponent() == this)
         return false;
 
     // A text field being typed in keeps its keys.
@@ -3165,7 +3199,7 @@ void MainComponent::resized()
     markersPanel.setBounds (sidebar);
     bridgePanel.setBounds (r);
 
-    if (library.isVisible())
+    if (library.isVisible() && library.getParentComponent() == this)
         library.setBounds (getLocalBounds());
 }
 
