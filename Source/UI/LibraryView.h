@@ -17,6 +17,18 @@ class LibraryView : public juce::Component
 {
 public:
     explicit LibraryView (juce::ApplicationProperties&);
+
+    /** Its look: Hawthorne's, unless something hosting it (MELVILLE) gives its own. */
+    struct Theme
+    {
+        juce::Colour accent = Colours::mustard, onAccent = Colours::black, bg = Colours::bg, panel = Colours::panel,
+                     text = Colours::text, textDim = Colours::textDim;
+        juce::String wordmark { "H A W T H O R N E" }, title { "TAPE LIBRARY" };
+        std::function<juce::Font (float size, bool bold)> font;           // (Hawthorne's Courier when empty)
+        std::function<void (juce::Graphics&, juce::Rectangle<float>)> drawMark;   // (Hawthorne's reels when empty)
+    };
+    static Theme& theme();
+    void applyTheme();         // after the theme changed
     ~LibraryView() override;
 
     void refresh();                               // rescan the library folder

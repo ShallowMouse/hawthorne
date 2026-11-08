@@ -193,7 +193,7 @@ public:
             auto tag = gr.tag.toFloat();
             g.setColour (sel ? Paper::paper : Paper::paperDark);
             g.fillRoundedRectangle (tag, 2.0f);
-            g.setColour (sel ? Colours::mustard : Paper::faint);
+            g.setColour (sel ? theme().accent : Paper::faint);
             g.drawRoundedRectangle (tag, 2.0f, sel ? 2.0f : 1.0f);
             g.setColour (Paper::ink);
             g.setFont (Paper::type (13.0f, true));
@@ -203,7 +203,7 @@ public:
 
             if (! gr.emptySlot.isEmpty())
             {
-                g.setColour (Colours::textDim.withAlpha (0.5f));
+                g.setColour (theme().textDim.withAlpha (0.5f));
                 juce::Path p;
                 p.addRoundedRectangle (gr.emptySlot.toFloat(), 3.0f);
                 const float dash[] = { 5.0f, 4.0f };
@@ -219,7 +219,7 @@ public:
 
         if (owner.sessions.empty())
         {
-            g.setColour (Colours::textDim);
+            g.setColour (theme().textDim);
             g.setFont (uiFont (16.0f));
             g.drawFittedText ("The library is empty.\nClick NEW SESSION to put the first tape on the shelf.",
                               getLocalBounds().reduced (40), juce::Justification::centred, 3);
@@ -245,7 +245,7 @@ public:
             g.setColour (juce::Colour (0x88000000));
             g.fillRect (b);
         }
-        g.setColour (sel ? Colours::mustard : juce::Colours::black.withAlpha (0.6f));
+        g.setColour (sel ? theme().accent : juce::Colours::black.withAlpha (0.6f));
         g.drawRect (b, sel ? 2.0f : 1.0f);
 
         // reel number at the top
@@ -276,7 +276,7 @@ public:
         auto foot = b.withTrimmedTop (b.getHeight() - 30.0f);
         if (deck)
         {
-            g.setColour (Colours::mustard);
+            g.setColour (theme().accent);
             g.fillEllipse (foot.withSizeKeepingCentre (9.0f, 9.0f).translated (0, -5.0f));
             g.setFont (Paper::type (8.0f, true));
             g.drawText ("DECK", foot.withTrimmedTop (16.0f), juce::Justification::centred);
@@ -344,7 +344,7 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        g.fillAll (Colours::panel);
+        g.fillAll (theme().panel);
         auto r = getLocalBounds().reduced (20);
 
         const auto* s = owner.selectedSession();
@@ -352,7 +352,7 @@ public:
 
         if (s == nullptr)
         {
-            g.setColour (Colours::textDim);
+            g.setColour (theme().textDim);
             g.setFont (uiFont (15.0f));
             g.drawFittedText ("Pick a tape off the shelf.", r, juce::Justification::centred, 2);
             return;
@@ -484,7 +484,7 @@ LibraryView::LibraryView (juce::ApplicationProperties& p) : props (p)
     addAndMakeVisible (shelfView);
     addAndMakeVisible (*box);
 
-    search.setTextToShowWhenEmpty ("Search artist, title, session, track...", Colours::textDim);
+    search.setTextToShowWhenEmpty ("Search artist, title, session, track...", theme().textDim);
     search.setFont (uiFont (14.0f));
     search.onTextChange = [this] { shelves->rebuild (shelfView.getMaximumVisibleWidth()); };
     addAndMakeVisible (search);
@@ -493,10 +493,7 @@ LibraryView::LibraryView (juce::ApplicationProperties& p) : props (p)
     showArchived.setWantsKeyboardFocus (false);
     addAndMakeVisible (showArchived);
 
-    newSessionButton.setColour (juce::TextButton::buttonColourId, Colours::mustard);
-    newSessionButton.setColour (juce::TextButton::textColourOffId, Colours::black);
-    loadButton.setColour (juce::TextButton::buttonColourId, Colours::mustard);
-    loadButton.setColour (juce::TextButton::textColourOffId, Colours::black);
+    applyTheme();
 
     newSessionButton.onClick = [this] { newSession(); };
     backButton.onClick       = [this] { if (onBackToDeck) onBackToDeck(); };
@@ -1031,23 +1028,42 @@ bool LibraryView::keyPressed (const juce::KeyPress& k)
 }
 
 //==============================================================================
+void LibraryView::applyTheme()
+{
+    for (auto* b : { &newSessionButton, &loadButton })
+    {
+        b->setColour (juce::TextButton::buttonColourId, theme().accent);
+        b->setColour (juce::TextButton::textColourOffId, theme().onAccent);
+    }
+    repaint();
+}
+
+LibraryView::Theme& LibraryView::theme()
+{
+    static Theme t;
+    return t;
+}
+
 void LibraryView::paint (juce::Graphics& g)
 {
-    g.fillAll (Colours::bg);
-    g.setColour (Colours::panel);
+    g.fillAll (theme().bg);
+    g.setColour (theme().panel);
     g.fillRect (topBar);
 
-    g.setColour (Colours::mustard);
-    g.setFont (monoFont (22.0f, true));
-    drawLogoMark (g, topBar.toFloat().withTrimmedLeft (12).withWidth (52).reduced (0, 6));
-    g.setColour (Colours::mustard);
-    g.drawText ("H A W T H O R N E", topBar.withTrimmedLeft (70).withWidth (280), juce::Justification::centredLeft);
-    g.setColour (Colours::text);
-    g.setFont (monoFont (15.0f, true));
-    g.drawText ("TAPE LIBRARY", topBar.withTrimmedLeft (360).withWidth (200), juce::Justification::centredLeft);
+    auto& th = theme();
+    auto font = [&th] (float size, bool bold) { return th.font ? th.font (size, bold) : monoFont (size, bold); };
+    g.setColour (th.accent);
+    g.setFont (font (22.0f, true));
+    if (th.drawMark) th.drawMark (g, topBar.toFloat().withTrimmedLeft (12).withWidth (52).reduced (0, 6));
+    else drawLogoMark (g, topBar.toFloat().withTrimmedLeft (12).withWidth (52).reduced (0, 6));
+    g.setColour (th.accent);
+    g.drawText (th.wordmark, topBar.withTrimmedLeft (70).withWidth (280), juce::Justification::centredLeft);
+    g.setColour (th.text);
+    g.setFont (font (15.0f, true));
+    g.drawText (th.title, topBar.withTrimmedLeft (360).withWidth (200), juce::Justification::centredLeft);
 
-    g.setColour (Colours::textDim);
-    g.setFont (monoFont (11.0f));
+    g.setColour (th.textDim);
+    g.setFont (font (11.0f, false));
     g.drawText ("LIBRARY  " + getLibraryFolder().getFullPathName(), folderArea, juce::Justification::centredLeft, true);
 }
 

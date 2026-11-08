@@ -107,7 +107,7 @@ void TapeEngine::setReel (Reel* s)
         setTempo (0.0, 4, 0.0);
         clickOn = false;
     }
-    monitorMasterFlag = s != nullptr && s->monitorMaster;
+    monitorMasterFlag = masterAlwaysTape.load() || (s != nullptr && s->monitorMaster);
 
     rebuildRouting();
     rebuildPlaybackGraph();

@@ -629,6 +629,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
         engine.setNetworkProcessedElsewhere (true);
         engine.setInputsFromPatchbay (true);
         engine.setClockElsewhere (true);    // (MELVILLE's CLOCK: tempo, click, timecode)
+        engine.setMasterAlwaysTape (true);  // (TWAIN's MIX / 2-TRACK chooses desk or tape)
 
        #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
         // MELVILLE's transport is this machine's: its bar's keys press these, and THOREAU and
@@ -692,6 +693,16 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
             l.view = [this] () -> juce::Component* { return &library; };
             l.showSheet = [this] { showSheet(); };
             l.refresh = [this] { library.refresh(); };
+            l.style = [this] (juce::Colour accent, juce::Colour onAccent, juce::Colour bg, juce::Colour panel, juce::Colour text, juce::Colour dim, juce::Image mark)
+            {
+                auto& th = LibraryView::theme();
+                th.accent = accent; th.onAccent = onAccent; th.bg = bg; th.panel = panel; th.text = text; th.textDim = dim;
+                th.wordmark = "M E L V I L L E";
+                th.title = "LIBRARY";
+                th.font = [] (float size, bool bold) { return juce::Font (juce::FontOptions (size, bold ? juce::Font::bold : juce::Font::plain)); };
+                th.drawMark = [mark] (juce::Graphics& g, juce::Rectangle<float> r) { g.drawImage (mark, r, juce::RectanglePlacement::centred); };
+                library.applyTheme();
+            };
             l.currentReel = [this] { return reel != nullptr ? reel->getFile() : juce::File(); };
             auto& tk = melville::tracks();
             tk.count = [this] { return reel != nullptr ? reel->numTracks : 0; };
@@ -782,7 +793,7 @@ void MainComponent::shutdown()
         t.writeTimecode = nullptr;
         t.setChase = nullptr;
         auto& l = melville::library();
-        l.view = nullptr; l.showSheet = l.refresh = nullptr; l.currentReel = nullptr;
+        l.view = nullptr; l.showSheet = l.refresh = nullptr; l.currentReel = nullptr; l.style = nullptr;
         auto& tk = melville::tracks();
         tk.count = nullptr; tk.name = nullptr; tk.colour = nullptr; tk.rename = nullptr; tk.recolour = nullptr; tk.palette = nullptr;
     }
@@ -2304,6 +2315,7 @@ void MainComponent::setupPanels()
     for (juce::Component* c : { (juce::Component*) &masterL, (juce::Component*) &masterR, (juce::Component*) &masterButton,
                                 (juce::Component*) &masterArmKey, (juce::Component*) &monitorKey })
         masterPanel.addAndMakeVisible (c);
+    if (melville::isHosted()) monitorKey.setVisible (false);     // (TWAIN's MIX / 2-TRACK)
     masterPanel.minW = 260; masterPanel.minH = 190; masterPanel.maxW = 1000; masterPanel.maxH = 700;
     masterPanel.onPaint  = [this] (juce::Graphics& g) { paintMaster (g); };
     masterPanel.onLayout = [this] { layoutMaster(); };
@@ -3342,6 +3354,7 @@ void MainComponent::layoutMaster()
         auto vus = ms.withSizeKeepingCentre (ms.getWidth(), vuH);
         masterL.setBounds (vus.removeFromLeft (vuW));
         masterR.setBounds (vus.removeFromRight (vuW));
+        if (! monitorKey.isVisible()) { masterArmKey.setBounds (controls); return; }
         masterArmKey.setBounds (controls.removeFromLeft ((controls.getWidth() - 6) / 2));
         controls.removeFromLeft (6);
         monitorKey.setBounds (controls);

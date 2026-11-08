@@ -69,6 +69,9 @@ public:
     void setInputMonitor (bool on)          { inputMonitor = on; }
     /** MELVILLE makes the click and LTC from its own clock: this machine makes neither. */
     void setClockElsewhere (bool b)         { clockElsewhere = b; }
+    /** MELVILLE: the master out always plays the master tape (TWAIN's MIX / 2-TRACK is the
+        desk-or-tape switch), so there's no TAPE button. */
+    void setMasterAlwaysTape (bool b)       { masterAlwaysTape = b; if (b) monitorMasterFlag = true; }
     bool getInputMonitor() const noexcept   { return inputMonitor.load(); }
     bool isSpoolOverviewReady() const noexcept { return spool.isReady(); }
     /** Hawthorne Route: another program is playing into the virtual ASIO driver (inputs ROUTE 1-32). */
@@ -408,7 +411,7 @@ private:
     bool windPhysics = false;
     int windStyle = 2;
     Wind wind;
-    std::atomic<bool> lifterDefeat { false }, windActiveA { false }, inputMonitor { false }, clockElsewhere { false };
+    std::atomic<bool> lifterDefeat { false }, windActiveA { false }, inputMonitor { false }, clockElsewhere { false }, masterAlwaysTape { false };
     std::atomic<double> windPosA { 0.0 }, windVelA { 0.0 };
     SpoolMonitor spool;
     RouteHost route;
