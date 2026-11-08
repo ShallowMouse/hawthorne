@@ -1033,6 +1033,14 @@ namespace
 void MainComponent::showAudioSettings()
 {
     auto* selector = new SettingsPanel (deviceManager, engine, *props.getUserSettings(), [this] { applySkin(); });
+   #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
+    if (melville::isHosted())
+    {
+        // (in MELVILLE's window frame, like every part's settings)
+        melville::showPanel (std::unique_ptr<juce::Component> (selector), "Hawthorne settings", "hawthorne");
+        return;
+    }
+   #endif
 
     juce::DialogWindow::LaunchOptions o;
     o.content.setOwned (selector);
