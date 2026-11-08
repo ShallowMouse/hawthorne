@@ -642,7 +642,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
             if (dir != 0) engine.spoolWind (dir);
             else if (engine.getWindDirection() != 0 && ! engine.willRollAfterWind()) engine.stop();
         };
-        t.setTempo = [this] (double bpm, int bpb, double barOne)
+        t.writeTempo = [this] (double bpm, int bpb, double barOne)
         {
             juce::Component::SafePointer<MainComponent> sp (this);
             juce::MessageManager::callAsync ([sp, bpm, bpb, barOne]
@@ -652,6 +652,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
         };
         engine.onTapeSync = [] (double tapeAtStart, double tapePerSample, int flags)
         {
+            if ((flags & hawthorne::net::TapeSync::reelLoaded) == 0) return;    // (no reel: MELVILLE's own clock)
             auto& tr = melville::transport();
             tr.tapePos.store (tapeAtStart, std::memory_order_relaxed);
             tr.tapePerSample.store (tapePerSample, std::memory_order_relaxed);
@@ -735,7 +736,7 @@ void MainComponent::shutdown()
         t.available = false;
         t.play = t.stop = t.record = t.returnToZero = nullptr;
         t.wind = nullptr;
-        t.setTempo = nullptr;
+        t.writeTempo = nullptr;
     }
    #endif
     engine.stop();                      // finalises any take in progress
@@ -1064,13 +1065,14 @@ void MainComponent::pushReelSync()
 
    #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
     // MELVILLE's transport: the reel's tempo (THOREAU and IRVING follow it)
+    // MELVILLE owns the tempo: a reel with its own gives it to MELVILLE, a blank one gets MELVILLE's
     auto& t = melville::transport();
     t.reelLoaded = reel != nullptr;
-    t.bpm = reel != nullptr ? reel->tempoBpm : 0.0;
-    t.beatsPerBar = reel != nullptr ? reel->beatsPerBar : 4;
-    t.barOne = reel != nullptr ? reel->barOne : 0.0;
-    t.reelRate = sessionRate();
-    ++t.tempoRev;
+    if (reel != nullptr)
+    {
+        t.reelRate = sessionRate();
+        melville::reelTempo (reel->tempoBpm, reel->beatsPerBar, reel->barOne);
+    }
    #endif
 }
 
@@ -2666,10 +2668,13 @@ void MainComponent::timerCallback()
 {
    #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
     {
-        auto& t = melville::transport();          // (MELVILLE's counter and lamps)
+        auto& t = melville::transport();          // (MELVILLE's counter and lamps: with no reel, MELVILLE's clock fills them)
+        if (reel != nullptr)
+        {
         t.position = engine.getPosition();
         t.rolling = engine.isPlaying();
         t.recording = engine.isRecording();
+        }
     }
    #endif
     engine.tick();
