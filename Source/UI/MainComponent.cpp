@@ -392,7 +392,8 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     fullScreenButton.setTooltip ("Full screen (F11)");
     fullScreenButton.setWantsKeyboardFocus (false);
     addAndMakeVisible (fullScreenButton);
-    for (auto* b : { &winMinButton, &winMaxButton, &winCloseButton }) addAndMakeVisible (b);
+    for (auto* b : { &winMinButton, &winMaxButton, &winCloseButton })
+        addChildComponent (b), b->setVisible (! melville::isHosted());    // (MELVILLE's window bar has them)
     winMinButton.onClick = [this] { if (auto* w = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent())) w->setMinimised (true); };
     winMaxButton.onClick = [this] { toggleMaximised(); };
     winMaxButton.isMaximised = [this]
@@ -409,8 +410,16 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     networkButton.setTooltip ("Hawthorne Link: record audio sent from other PCs");
     audioButton.onClick   = [this] { showAudioSettings(); };
 
-    for (auto* k : { &rtzKey, &rewKey, &ffwKey, &liftKey, &stopKey, &playKey, &recKey, &markKey, &clickKey })
+    for (auto* k : { &rtzKey, &rewKey, &ffwKey, &liftKey, &stopKey, &playKey, &recKey, &markKey, &clickKey, &inputKey })
         addAndMakeVisible (k);
+    inputKey.setIcon (Icon::input);
+    inputKey.onClick = [this]
+    {
+        const bool on = ! engine.getInputMonitor();
+        engine.setInputMonitor (on);
+        props.getUserSettings()->setValue ("inputMonitor", on);
+        inputKey.setLit (on);
+    };
     // icons in place of the words (the words stay as tooltips)
     rtzKey.setIcon (Icon::rtz);   rewKey.setIcon (Icon::rew);   ffwKey.setIcon (Icon::ffw);   liftKey.setIcon (Icon::cue);
     stopKey.setIcon (Icon::stop); playKey.setIcon (Icon::play); recKey.setIcon (Icon::rec);   markKey.setIcon (Icon::mark);
@@ -696,6 +705,8 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     engine.setWindStyle (props.getUserSettings()->getIntValue ("windStyle", props.getUserSettings()->getBoolValue ("windPhysics", true) ? 1 : 0));
     MachineSkin::meterChoice() = juce::jlimit (0, 2, props.getUserSettings()->getIntValue ("meterStyle", 0));
     engine.setLifterDefeat (props.getUserSettings()->getBoolValue ("lifterDefeat", false));
+    // (inside MELVILLE it starts on: the parts play along while the tape runs)
+    engine.setInputMonitor (props.getUserSettings()->getBoolValue ("inputMonitor", melville::isHosted()));
     setSize (1600, 900);
     startTimerHz (30);
 }
@@ -2091,7 +2102,7 @@ void MainComponent::mouseDown (const juce::MouseEvent& e)
 {
     draggingWindow = false;
     auto* w = dynamic_cast<juce::ResizableWindow*> (getTopLevelComponent());
-    if (w == nullptr || ! headerArea.contains (e.getPosition()) || e.mods.isPopupMenu()
+    if (w == nullptr || melville::isHosted() || ! headerArea.contains (e.getPosition()) || e.mods.isPopupMenu()
          || juce::Desktop::getInstance().getKioskModeComponent() == w) return;
     draggingWindow = true;
     windowDragger.startDraggingComponent (w, e.getEventRelativeTo (w));
@@ -2119,7 +2130,7 @@ void MainComponent::mouseDrag (const juce::MouseEvent& e)
 
 void MainComponent::mouseDoubleClick (const juce::MouseEvent& e)
 {
-    if (headerArea.contains (e.getPosition())) toggleMaximised();
+    if (headerArea.contains (e.getPosition()) && ! melville::isHosted()) toggleMaximised();
 }
 
 void MainComponent::toggleMaximised()
@@ -2162,12 +2173,12 @@ void MainComponent::setupPanels()
     // the transport deck
     for (juce::Component* c : { (juce::Component*) &rtzKey, (juce::Component*) &rewKey, (juce::Component*) &ffwKey, (juce::Component*) &liftKey,
                                 (juce::Component*) &stopKey, (juce::Component*) &playKey, (juce::Component*) &recKey, (juce::Component*) &markKey,
-                                (juce::Component*) &clickKey, (juce::Component*) &tempoBox, (juce::Component*) &syncSourceButton,
+                                (juce::Component*) &clickKey, (juce::Component*) &inputKey, (juce::Component*) &tempoBox, (juce::Component*) &syncSourceButton,
                                 (juce::Component*) &ips7Key, (juce::Component*) &ips15Key, (juce::Component*) &ips30Key, (juce::Component*) &variKey,
                                 (juce::Component*) &variKnob, (juce::Component*) &variPctLabel, (juce::Component*) &variStLabel,
                                 (juce::Component*) &stDownButton, (juce::Component*) &stUpButton, (juce::Component*) &variResetButton })
         transportPanel.addAndMakeVisible (c);
-    transportPanel.minW = 1240; transportPanel.minH = 86; transportPanel.maxH = 220;
+    transportPanel.minW = 1310; transportPanel.minH = 86; transportPanel.maxH = 220;
     transportPanel.onPaint  = [this] (juce::Graphics& g) { paintTransport (g); };
     transportPanel.onLayout = [this] { layoutTransport(); };
     transportPanel.onMouseMove = [this] (const juce::MouseEvent& e) { transportMouseMove (e); };
@@ -2682,6 +2693,7 @@ void MainComponent::timerCallback()
     const int windDir = engine.getWindDirection();
     rewKey.setLit (windDir < 0);
     liftKey.setLit (engine.getLifterDefeat());
+    inputKey.setLit (engine.getInputMonitor());
     inKey.setLit (engine.getPunchIn() >= 0);
     outKey.setLit (engine.getPunchOut() >= 0);
     autoKey.setLit (engine.getAutoPunch() && (! engine.isAutoPunching() || flash));
@@ -3090,6 +3102,7 @@ void MainComponent::resized()
         // window buttons, then FULL SCREEN
         for (auto* b : { &winCloseButton, &winMaxButton, &winMinButton })
         {
+            if (! b->isVisible()) continue;
             b->setBounds (h.removeFromRight (40).expanded (0, 4));
             h.removeFromRight (2);
         }
@@ -3159,6 +3172,7 @@ void MainComponent::layoutTransport()
         d.removeFromLeft (gap);
         key (markKey, kw);
         key (clickKey, kw);
+        key (inputKey, kw);
         d.removeFromLeft (gap);
 
         // Speed: IPS switch, VARI, varispeed knob and readout

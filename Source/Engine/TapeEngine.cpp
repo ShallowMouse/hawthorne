@@ -709,7 +709,8 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         // --- Tape-style auto input: armed tracks hear the input when stopped or
         //     recording (or rehearsing a punch), and hear tape when just playing back.
         const bool spoolHeard = spoolOn && spool.renderTrack (t, tb, n);
-        const float* mon = (isArmed && (! isRolling || isRec || rehearsing)) ? src : ((hasTape || spoolHeard) ? tb : nullptr);
+        const bool hearInput = isArmed && (inputMonitor.load (std::memory_order_relaxed) || ! isRolling || isRec || rehearsing);
+        const float* mon = hearInput ? src : ((hasTape || spoolHeard) ? tb : nullptr);
         if (osc > 0 && ! (rp != nullptr && rp->streams[(size_t) t] != nullptr))
         {
             // line-up: the tone off the repro head (through the tape and its alignment)

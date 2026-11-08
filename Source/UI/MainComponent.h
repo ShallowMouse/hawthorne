@@ -246,6 +246,9 @@ private:
                  recKey  { "REC",  "Record / punch in-out (R)",       Colours::red },
                  markKey { "MARK", "Drop a marker here (M)",          Colours::mustard },
                  clickKey { "CLICK", "Click on / off (needs a tempo - TEMPO)", Colours::mustard },
+                 inputKey { "INPUT", "INPUT: armed tracks always play their inputs, so you hear what you're recording while the tape plays "
+                                     "(drums from THOREAU, say). Off: auto input, as on tape - armed tracks hear their input when stopped or "
+                                     "recording, and the tape on playback.", Colours::mustard },
                  liftKey { "CUE", "Lifter defeat: keep the tape on the heads while it spools, so you hear it wind (the chatter) - on the meters and outputs, never recorded.", Colours::mustard };
 
     juce::Viewport bridgeView;

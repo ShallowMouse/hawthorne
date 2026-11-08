@@ -17,7 +17,7 @@ enum class Icon
     // header
     library, sheet, routing, network, tempo, timecode, layout, done, machine, settings, help, fullScreen, exitFullScreen,
     // autolocator, speed, master
-    punchIn, punchOut, autoPunch, rehearse, loop, vari, arm, tape
+    punchIn, punchOut, autoPunch, rehearse, loop, vari, arm, tape, input
 };
 
 inline void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::Colour c)
@@ -64,6 +64,14 @@ inline void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area,
             line (0.3f, 0.16f, 0.3f, 0.86f);
             p.startNewSubPath (P (0.3f, 0.18f)); p.lineTo (P (0.78f, 0.31f)); p.lineTo (P (0.3f, 0.46f)); p.closeSubPath();
             g.fillPath (p);
+            break;
+        case Icon::input:
+            // a signal going in: an arrow into a bracket
+            line (0.12f, 0.5f, 0.56f, 0.5f);
+            tri (0.5f, 0.68f, 0.36f, 0.64f, true);
+            line (0.80f, 0.22f, 0.80f, 0.78f);
+            line (0.66f, 0.22f, 0.80f, 0.22f);
+            line (0.66f, 0.78f, 0.80f, 0.78f);
             break;
         case Icon::click:
         case Icon::tempo:

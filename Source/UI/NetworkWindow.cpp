@@ -98,7 +98,7 @@ void NetworkPanel::rebuildRows()
             r.button->setWantsKeyboardFocus (false);
             if (! r.connected)
             {
-                r.button->setColour (juce::TextButton::buttonColourId, Colours::mustard);
+                r.button->setColour (juce::TextButton::buttonColourId, accent);
                 r.button->setColour (juce::TextButton::textColourOffId, Colours::black);
             }
             const auto name = r.name;
@@ -140,7 +140,7 @@ void NetworkPanel::paint (juce::Graphics& g)
 {
     g.fillAll (Colours::panel);
 
-    g.setColour (Colours::mustard);
+    g.setColour (accent);
     g.setFont (monoFont (15.0f, true));
     g.drawText (melville::isHosted() ? "MELVILLE LINK" : "HAWTHORNE LINK", 16, 12, 300, 24, juce::Justification::centredLeft);
 
@@ -160,7 +160,7 @@ void NetworkPanel::paint (juce::Graphics& g)
     g.drawText ("MIN BUFFER", latency.getX() - 90, latency.getY(), 84, latency.getHeight(), juce::Justification::centredRight);
 
     // Senders
-    g.setColour (Colours::mustard);
+    g.setColour (accent);
     g.setFont (monoFont (12.0f, true));
     g.drawText ("SENDERS", listArea.getX(), listArea.getY() - 22, 200, 20, juce::Justification::centredLeft);
 
@@ -175,10 +175,10 @@ void NetworkPanel::paint (juce::Graphics& g)
     {
         auto& r = rows[i];
         auto rr = juce::Rectangle<int> (listArea.getX(), listArea.getY() + (int) i * 40, listArea.getWidth(), 36);
-        g.setColour (r.connected ? Colours::mustardDim.withAlpha (0.25f) : Colours::black.withAlpha (0.3f));
+        g.setColour (r.connected ? accentDim.withAlpha (0.25f) : Colours::black.withAlpha (0.3f));
         g.fillRoundedRectangle (rr.toFloat(), 4.0f);
         auto text = rr.reduced (12, 0).withTrimmedRight (150);
-        g.setColour (r.connected ? Colours::mustard : Colours::text);
+        g.setColour (r.connected ? accent : Colours::text);
         g.setFont (uiFont (14.0f, true));
         g.drawText ((r.connected ? "NET " + juce::String (r.slot + 1) + "   " : juce::String()) + r.name,
                     text.removeFromLeft (text.getWidth() / 2), juce::Justification::centredLeft, true);
@@ -188,7 +188,7 @@ void NetworkPanel::paint (juce::Graphics& g)
     }
 
     // Connection status
-    g.setColour (Colours::mustard);
+    g.setColour (accent);
     g.setFont (monoFont (12.0f, true));
     g.drawText ("CONNECTIONS", statusArea.getX(), statusArea.getY(), 200, 20, juce::Justification::centredLeft);
 
@@ -212,7 +212,7 @@ void NetworkPanel::paint (juce::Graphics& g)
             line << "   TAPE SYNC";
 
         const bool bad = st.state == NetReceiver::State::rateMismatch || st.dropouts > 0;
-        g.setColour (st.state == NetReceiver::State::locked ? Colours::mustard : (bad ? Colours::red : Colours::text));
+        g.setColour (st.state == NetReceiver::State::locked ? accent : (bad ? Colours::red : Colours::text));
         g.setFont (monoFont (12.0f, st.state == NetReceiver::State::locked));
         g.drawText (line, statusArea.getX(), y, statusArea.getWidth(), 20, juce::Justification::centredLeft, true);
         y += 22;

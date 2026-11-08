@@ -25,7 +25,11 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    /** Its highlight colour (MELVILLE shows it in its own). */
+    void setAccent (juce::Colour a, juce::Colour dim) { accent = a; accentDim = dim; rowsKey.clear(); rebuildRows(); repaint(); }
+
 private:
+    juce::Colour accent = Colours::mustard, accentDim = Colours::mustardDim;
     void timerCallback() override;
     void rebuildRows();
     void addByAddress();

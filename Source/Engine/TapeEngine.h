@@ -63,6 +63,11 @@ public:
     /** Lifter defeat: hear the tape (the "chatter") while it spools. Monitor only. */
     void setLifterDefeat (bool on);
     bool getLifterDefeat() const noexcept  { return lifterDefeat.load(); }
+
+    /** INPUT: armed tracks always play their inputs. Off (auto input, as on tape): an armed
+        track hears its input when stopped or recording, and the tape when just playing back. */
+    void setInputMonitor (bool on)          { inputMonitor = on; }
+    bool getInputMonitor() const noexcept   { return inputMonitor.load(); }
     bool isSpoolOverviewReady() const noexcept { return spool.isReady(); }
     /** Hawthorne Route: another program is playing into the virtual ASIO driver (inputs ROUTE 1-32). */
     bool isRouteConnected() const noexcept     { return route.isConnected(); }
@@ -401,7 +406,7 @@ private:
     bool windPhysics = false;
     int windStyle = 2;
     Wind wind;
-    std::atomic<bool> lifterDefeat { false }, windActiveA { false };
+    std::atomic<bool> lifterDefeat { false }, windActiveA { false }, inputMonitor { false };
     std::atomic<double> windPosA { 0.0 }, windVelA { 0.0 };
     SpoolMonitor spool;
     RouteHost route;
