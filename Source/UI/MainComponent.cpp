@@ -2960,14 +2960,12 @@ void MainComponent::paint (juce::Graphics& g)
 {
     g.fillAll (Colours::bg);
 
-    // Header
-    g.setColour (Colours::panel);
-    g.fillRect (headerArea);
+    // Header: the bar every part has (PartHeader.h), with Hawthorne's mark
+    partui::drawBar (g, headerArea, partui::accent ("hawthorne"));
     g.setColour (Colours::mustard);
-    g.setFont (monoFont (22.0f, true));
-    drawLogoMark (g, headerArea.toFloat().withTrimmedLeft (12).withWidth (52).reduced (0, 4));
-    g.setColour (Colours::mustard);
-    g.drawText ("H A W T H O R N E", headerArea.withTrimmedLeft (70).withWidth (280), juce::Justification::centredLeft);
+    drawLogoMark (g, headerArea.withTrimmedBottom (2).toFloat().withTrimmedLeft (12).withWidth (52).reduced (0, 8));
+    partui::drawWordmark (g, headerArea.withTrimmedLeft (74).withWidth (280), "H A W T H O R N E", "TAPE MACHINE",
+                          partui::accent ("hawthorne"), monoFont (22.0f, true));
 
     const int firstButtonX = updateButton.isVisible() ? updateButton.getX() : libraryButton.getX();
     auto sessionArea = headerArea.withTrimmedLeft (360).withRight (firstButtonX - 16).reduced (0, 6);
@@ -3227,9 +3225,9 @@ void MainComponent::resized()
 {
     auto r = getLocalBounds();
 
-    headerArea = r.removeFromTop (48);
+    headerArea = r.removeFromTop (partui::headerHeight);
     {
-        auto h = headerArea.reduced (12, 9);
+        auto h = headerArea.withTrimmedBottom (2).reduced (12, 0).withSizeKeepingCentre (headerArea.getWidth() - 24, partui::keyHeight);
         // window buttons, then FULL SCREEN
         for (auto* b : { &winCloseButton, &winMaxButton, &winMinButton })
         {

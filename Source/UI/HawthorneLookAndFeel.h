@@ -20,10 +20,7 @@ namespace Colours
     const juce::Colour black       { 0xff0e0e0d };
 }
 
-inline juce::Font monoFont (float size, bool bold = false)
-{
-    return juce::Font (juce::FontOptions ("Courier New", size, bold ? juce::Font::bold : juce::Font::plain));
-}
+juce::Font monoFont (float size, bool bold = false);       // Courier New; inside MELVILLE, its Courier Prime (Logo.cpp)
 
 /** The Hawthorne mark (two reels as an infinity loop), drawn into a square. Defined in UIHelpers / apps. */
 void drawLogoMark (juce::Graphics&, juce::Rectangle<float> area);

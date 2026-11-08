@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "PartHeader.h"
 #include "HawthorneLookAndFeel.h"
 
 namespace hawthorne
@@ -218,12 +219,12 @@ public:
 
     void paintButton (juce::Graphics& g, bool over, bool down) override
     {
-        auto& lf = getLookAndFeel();
-        lf.drawButtonBackground (g, *this, findColour (getToggleState() ? buttonOnColourId : buttonColourId), over, down);
-        const auto ink = findColour (getToggleState() ? textColourOnId : textColourOffId).withMultipliedAlpha (isEnabled() ? 1.0f : 0.4f);
-        const auto r = getLocalBounds().toFloat().reduced (5.0f);
-        const float sz = juce::jmin (24.0f, r.getWidth(), r.getHeight());
-        drawIcon (g, icon, r.withSizeKeepingCentre (sz, sz), ink);
+        // the keys every part has (PartHeader.h), with Hawthorne's icons
+        const bool on = getToggleState();
+        const auto part = partui::accent ("hawthorne");
+        const auto cap = partui::drawKey (g, getLocalBounds().toFloat().reduced (1.0f), on, over, down, part);
+        const float sz = juce::jmin (22.0f, cap.getWidth() - 12.0f, cap.getHeight() - 10.0f);
+        drawIcon (g, icon, cap.withSizeKeepingCentre (sz, sz), partui::keyInk (on, over, isEnabled(), part));
     }
 
 private:

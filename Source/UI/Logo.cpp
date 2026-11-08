@@ -4,6 +4,19 @@
 namespace hawthorne
 {
 
+juce::Font monoFont (float size, bool bold)
+{
+   #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
+    // the same type as every other part inside MELVILLE
+    static auto regular = juce::Typeface::createSystemTypefaceFor (BinaryData::CourierPrimeRegular_ttf, BinaryData::CourierPrimeRegular_ttfSize);
+    static auto boldFace = juce::Typeface::createSystemTypefaceFor (BinaryData::CourierPrimeBold_ttf, BinaryData::CourierPrimeBold_ttfSize);
+    return juce::Font (juce::FontOptions (bold ? boldFace : regular).withHeight (size));
+   #else
+    return juce::Font (juce::FontOptions ("Courier New", size, bold ? juce::Font::bold : juce::Font::plain));
+   #endif
+}
+
+
 void drawLogoMark (juce::Graphics& g, juce::Rectangle<float> area)
 {
     static std::unique_ptr<juce::Drawable> mark = [] () -> std::unique_ptr<juce::Drawable>
