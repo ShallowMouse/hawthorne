@@ -365,6 +365,7 @@ std::unique_ptr<juce::XmlElement> Reel::toXml() const
         auto* te = root->createNewChildElement ("Track");
         te->setAttribute ("index", t);
         te->setAttribute ("name", tr.name);
+        if (tr.colour != 0) te->setAttribute ("colour", juce::String::toHexString ((juce::int64) tr.colour));
         te->setAttribute ("input", tr.input);
         te->setAttribute ("armed", tr.armed);
         te->setAttribute ("toMix", tr.toMix);
@@ -514,6 +515,7 @@ bool Reel::fromXml (const juce::XmlElement& root, juce::String& error)
 
         auto& tr = tracks[(size_t) t];
         tr.name       = te->getStringAttribute ("name", tr.name);
+        tr.colour     = (juce::uint32) te->getStringAttribute ("colour").getHexValue64();
         tr.input      = te->getIntAttribute ("input", tr.input);
         tr.armed      = te->getBoolAttribute ("armed", false);
         tr.toMix      = te->getBoolAttribute ("toMix", true);

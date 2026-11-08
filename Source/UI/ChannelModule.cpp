@@ -63,6 +63,13 @@ void ChannelModule::mouseDown (const juce::MouseEvent& e)
 
 void ChannelModule::paint (juce::Graphics& g)
 {
+    // the track's colour, across the top
+    if (! trackColour.isTransparent())
+    {
+        g.setColour (trackColour);
+        g.fillRect (getLocalBounds().removeFromTop (4));
+    }
+
     // noise reduction strip: the NR card for this track
     if (nrSystem != 0)
     {

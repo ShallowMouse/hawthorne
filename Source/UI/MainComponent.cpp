@@ -693,6 +693,17 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
             l.showSheet = [this] { showSheet(); };
             l.refresh = [this] { library.refresh(); };
             l.currentReel = [this] { return reel != nullptr ? reel->getFile() : juce::File(); };
+            auto& tk = melville::tracks();
+            tk.count = [this] { return reel != nullptr ? reel->numTracks : 0; };
+            tk.name = [this] (int t) { return reel != nullptr && juce::isPositiveAndBelow (t, reel->numTracks) ? reel->tracks[(size_t) t].name : juce::String(); };
+            tk.colour = [this] (int t)
+            {
+                const auto c = reel != nullptr && juce::isPositiveAndBelow (t, reel->numTracks) ? reel->tracks[(size_t) t].colour : 0u;
+                return c != 0 ? juce::Colour (c) : juce::Colours::transparentBlack;
+            };
+            tk.rename = [this] (int t, const juce::String& n) { setTrackName (t, n); };
+            tk.recolour = [this] (int t, juce::Colour c) { setTrackColour (t, c); };
+            tk.palette = [] { return trackPalette(); };
         }
        #endif
     }
@@ -772,6 +783,8 @@ void MainComponent::shutdown()
         t.setChase = nullptr;
         auto& l = melville::library();
         l.view = nullptr; l.showSheet = l.refresh = nullptr; l.currentReel = nullptr;
+        auto& tk = melville::tracks();
+        tk.count = nullptr; tk.name = nullptr; tk.colour = nullptr; tk.rename = nullptr; tk.recolour = nullptr; tk.palette = nullptr;
     }
    #endif
     engine.stop();                      // finalises any take in progress
@@ -1251,7 +1264,14 @@ void MainComponent::refreshTrackNames()
         return;
 
     for (int t = 0; t < bridge.modules.size(); ++t)
+    {
         bridge.modules[t]->setTrackName (reel->tracks[(size_t) t].name);
+        const auto c = reel->tracks[(size_t) t].colour;
+        bridge.modules[t]->setTrackColour (c != 0 ? juce::Colour (c) : juce::Colours::transparentBlack);
+    }
+   #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
+    ++melville::tracks().rev;      // (EMERSON, WHITMAN and MELVILLE's patchbay show them too)
+   #endif
     for (auto* b : layout.getBlocks()) b->reelChanged();
 
     if (routingWindow != nullptr)
@@ -1271,12 +1291,35 @@ void MainComponent::renameTrack (int track)
     w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, track] (int r)
     {
         if (r != 1 || reel == nullptr) return;
-        auto name = w->getTextEditorContents ("name").trim();
-        reel->tracks[(size_t) track].name = name.isEmpty() ? "Track " + juce::String (track + 1) : name;
-        saveReel();
-        refreshTrackNames();
-        if (sheetWindow != nullptr) sheetWindow->getSheet().refresh();
+        setTrackName (track, w->getTextEditorContents ("name"));
     }), true);
+}
+
+void MainComponent::setTrackName (int track, const juce::String& n)
+{
+    if (reel == nullptr || ! juce::isPositiveAndBelow (track, reel->numTracks)) return;
+    const auto name = n.trim();
+    reel->tracks[(size_t) track].name = name.isEmpty() ? "Track " + juce::String (track + 1) : name;
+    saveReel();
+    refreshTrackNames();
+    if (sheetWindow != nullptr) sheetWindow->getSheet().refresh();
+}
+
+void MainComponent::setTrackColour (int track, juce::Colour c)
+{
+    if (reel == nullptr || ! juce::isPositiveAndBelow (track, reel->numTracks)) return;
+    reel->tracks[(size_t) track].colour = c.isTransparent() ? 0u : c.getARGB();
+    saveReel();
+    refreshTrackNames();
+}
+
+const juce::Array<juce::Colour>& MainComponent::trackPalette()
+{
+    static const juce::Array<juce::Colour> p { juce::Colour (0xffc0503a), juce::Colour (0xffe0883a), juce::Colour (0xffe0c040),
+                                              juce::Colour (0xff8fbf5a), juce::Colour (0xff4fa88a), juce::Colour (0xff4f9fd0),
+                                              juce::Colour (0xff6f78d8), juce::Colour (0xffa86fd0), juce::Colour (0xffd06fa0),
+                                              juce::Colour (0xff9a9a9a) };
+    return p;
 }
 
 //==============================================================================
@@ -1568,8 +1611,18 @@ void MainComponent::showTrackMenu (int track)
     }
     m.addSeparator();
     m.addItem (4, "Rename...");
+    {
+        juce::PopupMenu colours;
+        const auto& pal = trackPalette();
+        for (int i = 0; i < pal.size(); ++i)
+            colours.addColouredItem (300 + i, "  ", pal[i], true, reel->tracks[(size_t) track].colour == pal[i].getARGB());
+        colours.addItem (399, "None", true, reel->tracks[(size_t) track].colour == 0);
+        m.addSubMenu ("Colour", colours);
+    }
     m.showMenuAsync ({}, [this, track] (int r)
     {
+        if (r >= 300 && r < 300 + trackPalette().size()) { setTrackColour (track, trackPalette()[r - 300]); return; }
+        if (r == 399) { setTrackColour (track, juce::Colours::transparentBlack); return; }
         if (reel == nullptr) return;
         if (r == 1) importAudio (track);
         else if (r == 2) exportTracks ({ track });

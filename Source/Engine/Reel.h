@@ -18,6 +18,7 @@ ChannelList  channelsFromString (const juce::String&);
 struct TrackInfo
 {
     juce::String name;
+    juce::uint32 colour = 0;  // ARGB, 0 = none (shown on the tape, the rack, the desk and the patchbay)
     int  input = -1;          // absolute device input channel, -1 = none
     bool armed = false;
     bool toMix = true;        // feeds the master bus

@@ -23,6 +23,7 @@ public:
     VUMeter& getMeter() { return meter; }
 
     void setTrackName (const juce::String&);
+    void setTrackColour (juce::Colour c) { if (c != trackColour) { trackColour = c; repaint(); } }
     void setArmed (bool armed, bool recording, bool flashPhase);
     /** Noise reduction strip under the meter: the reel's system (0 = none: no strip), this
         track's switch (nr::Mode) and its lamp (0 off, 1 encoding, 2 decoding). */
@@ -52,6 +53,7 @@ private:
     juce::Rectangle<float> segment (int mode) const;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChannelModule)
+    juce::Colour trackColour { juce::Colours::transparentBlack };
 };
 
 } // namespace hawthorne

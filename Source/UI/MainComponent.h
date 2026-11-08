@@ -134,6 +134,9 @@ private:
     void rebuildModules();
     void refreshInputChoices();
     void refreshTrackNames();
+    void setTrackName (int track, const juce::String&);
+    void setTrackColour (int track, juce::Colour);       // transparent: none
+    static const juce::Array<juce::Colour>& trackPalette();
     void renameTrack (int track);
     void layoutBridge();
 
