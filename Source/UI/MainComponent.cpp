@@ -662,6 +662,28 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
                 if (sp != nullptr) sp->engine.setTimecodeFormat ((timecode::Rate) rate, start);   // (onto the reel; chase reads it)
             });
         };
+        // a hardware transport's other keys
+        t.deck = [this] (int command, int arg)
+        {
+            switch (command)
+            {
+                case melville::deckReverse:     if (engine.isReversing()) doStop(); else doReverse(); break;
+                case melville::deckMark:        addMarker(); break;
+                case melville::deckPrevMarker:  jumpToMarker (-1); break;
+                case melville::deckNextMarker:  jumpToMarker (1); break;
+                case melville::deckSetIn:       setPunchAt (true); break;
+                case melville::deckSetOut:      setPunchAt (false); break;
+                case melville::deckGotoIn:      if (engine.getPunchIn() >= 0) locate (engine.getPunchIn()); break;
+                case melville::deckGotoOut:     if (engine.getPunchOut() >= 0) locate (engine.getPunchOut()); break;
+                case melville::deckLoop:        loopKey.onClick(); break;
+                case melville::deckAutoPunch:   autoKey.onClick(); break;
+                case melville::deckRehearse:    rehKey.onClick(); break;
+                case melville::deckLocate:      gotoLocate (arg); break;
+                case melville::deckStoreLocate: storeLocate (arg); break;
+                default: break;
+            }
+            locatorPanel.repaint();
+        };
         t.setChase = [this] (int source, const juce::String& mtcIn)
         {
             auto s = syncSettings;
@@ -795,6 +817,7 @@ void MainComponent::shutdown()
         t.wind = nullptr;
         t.writeTempo = nullptr;
         t.writeTimecode = nullptr;
+        t.deck = nullptr;
         t.setChase = nullptr;
         auto& l = melville::library();
         l.view = nullptr; l.showSheet = l.refresh = nullptr; l.currentReel = nullptr; l.style = nullptr;
@@ -1398,6 +1421,20 @@ void MainComponent::jumpToMarker (int direction)
             if (it->position < pos - slack) { locate (it->position); return; }
         locate (reel->markers.front().position);
     }
+}
+
+void MainComponent::storeLocate (int k)
+{
+    if (reel == nullptr || ! juce::isPositiveAndBelow (k, Reel::numLocates)) return;
+    reel->locates[(size_t) k] = engine.getWindTarget();
+    saveReel();
+    locatorPanel.repaint();
+}
+
+void MainComponent::gotoLocate (int k)
+{
+    if (reel == nullptr || ! juce::isPositiveAndBelow (k, Reel::numLocates)) return;
+    if (const auto p = reel->locates[(size_t) k]; p >= 0) locate (p);
 }
 
 //==============================================================================
@@ -2368,7 +2405,20 @@ void MainComponent::setupPanels()
     for (juce::Component* c : { (juce::Component*) &inKey, (juce::Component*) &outKey, (juce::Component*) &autoKey,
                                 (juce::Component*) &rehKey, (juce::Component*) &loopKey })
         locatorPanel.addAndMakeVisible (c);
-    locatorPanel.minW = 260; locatorPanel.minH = 90; locatorPanel.maxW = 700; locatorPanel.maxH = 200;
+    for (int k = 0; k < Reel::numLocates; ++k)
+    {
+        auto* key = locKeys.add (new TransportKey (juce::String (k + 1),
+                                                   "LOC " + juce::String (k + 1) + ": click to go there (key " + juce::String (k + 1) + "). "
+                                                   "Ctrl-click to store where the tape is (Ctrl+" + juce::String (k + 1) + "). Lit: it holds a place.",
+                                                   Colours::mustard));
+        key->onClick = [this, k]
+        {
+            if (juce::ModifierKeys::currentModifiers.isCommandDown() || juce::ModifierKeys::currentModifiers.isShiftDown()) storeLocate (k);
+            else gotoLocate (k);
+        };
+        locatorPanel.addAndMakeVisible (key);
+    }
+    locatorPanel.minW = 260; locatorPanel.minH = 124; locatorPanel.maxW = 700; locatorPanel.maxH = 220;
     locatorPanel.onPaint  = [this] (juce::Graphics& g) { paintLocator (g); };
     locatorPanel.onLayout = [this] { layoutLocator(); };
 
@@ -2772,15 +2822,20 @@ void MainComponent::doRecord()
 void MainComponent::setPunchHere (bool isIn)
 {
     if (reel == nullptr) return;
-    auto in = engine.getPunchIn(), out = engine.getPunchOut();
-    const auto target = isIn ? in : out;
+    const auto target = isIn ? engine.getPunchIn() : engine.getPunchOut();
 
     if (juce::ModifierKeys::currentModifiers.isShiftDown() || juce::ModifierKeys::currentModifiers.isCommandDown())
     {
         if (target >= 0) locate (target);
         return;
     }
-    if (engine.isRecording() || engine.isAutoPunching()) return;
+    setPunchAt (isIn);
+}
+
+void MainComponent::setPunchAt (bool isIn)
+{
+    if (reel == nullptr || engine.isRecording() || engine.isAutoPunching()) return;
+    auto in = engine.getPunchIn(), out = engine.getPunchOut();
 
     const auto here = engine.getWindTarget();
     if (isIn) { in = here; if (out >= 0 && out <= in) out = -1; }
@@ -2827,6 +2882,17 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
     if (c == 'm' || c == 'M')                                { addMarker(); return true; }
     if (c == ',' || c == '<')                                { jumpToMarker (-1); return true; }
     if (c == '.' || c == '>')                                { jumpToMarker (1); return true; }
+    // LOC 1-8: the number goes there, Ctrl + the number stores here
+    {
+        const int code = k.getKeyCode();
+        const int digit = code >= '1' && code <= '8' ? code - '1'
+                        : code >= juce::KeyPress::numberPad1 && code <= juce::KeyPress::numberPad8 ? code - juce::KeyPress::numberPad1 : -1;
+        if (digit >= 0 && ! k.getModifiers().isShiftDown() && ! k.getModifiers().isAltDown())
+        {
+            if (k.getModifiers().isCommandDown()) storeLocate (digit); else gotoLocate (digit);
+            return true;
+        }
+    }
     if (k == juce::KeyPress::returnKey || k == juce::KeyPress::homeKey) { locate (0); return true; }
     if (k == juce::KeyPress::leftKey)                        { nudge (-5.0); return true; }
     if (k == juce::KeyPress::rightKey)                       { nudge (5.0);  return true; }
@@ -2846,6 +2912,29 @@ void MainComponent::timerCallback()
         t.position = engine.getPosition();
         t.rolling = engine.isPlaying();
         t.recording = engine.isRecording();
+        // (and the deck's lamps and readouts, for a hardware transport)
+        t.deckLamps = (engine.isPlaying() && engine.isReversing() ? melville::lampReversing : 0)
+                    | (engine.getCycle() ? melville::lampLoop : 0)
+                    | (engine.getAutoPunch() ? melville::lampAutoPunch : 0)
+                    | (engine.getRehearse() ? melville::lampRehearse : 0);
+        int stored = 0;
+        for (int k = 0; k < Reel::numLocates; ++k) if (reel->locates[(size_t) k] >= 0) stored |= 1 << k;
+        t.locatesStored = stored;
+        t.punchIn = engine.getPunchIn();
+        t.punchOut = engine.getPunchOut();
+        if (frame % 6 == 0)
+        {
+            const auto pos = engine.getPosition();
+            juce::String now, next;
+            for (auto& m : reel->markers)       // (in time order)
+            {
+                if (m.position <= pos) now = m.name;
+                else { next = m.name; break; }
+            }
+            const juce::SpinLock::ScopedLockType sl (t.markerLock);
+            t.markerNow = now;
+            t.markerNext = next;
+        }
         }
     }
    #endif
@@ -2878,6 +2967,8 @@ void MainComponent::timerCallback()
     rehKey.setLit (engine.getRehearse());
     loopKey.setLit (engine.getCycle());
     if (frame % 10 == 0) locatorPanel.repaint();
+    for (int k = 0; k < locKeys.size(); ++k)
+        locKeys[k]->setLit (reel != nullptr && reel->locates[(size_t) k] >= 0);
     ffwKey.setLit (windDir > 0);
     clickKey.setLit (reel != nullptr && reel->clickOn && reel->tempoBpm > 0.0);
     if (frame % 5 == 0)
@@ -3311,7 +3402,7 @@ void MainComponent::resized()
     transportPanel.setBounds (r.removeFromBottom (96));
     auto sidebar = r.removeFromRight (300);
     masterPanel.setBounds (sidebar.removeFromTop (204));
-    locatorPanel.setBounds (sidebar.removeFromTop (94));
+    locatorPanel.setBounds (sidebar.removeFromTop (128));
     markersPanel.setBounds (sidebar);
     bridgePanel.setBounds (r);
 
@@ -3417,7 +3508,7 @@ void MainComponent::layoutLocator()
     {
         auto la = locatorPanel.getLocalBounds();
         locatorArea = la;
-        la = la.withSizeKeepingCentre (juce::jmin (la.getWidth(), 420), juce::jmin (la.getHeight(), 94));
+        la = la.withSizeKeepingCentre (juce::jmin (la.getWidth(), 420), juce::jmin (la.getHeight(), 128));
         la = la.reduced (12, 6).withTrimmedLeft (1);
         locatorLabelArea = la.removeFromTop (16);
         la.removeFromTop (4);
@@ -3434,6 +3525,18 @@ void MainComponent::layoutLocator()
         autoKey.setBounds (row2.removeFromLeft (w3)); row2.removeFromLeft (6);
         rehKey.setBounds (row2.removeFromLeft (w3));  row2.removeFromLeft (6);
         loopKey.setBounds (row2);
+        // LOC 1-8
+        la.removeFromTop (6);
+        auto row3 = la.removeFromTop (28);
+        const int n = locKeys.size();
+        const int kw = n > 0 ? (row3.getWidth() - 4 * (n - 1)) / n : 0;
+        const bool fits = row3.getHeight() >= 20;     // (a small autolocator panel: just IN / OUT and the lights)
+        for (int k = 0; k < n; ++k)
+        {
+            locKeys[k]->setVisible (fits);
+            locKeys[k]->setBounds (k == n - 1 ? row3 : row3.removeFromLeft (kw));
+            row3.removeFromLeft (4);
+        }
     }
 }
 

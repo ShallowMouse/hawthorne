@@ -143,6 +143,9 @@ private:
     // Markers
     void addMarker();
     void jumpToMarker (int direction);
+    // Locate memories (LOC 1-8): store here / go there
+    void storeLocate (int k);
+    void gotoLocate (int k);
 
     // Speed
     void changeSpeed (double deckIps, bool variOn, double variPercent, bool save = true);
@@ -270,7 +273,9 @@ private:
                  autoKey { "AUTO", "Auto punch: REC spools to the pre-roll, plays, and punches in and out at IN / OUT (pre / post roll in SETTINGS)", Colours::red },
                  rehKey  { "REH",  "Rehearse: with AUTO, the punch is rehearsed - armed tracks switch to input between IN and OUT, nothing is recorded", Colours::mustard },
                  loopKey { "LOOP", "Cycle: play IN to OUT round and round. With AUTO, the whole punch (pre-roll to post-roll) repeats, recording over the last try each time", Colours::mustard };
-    void setPunchHere (bool isIn);
+    juce::OwnedArray<TransportKey> locKeys;   // LOC 1-8: click goes there, Ctrl-click stores here
+    void setPunchHere (bool isIn);     // (the IN / OUT keys: shift-click goes there)
+    void setPunchAt (bool isIn);       // set IN / OUT where the tape is
     TempoBox tempoBox;
     juce::TextButton syncSourceButton;
     bool rewHeld = false, ffwHeld = false;

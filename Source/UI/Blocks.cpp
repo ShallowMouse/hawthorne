@@ -485,6 +485,24 @@ public:
             const double sr = deck.sessionRate();
             const auto in = e.getPunchIn(), out = e.getPunchOut();
             auto t = [&] (juce::int64 v) { return v >= 0 ? formatShortTime (v, sr) : juce::String ("--:--"); };
+            // the locate memories along the bottom (lit: holds a place; 1-8 goes there, Ctrl stores)
+            if (r.getHeight() > 100.0f && deck.reel != nullptr)
+            {
+                auto strip = r.removeFromBottom (18.0f);
+                r.removeFromBottom (6.0f);
+                const auto& sk = skin();
+                const float cw = strip.getWidth() / (float) Reel::numLocates;
+                for (int k = 0; k < Reel::numLocates; ++k)
+                {
+                    const auto cell = strip.removeFromLeft (cw).reduced (2.0f, 0.0f);
+                    const bool held = deck.reel->locates[(size_t) k] >= 0;
+                    g.setColour (held ? Colours::mustard.withAlpha (0.85f) : sk.deckEdge.withAlpha (0.8f));
+                    if (held) g.fillRoundedRectangle (cell, 3.0f); else g.drawRoundedRectangle (cell, 3.0f, 1.0f);
+                    g.setColour (held ? juce::Colours::black : sk.deckTextDim);
+                    g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+                    g.drawText ("LOC " + juce::String (k + 1), cell, juce::Justification::centred);
+                }
+            }
             const bool lights = r.getHeight() > 64.0f;
             auto rows = lights ? r.removeFromTop (r.getHeight() * 0.7f) : r;
             const float capH = juce::jlimit (10.0f, 14.0f, rows.getHeight() * 0.22f);

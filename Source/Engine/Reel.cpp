@@ -258,6 +258,7 @@ void Reel::flipMetadata (juce::int64 length, bool swapTracks)
         const auto i = mirror (punchOut), o = mirror (punchIn);
         punchIn = i; punchOut = o;
     }
+    for (auto& l : locates) if (l >= 0) l = mirror (l);
     if (swapTracks)
         for (int a = 0, b = numTracks - 1; a < b; ++a, --b)
         {
@@ -395,6 +396,8 @@ std::unique_ptr<juce::XmlElement> Reel::toXml() const
     lo->setAttribute ("cycle", cycle);
     lo->setAttribute ("pre", preRoll);
     lo->setAttribute ("post", postRoll);
+    for (int k = 0; k < numLocates; ++k)
+        if (locates[(size_t) k] >= 0) lo->setAttribute ("loc" + juce::String (k + 1), juce::String (locates[(size_t) k]));
 
     auto* sy = root->createNewChildElement ("Sync");
     sy->setAttribute ("click", clickOn);
@@ -548,6 +551,8 @@ bool Reel::fromXml (const juce::XmlElement& root, juce::String& error)
         cycle     = lo->getBoolAttribute ("cycle", false);
         preRoll   = juce::jlimit (0.0, 30.0, lo->getDoubleAttribute ("pre", 2.0));
         postRoll  = juce::jlimit (0.0, 30.0, lo->getDoubleAttribute ("post", 1.0));
+        for (int k = 0; k < numLocates; ++k)
+            locates[(size_t) k] = lo->getStringAttribute ("loc" + juce::String (k + 1), "-1").getLargeIntValue();
     }
 
     if (auto* sy = root.getChildByName ("Sync"))

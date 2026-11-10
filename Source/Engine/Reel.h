@@ -168,6 +168,9 @@ public:
     juce::int64 punchIn = -1, punchOut = -1;
     bool   autoPunch = false, rehearse = false, cycle = false;
     double preRoll = 2.0, postRoll = 1.0;   // seconds
+    // Locate memories (LOC 1-8): tape samples, -1 = empty
+    static constexpr int numLocates = 8;
+    std::array<juce::int64, numLocates> locates { -1, -1, -1, -1, -1, -1, -1, -1 };
     // Click and timecode (kept with the reel)
     bool   clickOn = false;
     double clickLevelDb = -12.0;
