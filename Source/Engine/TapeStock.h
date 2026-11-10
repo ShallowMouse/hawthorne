@@ -32,8 +32,12 @@ namespace hawthorne
 namespace tape
 {
     // Saved by number: only ever add to the end.
-    enum class Stock { clean = 0, us456, highOutput, vintage, european, emitape, mastering499, sm900 };
-    constexpr int numStocks = 8;
+    enum class Stock { clean = 0, us456, highOutput, vintage, european, emitape, mastering499, sm900, emi888, emi811, emi815 };
+    constexpr int numStocks = 11;
+    /** The order they're offered in (the EMI tapes together, the mastering stocks after); clean goes last. */
+    inline constexpr Stock menuOrder[] = { Stock::us456, Stock::highOutput, Stock::vintage, Stock::european,
+                                          Stock::emitape, Stock::emi888, Stock::emi811, Stock::emi815,
+                                          Stock::mastering499, Stock::sm900 };
     enum StockUse { forMultitrack = 1, forMaster = 2 };
 
     struct StockInfo
@@ -70,6 +74,12 @@ namespace tape
               14.0, 0.02,  -62.0,  -67.0,  2.0, 0.3, false, forMaster },
             { "Mastering (SM900-type)",   "SM900 +12",     "Very high output mastering tape. Huge headroom and the lowest noise: the cleanest tape print, a subtle firm low end and a full top. For loud, modern masters.",
               17.0, 0.012, -65.0,  -70.0,  1.6, 0.0, true, forMaster },
+            { "EMI 888 (early 60s)",      "EMITAPE 888",   "EMI's early-60s studio tape, made for Abbey Road. The dirtiest of the EMI tapes: lo-fi and grainy, breaking up early with gritty upper mids, a soft top, a round low end and plenty of hiss (CCIR EQ). Great on rock and on acoustic guitars and percussion.",
+              6.5,  0.07,  -51.0,  -56.5,  2.4, 2.2, true, forMultitrack | forMaster },
+            { "EMI 811 (mid-late 60s)",   "EMITAPE 811",   "The Beatles' tape from Revolver on (1966-70). Cleaner than the 888: a better top end and a little less distortion, still warm and sweet when pushed (CCIR EQ). Character without the grit - lovely on single instruments like piano.",
+              8.0,  0.05,  -54.0,  -59.0,  2.2, 1.2, true, forMultitrack | forMaster },
+            { "EMI 815 (early 70s)",      "EMITAPE 815",   "EMI's early-70s tape: the cleanest of the three. A flatter top end and less distortion, with a rounder bass and natural highs (CCIR EQ). Smooth and controlled - the one to use when you want the EMI sound with the least colour.",
+              10.5, 0.03,  -58.0,  -62.0,  2.0, 0.5, true, forMultitrack | forMaster },
         };
         return stocks[juce::jlimit (0, numStocks - 1, (int) s)];
     }
@@ -85,7 +95,8 @@ namespace tape
             case Stock::european:     return 9;
             case Stock::mastering499: return 9;
             case Stock::sm900:        return 12;
-            default:                  return 0;     // standard-level tapes (250, Emitape) and clean
+            case Stock::emi815:       return 3;
+            default:                  return 0;     // standard-level tapes (250, Emitape, EMI 888 / 811) and clean
         }
     }
     inline double recommendedBias (Stock s)
@@ -94,6 +105,8 @@ namespace tape
         {
             case Stock::vintage:      return 2.5;
             case Stock::emitape:      return 2.0;
+            case Stock::emi888:       return 2.0;
+            case Stock::emi811:       return 2.5;
             case Stock::highOutput:   return 3.5;
             case Stock::sm900:        return 3.5;
             default:                  return 3.0;

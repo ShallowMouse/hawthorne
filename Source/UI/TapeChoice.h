@@ -12,8 +12,8 @@ namespace hawthorne
 inline std::vector<int> stocksFor (int use)
 {
     std::vector<int> v;
-    for (int s = 1; s < tape::numStocks; ++s)
-        if ((tape::info ((tape::Stock) s).use & use) != 0) v.push_back (s);
+    for (auto s : tape::menuOrder)
+        if ((tape::info (s).use & use) != 0) v.push_back ((int) s);
     v.push_back (0);
     return v;
 }
