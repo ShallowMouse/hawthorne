@@ -265,7 +265,7 @@ private:
     VUMeter masterL { "L" }, masterR { "R" };
     juce::TextButton masterButton;
     TransportKey masterArmKey { "ARM",  "Arm the master: record the mix onto this reel, in step with the tracks", Colours::red },
-                 monitorKey   { "TAPE", "Master monitoring: hear the master tape instead of the live mix",       Colours::mustard };
+                 monitorKey   { "TAPE", "Master monitoring. Lit: the 2-track's tape only (silent with no master, stopped or past the end of it; while a mix goes down, what's being printed). Off: the live mix.", Colours::mustard };
     juce::Rectangle<int> deckBadgeArea, masterBadgeArea;
     juce::Rectangle<int> masterLabelArea, masterPanelArea, locatorArea, locatorLabelArea, inTimeArea, outTimeArea;
     TransportKey inKey   { "IN",   "Punch IN point: click to set it here. Shift-click to go there.", Colours::mustard },

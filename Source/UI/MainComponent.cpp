@@ -521,7 +521,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
         }
         engine.setMasterArmed (! engine.isMasterArmed());
     };
-    monitorKey.onClick = [this] { engine.setMonitorMaster (! engine.isMonitoringMaster()); };
+    monitorKey.onClick = [this] { engine.setMonitorMaster (! engine.isMonitoringMaster()); masterPanel.repaint (masterLabelArea); };
 
     // Speed: IPS switch + varispeed
     for (auto* k : { &ips7Key, &ips15Key, &ips30Key, &variKey })
@@ -1504,7 +1504,7 @@ void MainComponent::refreshMasterSection()
                                     : juce::String (juce::CharPointer_UTF8 ("NO MASTER  \xe2\x96\xbe")));
     masterButton.setEnabled (reel != nullptr);
     masterArmKey.setEnabled (reel != nullptr);
-    monitorKey.setEnabled (has);
+    monitorKey.setEnabled (reel != nullptr);       // (TAPE with no master is silence: INPUT gets the mix back)
     masterPanel.repaint (masterLabelArea);
 }
 
@@ -3329,7 +3329,19 @@ void MainComponent::paintMaster (juce::Graphics& g)
         g.drawRoundedRectangle (badge.toFloat().reduced (1.0f), 2.0f, 1.0f);
         g.setColour (ms.badgeText);
         g.drawText (t, badge, juce::Justification::centred, false);
-        if (const int mnr = engine.getMasterNr(); mnr != 0)
+        const bool hasMaster = reel != nullptr && juce::isPositiveAndBelow (reel->activeMaster, (int) reel->masters.size());
+        if (engine.isMonitoringMaster() && ! hasMaster)
+        {
+            // listening to the 2-track with nothing on it
+            const juce::String nt = "NO TAPE";
+            const int nw = (int) juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), nt) + 12;
+            auto nb = badge.withWidth (nw).translated (-nw - 6, 0);
+            g.setColour (Colours::redDim);
+            g.fillRoundedRectangle (nb.toFloat(), 3.0f);
+            g.setColour (juce::Colour (0xfff0e6d0));
+            g.drawText (nt, nb, juce::Justification::centred, false);
+        }
+        else if (const int mnr = engine.getMasterNr(); mnr != 0)
         {
             // the master's noise reduction, beside the badge
             const juce::String nt = nr::info (mnr).label;

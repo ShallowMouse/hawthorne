@@ -813,7 +813,10 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     //     sample-aligned with the tracks.
     const int roundTrip = getRoundTrip();
     const bool recMaster = rp != nullptr && rp->masterStreams[0] != nullptr;
-    const bool monitorTape = monitorMasterFlag.load (std::memory_order_relaxed) && ! recMaster;
+    // TAPE (the 2-track's repro): only what's on the master tape - nothing when no master is loaded,
+    // the tape's stopped or past what's recorded, as a machine with no tape on it. While a mix is going
+    // down, what's being printed (through the 2-track's playback stage; no head delay). INPUT: the mix.
+    const bool monitorTape = monitorMasterFlag.load (std::memory_order_relaxed);
 
     std::array<const float*, 2> masterOutSig { nullptr, nullptr };
     for (int side = 0; side < 2; ++side)
@@ -846,15 +849,22 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
             }
             if (resampledRec)       rp->masterRs.push (side, toTape, n);
             else if (pushCount > 0) rp->masterStreams[(size_t) side]->push (toTape, pushCount);
+            if (monitorTape)
+                juce::FloatVectorOperations::copy (masterTapeBus.getWritePointer (side), toTape, n);   // (heard off tape, below)
         }
 
         // Master tape playback
         const float* outSig = bus;
-        if (monitorTape && isRolling && g != nullptr && ! g->master[(size_t) side].empty())
+        if (monitorTape)
         {
             float* tb = masterTapeBus.getWritePointer (side);
-            if (! readTape (g->master[(size_t) side], kMaxTracks + side, tb))
-                juce::FloatVectorOperations::clear (tb, n);
+            const bool printing = recMaster;
+            if (! printing && ! (isRolling && g != nullptr && ! g->master[(size_t) side].empty()
+                                 && readTape (g->master[(size_t) side], kMaxTracks + side, tb)))
+            {
+                juce::FloatVectorOperations::clear (tb, n);      // no tape here: silence
+                masterDecLive[(size_t) side] = false;
+            }
             else
             {
                 if (masterTapeOn)
