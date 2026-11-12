@@ -137,7 +137,7 @@ namespace tape
 
     inline constexpr MachineInfo neutralMachine { "None", "", "", 0, 0, 1, 1, 1, 0, 1, 0, 1 };
 
-    constexpr int numMultitrackMachines = 7;     // the last is "None": bit-perfect
+    constexpr int numMultitrackMachines = 11;    // 6 is "None": bit-perfect (later machines are added after it)
     constexpr int noMultitrackMachine = 6;
     inline const MachineInfo& multitrackMachine (int i)
     {
@@ -156,11 +156,19 @@ namespace tape
               -1.5, 0.025, 1.2, 1.0,  0.95, 0.6,  1.0,  1.5, 1.2 },
             { "None (bit-perfect)", "NO MACHINE", "No machine: nothing between you and the files. No tape sound, no hiss, no wow or flutter - bit-for-bit, whatever the tape on the reel.",
               0, 0, 1, 1, 1, 0, 1, 0, 0 },
+            { "Scully 280 (8-track)", "SCULLY 280", "The 60s American solid-state workhorse. Punchy and forward in the mids, a solid low end and a slightly soft top.",
+              -1.0, 0.02, 1.15, 1.0, 0.95, 0.5,  1.0,  1.5, 1.2 },
+            { "3M M79", "3M M79", "The 70s 2-inch 24-track with the Isoloop drive. Round and warm with smooth low mids and a steady, low-flutter transport.",
+              -0.5, 0.012, 1.25, 0.95, 0.95, 0.4, 0.9,  1.0, 0.8 },
+            { "Stephens 821B", "STEPHENS 821B", "The capstanless, transformerless 70s 24-track. Open and detailed: a deep, clean low end and an extended top.",
+              0.5, 0.0,   1.1,  0.9,  1.2, -0.4,  0.8,  0.0, 0.7 },
+            { "Tascam 80-8 (1/2\" 8-track)", "TASCAM 80-8", "The 70s home-studio 8-track: eight narrow tracks on half-inch tape. Less headroom, a lighter low end, a softer top and more hiss.",
+              -2.0, 0.02, 0.85, 1.1,  0.9,  0.8,  1.2,  4.0, 1.5 },
         };
         return m[juce::jlimit (0, numMultitrackMachines - 1, i)];
     }
 
-    constexpr int numMasterMachines = 6;         // the last is "None": bit-perfect
+    constexpr int numMasterMachines = 10;        // 5 is "None": bit-perfect (later machines are added after it)
     constexpr int noMasterMachine = 5;
     inline const MachineInfo& masterMachine (int i)
     {
@@ -177,6 +185,14 @@ namespace tape
               -2.0, 0.04, 1.25, 0.95, 0.85, 1.0,  0.9,  2.0, 1.2 },
             { "None (bit-perfect)", "NO MACHINE", "No machine: the master is recorded bit-for-bit, whatever its tape.",
               0, 0, 1, 1, 1, 0, 1, 0, 0 },
+            { "Ampex AG-440", "AMPEX AG-440", "The solid-state Ampex of the late 60s and 70s, in studios and broadcasters everywhere. Warm and solid with a full low end.",
+              0.0, 0.01,  1.25, 0.9,  1.0,  0.4,  0.85, 0.5, 0.8 },
+            { "Scully 280", "SCULLY 280", "The 60s / 70s American 2-track for mastering and broadcast. Punchy and direct.",
+              0.0, 0.015, 1.15, 1.0,  1.0,  0.3,  0.95, 0.5, 0.9 },
+            { "Studer A810", "STUDER A810", "Studer's 80s microprocessor 2-track. Clean, precise and quiet: the tidiest print of the mix.",
+              1.0, 0.0,   0.95, 1.0,  1.1, -0.1,  0.95, -1.5, 0.5 },
+            { "Revox A77", "REVOX A77", "The home-studio reel-to-reel of the late 60s and 70s. A little less headroom and more hiss, with a friendly, slightly soft sound.",
+              -1.5, 0.015, 0.95, 1.05, 0.9,  0.7,  1.1,  2.5, 1.3 },
         };
         return m[juce::jlimit (0, numMasterMachines - 1, i)];
     }

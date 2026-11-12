@@ -54,6 +54,9 @@ private:
     void updateSelection();
     void newSession();
     void newReel();
+public:
+    void wizardGallery (const juce::File& dir);     // (development: the new-reel wizard's steps as pictures)
+private:
     void importRecordings();
     void loadSelected();
     void archiveSelected();

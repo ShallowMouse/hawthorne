@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "../Engine/TapeStock.h"
 
 namespace hawthorne
 {
@@ -97,8 +98,40 @@ struct MachineSkin
               Meter::vu, C (0xfff7e9bc), C (0xffe6c56a), C (0xff1d1a14), C (0xffc0392b), C (0xff0e0e0d), C (0xff151513), C (0xffd9a521), C (0xff1d1a14),
               C (0xff1b1b1a), C (0xff121211), C (0xff3c3a35),
               C (0xff0e0e0d), C (0xffd9a521) },
+            // Scully 280: grey-green cabinet, black transport panel, chrome push keys, drum counter;
+            // a row of cream-faced VU meters in a grey panel.
+            { "SCULLY", "280", C (0xff2a2c2b), C (0xff222423), C (0xff6d736f), C (0xffe8e6df), C (0xff9aa09b), false,
+              Keys::chrome, C (0xffcfd2d4), C (0xff1b1d1f),
+              Counter::drum, C (0xfff3eedc), C (0xff121212),
+              Meter::vu, C (0xfff8ecc8), C (0xffe9cf8a), C (0xff1d1a14), C (0xffb3261e), C (0xff5d625f), C (0xff6d736f), C (0xffe8e6df), C (0xff1d1a14),
+              C (0xff7c837e), C (0xff6d736f), C (0xff5d625f),
+              C (0xff1b1d1f), C (0xffd8dcdf) },
+            // 3M M79: warm grey cabinet, black front, illuminated keys, red LED counter;
+            // black meter bridge with amber VU meters.
+            { "3M", "M79", C (0xff8b8a84), C (0xff7a7973), C (0xff4a4945), C (0xff141414), C (0xff3b3a36), false,
+              Keys::illuminated, C (0xff2b2b2b), C (0xfff0f0ec),
+              Counter::redLed, C (0xffff3b2e), C (0xff140605),
+              Meter::vu, C (0xfffbe3a2), C (0xffe6ad48), C (0xff1d1a14), C (0xffb3261e), C (0xff111111), C (0xff181818), C (0xfff0e6cc), C (0xff1d1a14),
+              C (0xff161616), C (0xff111111), C (0xff2a2a2a),
+              C (0xff141414), C (0xffe6e3da) },
+            // Stephens 821B: dark walnut-brown and black, square keys, red LED counter;
+            // black meter bridge with white-faced VU meters.
+            { "STEPHENS", "821B", C (0xff3b2e24), C (0xff30251d), C (0xff1a1410), C (0xffeee7da), C (0xffb3a593), false,
+              Keys::square, C (0xff1e1b18), C (0xffeee7da),
+              Counter::redLed, C (0xffff3b2e), C (0xff140605),
+              Meter::vu, C (0xfffcfbf6), C (0xffeceadf), C (0xff15171a), C (0xffd0312d), C (0xff121212), C (0xff1a1a1a), C (0xffeee7da), C (0xff15171a),
+              C (0xff161210), C (0xff100d0b), C (0xff2c241d),
+              C (0xff161210), C (0xffd9c9a8) },
+            // Tascam 80-8: silver-grey brushed front, black keys, mechanical counter;
+            // black meter strip with small backlit VU meters.
+            { "TASCAM", "80-8", C (0xffc9cbcc), C (0xffb3b5b6), C (0xff7d8083), C (0xff1b1d1f), C (0xff55595d), true,
+              Keys::square, C (0xff26282a), C (0xffeef0f2),
+              Counter::drum, C (0xfff3eedc), C (0xff121212),
+              Meter::vu, C (0xfffbe5a8), C (0xffe9b456), C (0xff1d1a14), C (0xffc0392b), C (0xff141414), C (0xff1b1b1b), C (0xffe9e6dc), C (0xff1d1a14),
+              C (0xff1a1a1a), C (0xff141414), C (0xff2e2e2e),
+              C (0xff1a1a1a), C (0xffd9dbdc) },
         };
-        return s[juce::jlimit (0, 6, i)];
+        return s[juce::jlimit (0, tape::numMultitrackMachines - 1, i)];
     }
 
     /** The master meters, after the 2-track machine. */
@@ -138,8 +171,28 @@ struct MachineSkin
               Meter::vu, C (0xfff7e9bc), C (0xffe6c56a), C (0xff1d1a14), C (0xffc0392b), C (0xff0e0e0d), C (0xff151513), C (0xffd9a521), C (0xff1d1a14),
               C (0xff1b1b1a), C (0xff121211), C (0xff3c3a35),
               C (0xff0e0e0d), C (0xffd9a521) },
+            // Ampex AG-440: grey cabinet, black panel, cream keys, drum counter; cream-faced VUs
+            { "AMPEX", "AG-440", C (0xff9a9b97), C (0xff878884), C (0xff3a3b38), C (0xff1a1a1a), C (0xff4f504c), false,
+              Keys::cream, C (0xffeee3c6), C (0xff1a1a1a), Counter::drum, C (0xfff3eedc), C (0xff121212),
+              Meter::vu, C (0xfff9e3ae), C (0xffe9bf62), C (0xff1d1a14), C (0xffa8231b), C (0xff2a2a2a), C (0xff1f1f1f), C (0xffeee6cf), C (0xff1d1a14),
+              C (0xff2a2a2a), C (0xff1f1f1f), C (0xff3a3a3a), C (0xff1f1f1f), C (0xffeee6cf) },
+            // Scully 280: grey-green with chrome keys; cream VUs
+            { "SCULLY", "280", C (0xff2a2c2b), C (0xff222423), C (0xff6d736f), C (0xffe8e6df), C (0xff9aa09b), false,
+              Keys::chrome, C (0xffcfd2d4), C (0xff1b1d1f), Counter::drum, C (0xfff3eedc), C (0xff121212),
+              Meter::vu, C (0xfff8ecc8), C (0xffe9cf8a), C (0xff1d1a14), C (0xffb3261e), C (0xff5d625f), C (0xff6d736f), C (0xffe8e6df), C (0xff1d1a14),
+              C (0xff7c837e), C (0xff6d736f), C (0xff5d625f), C (0xff1b1d1f), C (0xffd8dcdf) },
+            // Studer A810: light grey, dark keys, green VFD counter; backlit VUs
+            { "STUDER", "A810", C (0xffcfd1d1), C (0xffbcbebe), C (0xff8a8d8e), C (0xff1b1d1f), C (0xff4c5055), false,
+              Keys::square, C (0xff3a3d40), C (0xffe9ecef), Counter::greenVfd, C (0xff7ff5c8), C (0xff071210),
+              Meter::vu, C (0xfffbe3a2), C (0xffe8b04c), C (0xff1d1a14), C (0xffc0392b), C (0xff23262a), C (0xff1c1f22), C (0xffe9ecef), C (0xff1d1a14),
+              C (0xff2e3134), C (0xff26292c), C (0xff45494d), C (0xff1b1d1f), C (0xffd8dcdf) },
+            // Revox A77: brushed silver and black, grey keys, drum counter; small backlit VUs
+            { "REVOX", "A77", C (0xffc4c6c7), C (0xffafb1b2), C (0xff2a2b2d), C (0xff1b1d1f), C (0xff55595d), true,
+              Keys::square, C (0xff8c8f92), C (0xff111111), Counter::drum, C (0xfff3eedc), C (0xff121212),
+              Meter::vu, C (0xfff7e6b4), C (0xffe6c070), C (0xff1d1a14), C (0xffc0392b), C (0xff1a1a1a), C (0xff141414), C (0xffe9e6dc), C (0xff1d1a14),
+              C (0xff1a1a1a), C (0xff141414), C (0xff2e2e2e), C (0xff1a1a1a), C (0xffd9dbdc) },
         };
-        return s[juce::jlimit (0, 5, i)];
+        return s[juce::jlimit (0, tape::numMasterMachines - 1, i)];
     }
 
     /** Meters: 0 = as the machine had them (auto), 1 = always VU, 2 = always PPM (SETTINGS). */

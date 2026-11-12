@@ -52,8 +52,24 @@ inline const MachineStory& multitrackStory (int i)
         { "Hawthorne  -  digital",
           "No machine at all: the reel plays and records straight from its files, whatever tape it's on.",
           "Bit-perfect: exactly what went in. No saturation, EQ, hiss, wow or flutter." },
+        { "Scully  -  Connecticut, USA  -  1960s",
+          "Scully, better known for its record-cutting lathes, built the 280 series of solid-state recorders through the "
+          "60s and 70s, in 2-, 4- and 8-track versions - a fixture of American studios before 16 and 24 tracks took over.",
+          "Punchy and forward in the mids with a solid low end and a slightly soft top." },
+        { "3M  -  USA  -  1970s",
+          "3M's 2-inch multitrack of the 70s, successor to the M56, in 16- and 24-track versions. Its Isoloop closed-loop "
+          "drive held the tape against the heads with very low flutter.",
+          "Round and warm: smooth low mids, a gentle top and a very steady transport." },
+        { "Stephens  -  California, USA  -  1970s",
+          "John Stephens' hand-built machines had no capstan - the reel motors alone drove the tape - and transformerless "
+          "electronics. Rare and prized in Los Angeles studios, with up to 40 tracks on 2-inch tape.",
+          "Open and detailed: a deep, clean low end and an extended top. The least 'tapey' of the vintage machines." },
+        { "Tascam (Teac)  -  Japan  -  1976",
+          "The machine that put 8-track recording into home and project studios: eight narrow tracks on half-inch tape, "
+          "often paired with dbx noise reduction. Countless demos and indie records started on one.",
+          "Narrow tracks: less headroom, a lighter low end, a softer top and noticeably more hiss. Lo-fi charm." },
     };
-    return s[juce::jlimit (0, 6, i)];
+    return s[juce::jlimit (0, tape::numMultitrackMachines - 1, i)];
 }
 
 inline const MachineStory& masterStory (int i)
@@ -82,8 +98,40 @@ inline const MachineStory& masterStory (int i)
         { "Hawthorne  -  digital",
           "No 2-track machine: the master is recorded and played straight, whatever its tape.",
           "Bit-perfect: the mix exactly as it left the bus." },
+        { "Ampex  -  California, USA  -  1967",
+          "The AG-440 replaced Ampex's valve machines with solid-state electronics, and through the late 60s and 70s it was "
+          "in studios and broadcasters everywhere - the everyday 2-track of its time.",
+          "Warm and solid with a full low end: the classic American 2-track sound." },
+        { "Scully  -  Connecticut, USA  -  1960s",
+          "The 2-track version of Scully's 280, at home in mastering rooms and radio stations - often beside a Scully lathe.",
+          "Punchy and direct, with a firm middle." },
+        { "Studer  -  Switzerland  -  1980s",
+          "Studer's microprocessor-controlled 2-track of the 80s, built for broadcast and mastering, with a precise transport "
+          "and a fluorescent tape counter.",
+          "Clean, precise and quiet: the tidiest print of the mix." },
+        { "Revox  -  Switzerland  -  1967",
+          "Studer's semi-professional sister brand. The A77 was the reel-to-reel of home studios, radio and musicians for a "
+          "decade - many a demo and bounce went through one.",
+          "A little less headroom and more hiss, with a friendly, slightly soft sound." },
     };
-    return s[juce::jlimit (0, 5, i)];
+    return s[juce::jlimit (0, tape::numMasterMachines - 1, i)];
+}
+
+//==============================================================================
+/** The machines in the order they're offered: oldest first, no machine (digital) last. */
+inline const std::vector<int>& multitrackOrder()
+{
+    static const std::vector<int> o { 4 /*J37 1964*/, 7 /*Scully 280 1960s*/, 5 /*3M M23 1966*/, 2 /*MM1200 1970s*/, 8 /*3M M79 1970s*/,
+                                      9 /*Stephens 821B 1970s*/, 10 /*Tascam 80-8 1976*/, 0 /*A800 1978*/, 1 /*JH-24 ~1980*/,
+                                      3 /*MTR-90 1980s*/, tape::noMultitrackMachine };
+    return o;
+}
+
+inline const std::vector<int>& masterOrder()
+{
+    static const std::vector<int> o { 4 /*BTR2 1950s*/, 3 /*Ampex 351 1950s*/, 7 /*Scully 280 1960s*/, 6 /*AG-440 1967*/, 9 /*Revox A77 1967*/,
+                                      1 /*A80 1970*/, 0 /*ATR-102 1976*/, 2 /*MTR-12 1980s*/, 8 /*A810 1980s*/, tape::noMasterMachine };
+    return o;
 }
 
 //==============================================================================
@@ -134,12 +182,19 @@ inline void drawMachinePreview (juce::Graphics& g, juce::Rectangle<float> r, con
     g.setGradientFill (dg);
     g.fillRoundedRectangle (deck, 4.0f);
     auto d = deck.reduced (8.0f, 8.0f);
-    auto counter = d.removeFromLeft (d.getWidth() * 0.3f);
+    // the badge on the right (its room kept, so the keys never run under it)
+    const juce::String t = juce::String (sk.brand) + " " + sk.model;
+    const juce::Font badgeFont (juce::FontOptions ("Arial", 11.0f, juce::Font::bold));
+    const float bw = juce::GlyphArrangement::getStringWidth (badgeFont, t) + 12.0f;
+    auto badgeRoom = d.removeFromRight (bw);
+    d.removeFromRight (8.0f);
+    auto counter = d.removeFromLeft (d.getWidth() * 0.34f);
     g.setColour (sk.counterBg);
     g.fillRoundedRectangle (counter, 3.0f);
     g.setColour (sk.counterInk);
-    g.setFont (monoFont (counter.getHeight() * 0.55f, true));
-    g.drawText (sk.counter == MachineSkin::Counter::drum ? "0 0 1 2" : "00:01:23", counter, juce::Justification::centred);
+    g.setFont (monoFont (juce::jmin (counter.getHeight() * 0.55f, counter.getWidth() * 0.16f), true));
+    g.drawFittedText (sk.counter == MachineSkin::Counter::drum ? "0 0 1 2" : "00:01:23", counter.toNearestInt().reduced (2, 0),
+                      juce::Justification::centred, 1, 0.5f);
     d.removeFromLeft (8.0f);
     const char* keys[] = { "STOP", "PLAY", "REC" };
     const float kw = juce::jmin (52.0f, (d.getWidth() - 12.0f) / 3.0f);
@@ -155,14 +210,12 @@ inline void drawMachinePreview (juce::Graphics& g, juce::Rectangle<float> r, con
         g.setColour (juce::Colours::black.withAlpha (0.6f));
         g.drawRoundedRectangle (k, sk.keys == MachineSkin::Keys::bakelite ? 6.0f : 2.0f, 1.0f);
         g.setColour (cap.getPerceivedBrightness() > 0.55f ? juce::Colour (0xff1b1916) : (i == 2 ? juce::Colour (0xffe0503c) : juce::Colours::white));
-        g.setFont (uiFont (10.0f, true));
+        g.setFont (uiFont (juce::jmin (10.0f, k.getWidth() * 0.24f), true));
         g.drawText (keys[i], k, juce::Justification::centred);
     }
     // badge
-    const juce::String t = juce::String (sk.brand) + " " + sk.model;
-    g.setFont (juce::Font (juce::FontOptions ("Arial", 11.0f, juce::Font::bold)));
-    const float bw = juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), t) + 12.0f;
-    auto badge = juce::Rectangle<float> (bw, 16.0f).withPosition (deck.getRight() - bw - 8.0f, deck.getY() + 6.0f);
+    g.setFont (badgeFont);
+    auto badge = juce::Rectangle<float> (bw, 16.0f).withCentre (badgeRoom.getCentre());
     g.setColour (sk.badge);
     g.fillRoundedRectangle (badge, 2.0f);
     g.setColour (sk.badgeText);
@@ -207,9 +260,9 @@ public:
                 }
         };
         // oldest at the top, newest at the bottom (no machine - digital - last)
-        for (int i : { 4 /*J37 1964*/, 5 /*3M M23 1966*/, 2 /*MM1200 1970s*/, 0 /*A800 1978*/, 1 /*JH-24 ~1980*/, 3 /*MTR-90 1980s*/, tape::noMultitrackMachine })
+        for (int i : multitrackOrder())
             place (false, i);
-        for (int i : { 4 /*BTR2 1950s*/, 3 /*Ampex 351 1950s*/, 1 /*A80 1970*/, 0 /*ATR-102 1976*/, 2 /*MTR-12 1980s*/, tape::noMasterMachine })
+        for (int i : masterOrder())
             place (true, i);
         content.setSize (w + 8, top + juce::jmax (rows[0], rows[1]) * (cardH + 14) + 10);
         content.colW = colW;

@@ -465,12 +465,12 @@ bool Reel::fromXml (const juce::XmlElement& root, juce::String& error)
 
     auto validIps = [] (double v) { return v == 7.5 || v == 15.0 || v == 30.0; };
     tapeStock = juce::jlimit (0, 7, root.getIntAttribute ("stock", 0));   // older reels: clean
-    machine = juce::jlimit (0, 6, root.getIntAttribute ("machine", 0));
+    machine = juce::jlimit (0, tape::numMultitrackMachines - 1, root.getIntAttribute ("machine", 0));
     flipped = root.getBoolAttribute ("flipped", false);
     noiseReduction = juce::jlimit (0, 3, root.getIntAttribute ("nr", 0));
     alignLevel = juce::jlimit (0, 9, root.getIntAttribute ("alignLevel", juce::jmin (9, tape::recommendedLevel ((tape::Stock) tapeStock))));
     alignBias = juce::jlimit (-1.0, 4.0, root.getDoubleAttribute ("alignBias", tape::recommendedBias ((tape::Stock) tapeStock)));
-    masterMachine = juce::jlimit (0, 5, root.getIntAttribute ("masterMachine", 0));
+    masterMachine = juce::jlimit (0, tape::numMasterMachines - 1, root.getIntAttribute ("masterMachine", 0));
     ips = root.getDoubleAttribute ("ips", 0.0);
     if (! validIps (ips))
     {

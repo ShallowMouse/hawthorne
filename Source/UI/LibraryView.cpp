@@ -1,4 +1,5 @@
 #include "LibraryView.h"
+#include "NewReelWizard.h"
 #include <juce_gui_extra/juce_gui_extra.h>
 #include "SessionSheet.h"   // Paper colours
 #include "UIHelpers.h"
@@ -653,71 +654,56 @@ void LibraryView::updateSelection()
 //==============================================================================
 static double ipsFromIndex (int i) { return i == 0 ? 7.5 : i == 2 ? 30.0 : 15.0; }
 
+/** The wizard in the library's colours (MELVILLE's inside MELVILLE). */
+static NewReelWizard::Look wizardLook()
+{
+    const auto& th = LibraryView::theme();
+    NewReelWizard::Look lk;
+    lk.accent = th.accent; lk.onAccent = th.onAccent; lk.bg = th.bg; lk.panel = th.panel; lk.text = th.text; lk.dim = th.textDim;
+    lk.font = th.font;
+    return lk;
+}
+
+/** Puts the chosen NR on a new reel (and its tape box field). */
+template <typename ReelT>
+static void applyNr (ReelT& reel, int system)
+{
+    reel.noiseReduction = juce::jlimit (0, nr::numSystems - 1, system);
+    if (reel.noiseReduction != nr::none) reel.info.set ("Noise Reduction", nr::info (reel.noiseReduction).name);
+}
+
+void LibraryView::wizardGallery (const juce::File& dir)
+{
+    NewReelWizard::gallery (dir, wizardLook());
+}
+
 void LibraryView::newSession()
 {
-    auto* w = new ReelDialog ("New Session", "A session holds the reels for one job - an album, a single, a client.",
-                                     juce::MessageBoxIconType::NoIcon, this);
-    w->addTextEditor ("name", "", "Session name:");
-    w->addTextEditor ("artist", "", "Artist:");
-    w->addComboBox ("tracks", { "8", "16", "24", "32", "48", "64", "72", "96" }, "Tracks on the first reel:");
-    w->getComboBoxComponent ("tracks")->setSelectedItemIndex (2);
-    w->addComboBox ("ips", { juce::String (juce::CharPointer_UTF8 ("7\xc2\xbd ips")), "15 ips", "30 ips" }, "Tape speed:");
-    w->getComboBoxComponent ("ips")->setSelectedItemIndex (1);
-    w->addStockPicker ("stock", "Tape stock (fixed for the life of the reel):", tape::forMultitrack, 1);
-    w->addMachinePicker ("machine", "Machine (can be changed later):", false, 0);
-    w->addNrPicker ("nr", 0);
-    w->addButton ("Create", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-
-    // Don't close without a name - remind instead.
-    if (auto* create = w->getButton ("Create"))
-        create->onClick = [w]
-        {
-            if (w->getTextEditorContents ("name").trim().isEmpty())
-            {
-                w->setMessage ("Please give the session a name.");
-                if (auto* ed = w->getTextEditor ("name"))
-                {
-                    ed->setColour (juce::TextEditor::outlineColourId, Colours::red);
-                    ed->grabKeyboardFocus();
-                    ed->repaint();
-                }
-                return;
-            }
-            w->exitModalState (1);
-        };
-
-    w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int result)
+    NewReelChoice start;
+    start.tracks = kDefaultTracks;
+    showNewReelWizard (this, "New Session", true, start, wizardLook(), {}, [this] (const NewReelChoice& c)
     {
-        if (result != 1) return;
-
-        const auto name = w->getTextEditorContents ("name").trim();
-        const auto artist = w->getTextEditorContents ("artist").trim();
-        const int tracks = w->getComboBoxComponent ("tracks")->getText().getIntValue();
-
         juce::String err;
-        auto s = Session::create (getLibraryFolder(), name, err);
+        auto s = Session::create (getLibraryFolder(), c.name, err);
         if (s == nullptr) { showError ("New Session", err); return; }
 
-        if (artist.isNotEmpty())
+        if (c.artist.isNotEmpty())
         {
-            s->info.set ("Artist", artist);
+            s->info.set ("Artist", c.artist);
             s->save (err);
         }
 
-        const double ips = ipsFromIndex (w->getComboBoxComponent ("ips")->getSelectedItemIndex());
-        const int stock = w->stockAt ("stock");
-        auto reel = s->createReel (tracks, getSampleRate ? getSampleRate() : 48000.0, err, ips, stock);
+        auto reel = s->createReel (c.tracks, getSampleRate ? getSampleRate() : 48000.0, err, c.ips, c.stock);
         if (reel == nullptr) { showError ("New Session", err); return; }
-        reel->machine = w->getComboBoxComponent ("machine")->getSelectedItemIndex();
-        w->applyNr ("nr", *reel);
+        reel->machine = c.machine;
+        applyNr (*reel, c.nr);
         reel->save (err);
 
         const auto file = reel->getFile();
         refresh();
         select (file);
         if (onLoadReel) onLoadReel (file);
-    }), true);
+    });
 }
 
 //==============================================================================
@@ -903,46 +889,29 @@ void LibraryView::newReel()
     const auto* s = selectedSession();
     if (s == nullptr) return;
 
-    const int lastTracks = s->reels.empty() ? kDefaultTracks : s->reels.back().numTracks;
-    const double lastIps = s->reels.empty() ? 15.0 : s->reels.back().ips;
-    const int lastStock = s->reels.empty() ? 1 : s->reels.back().tapeStock;
-    const int lastMachine = s->reels.empty() ? 0 : s->reels.back().machine;
-    const int lastNr = s->reels.empty() ? 0 : s->reels.back().noiseReduction;
+    NewReelChoice start;
+    start.tracks  = s->reels.empty() ? kDefaultTracks : s->reels.back().numTracks;
+    start.ips     = s->reels.empty() ? 15.0 : s->reels.back().ips;
+    start.stock   = s->reels.empty() ? 1 : s->reels.back().tapeStock;
+    start.machine = s->reels.empty() ? 0 : s->reels.back().machine;
+    start.nr      = s->reels.empty() ? 0 : s->reels.back().noiseReduction;
     const auto sessionFile = s->file;
 
-    auto* w = new ReelDialog ("New Reel", "Add a reel to \"" + s->name + "\".\nThe track count can't be changed later.",
-                                     juce::MessageBoxIconType::NoIcon, this);
-    juce::StringArray counts { "8", "16", "24", "32", "48", "64", "72", "96" };
-    w->addComboBox ("tracks", counts, "Tracks:");
-    w->getComboBoxComponent ("tracks")->setSelectedItemIndex (juce::jmax (0, counts.indexOf (juce::String (lastTracks))));
-    w->addComboBox ("ips", { juce::String (juce::CharPointer_UTF8 ("7\xc2\xbd ips")), "15 ips", "30 ips" }, "Tape speed:");
-    w->getComboBoxComponent ("ips")->setSelectedItemIndex (lastIps == 7.5 ? 0 : lastIps == 30.0 ? 2 : 1);
-    w->addStockPicker ("stock", "Tape stock (fixed for the life of the reel):", tape::forMultitrack, lastStock);
-    w->addMachinePicker ("machine", "Machine (can be changed later):", false, lastMachine);
-    w->addNrPicker ("nr", lastNr);
-    w->addButton ("Create", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-
-    w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, sessionFile] (int result)
+    showNewReelWizard (this, "New Reel", false, start, wizardLook(), s->name, [this, sessionFile] (const NewReelChoice& c)
     {
-        if (result != 1) return;
-        const int tracks = w->getComboBoxComponent ("tracks")->getText().getIntValue();
-
         juce::String err;
         auto session = Session::load (sessionFile, err);
-        const double ips = ipsFromIndex (w->getComboBoxComponent ("ips")->getSelectedItemIndex());
-        const int stock = w->stockAt ("stock");
-        auto reel = session != nullptr ? session->createReel (tracks, getSampleRate ? getSampleRate() : 48000.0, err, ips, stock) : nullptr;
+        auto reel = session != nullptr ? session->createReel (c.tracks, getSampleRate ? getSampleRate() : 48000.0, err, c.ips, c.stock) : nullptr;
         if (reel == nullptr) { showError ("New Reel", err); return; }
-        reel->machine = w->getComboBoxComponent ("machine")->getSelectedItemIndex();
-        w->applyNr ("nr", *reel);
+        reel->machine = c.machine;
+        applyNr (*reel, c.nr);
         reel->save (err);
 
         const auto file = reel->getFile();
         refresh();
         select (file);
         if (onLoadReel) onLoadReel (file);
-    }), true);
+    });
 }
 
 void LibraryView::loadSelected()
@@ -1030,6 +999,11 @@ bool LibraryView::keyPressed (const juce::KeyPress& k)
 //==============================================================================
 void LibraryView::applyTheme()
 {
+    if (const auto dir = juce::SystemStats::getEnvironmentVariable ("HAWTHORNE_WIZARD_GALLERY", {}); dir.isNotEmpty())
+        juce::Timer::callAfterDelay (300, [safe = juce::Component::SafePointer<LibraryView> (this), dir]
+        {
+            if (safe != nullptr) safe->wizardGallery (juce::File (dir));
+        });
     for (auto* b : { &newSessionButton, &loadButton })
     {
         b->setColour (juce::TextButton::buttonColourId, theme().accent);
