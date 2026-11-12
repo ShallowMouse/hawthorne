@@ -1,5 +1,7 @@
 #pragma once
 
+#include <complex>
+
 #include <juce_core/juce_core.h>
 #include <array>
 #include <cmath>
@@ -73,6 +75,7 @@ namespace tape
         double hfSoftDb;            // extra softening of the top end
         bool ccir;                  // European equalisation
         int use = forMultitrack;    // multitrack reels and/or the 2-track master
+        double solGapDb = 2.0;      // at 15 ips: how far the 10 kHz saturation output (SOL10) sits below the 1 kHz MOL
     };
 
     inline const StockInfo& info (Stock s)
@@ -81,29 +84,29 @@ namespace tape
             { "Clean (no tape)",          "CLEAN",         "No tape sound at all. Records bit-for-bit what comes in: no saturation, no EQ change, no hiss, no wow or flutter.",
               99.0, 0.0,   -200.0, -200.0, 0.0, 0.0, false, forMultitrack | forMaster },
             { "Ampex 456 Grand Master",  "AMPEX 456",   "Ampex's +6 tape of 1975, the studio standard for the next twenty years. Warm, fat and punchy. A strong low-end bump (around 60 Hz at 15 ips) and a slightly rounded top. Saturates fairly early and musically - push the levels for glue and thickness on drums and bass. Moderate hiss. The classic 70s / 80s rock sound.",
-              12.0, 0.025, -58.0,  -63.0,  2.0, 0.5, false, forMultitrack },
-            { "Quantegy GP9",             "QUANTEGY GP9",   "Quantegy's 1998 refinement of 3M's 996, among the last new analogue tapes. Clean, tight and modern. The most headroom: you can hit it hard before it gets gritty, so it colours the least. Smaller low bump, full top end, low hiss. Tape glue without obvious distortion.",
-              15.0, 0.015, -62.0,  -66.0,  1.5, 0.0, false, forMultitrack },
-            { "Scotch 250",               "SCOTCH 250",      "3M's Scotch 250, the US studio tape of the early 70s before 456 - Abbey Road had moved to Scotch by about 1969. Lo-fi and characterful. Breaks up soonest, with the most even-harmonic grit. Darker, softer top end, the biggest woolly low bump, and the most hiss and modulation noise.",
-              8.0,  0.07,  -52.0,  -58.0,  2.5, 2.0, false, forMultitrack },
-            { "BASF SM911",               "BASF SM 911",   "BASF's 1986 answer to 456, with a stable binder. Smooth and polished. Lots of headroom, a firm but restrained low end and a silky top (European CCIR EQ). The quietest tape. Refined rather than vibey.",
-              14.0, 0.02,  -63.0,  -67.0,  1.2, 0.3, true, forMultitrack },
+              9.5,  0.025, -60.0,  -67.0,  2.0, 0.5, false, forMultitrack, 2.0 },
+            { "Quantegy GP9",             "QUANTEGY GP9",   "Quantegy's 1998 refinement of 3M's 996, among the last new analogue tapes. Clean, tight and modern, made for +9. Lots of headroom: you can hit it hard before it gets gritty, so it colours little. Smaller low bump, full top end, low hiss. Tape glue without obvious distortion.",
+              11.0, 0.015, -57.0,  -68.0,  1.5, 0.0, false, forMultitrack, 1.5 },
+            { "Scotch 250",               "SCOTCH 250",      "3M's Scotch 250, the high-output US studio tape of the early 70s, made for +6 - Abbey Road had moved to Scotch by about 1969. 3M rated it 78 dB of dynamic range, 12 dB more than Scotch 111. Big and warm: the biggest low bump of the modern tapes, a slightly rounded top, and a full-bodied break-up when pushed.",
+              9.0,  0.035, -58.0,  -69.0,  2.5, 0.8, false, forMultitrack, 2.0 },
+            { "BASF SM911",               "BASF SM 911",   "BASF's 1986 answer to 456, with a stable binder, made for +6. Smooth and polished: a little more headroom than 456, a firm but restrained low end and a silky top (European CCIR EQ). Refined rather than vibey.",
+              10.5, 0.02,  -59.0,  -66.5,  1.2, 0.3, true, forMultitrack, 2.0 },
             { "EMI Emitape 77",           "EMITAPE 77",       "The Emitape the Beatles recorded on at Abbey Road from Please Please Me to Rubber Soul. Standard level: breaks up early and sweetly with plenty of even harmonics, a soft top, a round low end and audible hiss (CCIR EQ). Pair it with the J37 or the 3M M23 - and the BTR2 for the master.",
-              7.0,  0.06,  -53.0,  -58.5,  2.3, 1.6, true, forMultitrack | forMaster },
+              5.5,  0.06,  -53.0,  -59.5,  2.3, 1.6, true, forMultitrack | forMaster, 4.0 },
             { "Ampex 499 Grand Master Gold", "AMPEX 499",   "Ampex's Grand Master Gold of the early 90s, mastering-grade US tape for the 2-track. Big headroom with a warm, solid low end and a clean top: glues the mix without obvious distortion. Low noise.",
-              14.0, 0.02,  -62.0,  -67.0,  2.0, 0.3, false, forMaster },
+              11.0, 0.02,  -56.5,  -67.0,  2.0, 0.3, false, forMaster, 1.5 },
             { "Emtec SM900",              "EMTEC SM 900",     "BASF's very high output mastering tape of the late 90s, made to take on 499 and 996. Huge headroom and the lowest noise: the cleanest tape print, a subtle firm low end and a full top. For loud, modern masters.",
-              17.0, 0.012, -65.0,  -70.0,  1.6, 0.0, true, forMaster },
+              11.5, 0.012, -58.0,  -68.5,  1.6, 0.0, true, forMaster, 1.5 },
             { "EMI Emitape 888",      "EMITAPE 888",   "EMI's early-60s studio tape, made for Abbey Road. The dirtiest of the EMI tapes: lo-fi and grainy, breaking up early with gritty upper mids, a soft top, a round low end and plenty of hiss (CCIR EQ). Great on rock and on acoustic guitars and percussion.",
-              6.5,  0.07,  -51.0,  -56.5,  2.4, 2.2, true, forMultitrack | forMaster },
+              5.0,  0.07,  -51.0,  -59.0,  2.4, 2.2, true, forMultitrack | forMaster, 4.5 },
             { "EMI Emitape 811",   "EMITAPE 811",   "The Beatles' tape from Revolver (1966) until Abbey Road moved to Scotch around 1969. Cleaner than the 888: a better top end and a little less distortion, still warm and sweet when pushed (CCIR EQ). Character without the grit - lovely on single instruments like piano.",
-              8.0,  0.05,  -54.0,  -59.0,  2.2, 1.2, true, forMultitrack | forMaster },
+              6.5,  0.05,  -54.0,  -60.5,  2.2, 1.2, true, forMultitrack | forMaster, 3.5 },
             { "EMI Emitape 815",      "EMITAPE 815",   "EMI's early-70s tape: the cleanest of the three. A flatter top end and less distortion, with a rounder bass and natural highs (CCIR EQ). Smooth and controlled - the one to use when you want the EMI sound with the least colour.",
-              10.5, 0.03,  -58.0,  -62.0,  2.0, 0.5, true, forMultitrack | forMaster },
+              8.5,  0.03,  -58.0,  -63.5,  2.0, 0.5, true, forMultitrack | forMaster, 2.5 },
             { "Scotch 111",               "SCOTCH 111",    "3M's acetate tape of 1948, the American studio standard through the 50s and into the 60s - machines of the day were lined up to it. Low output and early, grainy break-up, a dull, soft top, a thick low end and lots of hiss and modulation noise (NAB EQ). Pair it with the Ampex 300s and the 351.",
-              5.0,  0.075, -48.0,  -53.0,  2.6, 2.6, false, forMultitrack | forMaster },
+              5.0,  0.075, -48.0,  -61.0,  2.6, 2.6, false, forMultitrack | forMaster, 4.5 },
             { "BASF LGS",                 "BASF LGS",      "BASF's PVC-based standard tape of the 50s, from the home of the Magnetophon. Steadier and a touch cleaner than Scotch 111 - a smoother break-up and a little less hiss - with a soft, rounded top (CCIR EQ). Pair it with the Telefunken M5.",
-              6.0,  0.055, -51.0,  -55.0,  2.2, 2.0, true, forMultitrack | forMaster },
+              5.5,  0.055, -51.0,  -61.5,  2.2, 2.0, true, forMultitrack | forMaster, 4.0 },
         };
         return stocks[juce::jlimit (0, numStocks - 1, (int) s)];
     }
@@ -115,12 +118,13 @@ namespace tape
         switch (s)
         {
             case Stock::us456:        return 6;
+            case Stock::vintage:      return 6;     // Scotch 250 (3M's alignment bulletin: 370 nWb/m)
             case Stock::highOutput:   return 9;
-            case Stock::european:     return 9;
+            case Stock::european:     return 6;     // SM911
             case Stock::mastering499: return 9;
-            case Stock::sm900:        return 12;
+            case Stock::sm900:        return 9;
             case Stock::emi815:       return 3;
-            default:                  return 0;     // standard-level tapes (Scotch 250, Emitape 77 / 888 / 811) and clean
+            default:                  return 0;     // standard-level tapes (Scotch 111, BASF LGS, Emitape 77 / 888 / 811) and clean
         }
     }
     inline double recommendedBias (Stock s)
@@ -158,10 +162,10 @@ namespace tape
         double hfSoftDb;        // added top-end softening (negative = brighter)
         double lowCut;          // low roll-off frequency multiplier
         double hissDb;          // added hiss
-        double wowFlutter;      // transport wobble multiplier
+        double wowFlutter;      // wow and flutter, rms % at 15 ips (published specs; DIN peak-weighted figures / 1.5)
     };
 
-    inline constexpr MachineInfo neutralMachine { "None", "", "", 0, 0, 1, 1, 1, 0, 1, 0, 1 };
+    inline constexpr MachineInfo neutralMachine { "None", "", "", 0, 0, 1, 1, 1, 0, 1, 0, 0.03 };
 
     constexpr int numMultitrackMachines = 13;    // 6 is "None": bit-perfect (later machines are added after it)
     constexpr int noMultitrackMachine = 6;
@@ -169,31 +173,31 @@ namespace tape
     {
         static const MachineInfo m[numMultitrackMachines] = {
             { "Studer A800 / A827", "STUDER A800", "Clean, punchy and tight: a firm, controlled low end, an extended top and a rock-steady transport. The modern studio standard.",
-              0.0, 0.0,   1.0,  1.0,  1.1,  0.0,  0.9,  0.0, 0.7 },
+              0.0, 0.0,   1.0,  1.0,  1.1,  0.0,  0.9,  0.0, 0.027 },
             { "MCI JH-24", "MCI JH-24", "Bright and aggressive: forward upper mids, a lighter low end and a bit more grit. The 70s / 80s rock workhorse.",
-              -1.0, 0.01, 0.8,  1.1,  1.15, -0.6, 1.1,  1.0, 1.2 },
+              -1.0, 0.01, 0.8,  1.1,  1.15, -0.6, 1.1,  1.0, 0.027 },
             { "Ampex MM1200", "AMPEX MM1200", "Big and warm: the fattest low end and a soft, rounded top. Thick and forgiving.",
-              -0.5, 0.015, 1.35, 0.9, 0.85, 0.8,  0.85, 1.5, 1.3 },
+              -0.5, 0.015, 1.35, 0.9, 0.85, 0.8,  0.85, 1.5, 0.05 },
             { "Otari MTR-90", "OTARI MTR-90", "Neutral and solid: modern, honest and quiet, with a dependable transport. Colours the least.",
-              1.0, -0.005, 0.9, 1.0,  1.0,  0.0,  1.0, -1.0, 0.8 },
+              1.0, -0.005, 0.9, 1.0,  1.0,  0.0,  1.0, -1.0, 0.033 },
             { "Studer J37 (EMI, valve 4-track)", "STUDER J37", "Abbey Road's 4-track from 1965 until 8-track arrived (Revolver, Sgt. Pepper). Valve electronics: thick, warm and slightly compressed, with soft valve grit, a gentle top and more hiss and wobble.",
-              -3.0, 0.05, 1.3,  1.0,  0.8,  1.5,  1.1,  3.0, 1.6 },
+              -3.0, 0.05, 1.3,  1.0,  0.8,  1.5,  1.1,  3.0, 0.06 },
             { "3M M23 (8-track)", "3M M23", "The Beatles' first 8-track at Abbey Road (1968-69, the White Album, Abbey Road). Early transistor: punchy and solid, a little darker and grainier than later machines.",
-              -1.5, 0.025, 1.2, 1.0,  0.95, 0.6,  1.0,  1.5, 1.2 },
+              -1.5, 0.025, 1.2, 1.0,  0.95, 0.6,  1.0,  1.5, 0.04 },
             { "None (bit-perfect)", "NO MACHINE", "No machine: nothing between you and the files. No tape sound, no hiss, no wow or flutter - bit-for-bit, whatever the tape on the reel.",
               0, 0, 1, 1, 1, 0, 1, 0, 0 },
             { "Scully 280 (8-track)", "SCULLY 280", "Scully's 1965 solid-state transport; the 1-inch 8-track came in 1966. Punchy and forward in the mids, a solid low end and a slightly soft top.",
-              -1.0, 0.02, 1.15, 1.0, 0.95, 0.5,  1.0,  1.5, 1.2 },
+              -1.0, 0.02, 1.15, 1.0, 0.95, 0.5,  1.0,  1.5, 0.07 },
             { "3M M79", "3M M79", "3M's 1972 2-inch 24-track with the Isoloop drive. Round and warm with smooth low mids and a steady, low-flutter transport.",
-              -0.5, 0.012, 1.25, 0.95, 0.95, 0.4, 0.9,  1.0, 0.8 },
+              -0.5, 0.012, 1.25, 0.95, 0.95, 0.4, 0.9,  1.0, 0.035 },
             { "Stephens 821B", "STEPHENS 821B", "John Stephens' capstanless, transformerless 24-track of 1974. Open and detailed: a deep, clean low end and an extended top.",
-              0.5, 0.0,   1.1,  0.9,  1.2, -0.4,  0.8,  0.0, 0.7 },
+              0.5, 0.0,   1.1,  0.9,  1.2, -0.4,  0.8,  0.0, 0.03 },
             { "Tascam 80-8 (1/2\" 8-track)", "TASCAM 80-8", "TEAC's 1976 home-studio 8-track: eight narrow tracks on half-inch tape. Less headroom, a lighter low end, a softer top and more hiss.",
-              -2.0, 0.02, 0.85, 1.1,  0.9,  0.8,  1.2,  4.0, 1.5 },
+              -2.0, 0.02, 0.85, 1.1,  0.9,  0.8,  1.2,  4.0, 0.035 },
             { "Ampex 300-3 (1/2\" 3-track)", "AMPEX 300-3", "Ampex's valve 3-track of the mid 50s, on half-inch tape: thick, warm and compressed, with a dull top, a big low end, lots of hiss and an unsteady transport.",
-              -3.5, 0.055, 1.35, 0.95, 0.75, 1.8,  1.1,  3.5, 1.7 },
+              -3.5, 0.055, 1.35, 0.95, 0.75, 1.8,  1.1,  3.5, 0.12 },
             { "Ampex 300-8 (Sel-Sync 8-track)", "AMPEX 300-8", "The first Sel-Sync 8-track, on 1-inch tape (1957): valve electronics, warm and dense, soft on top with plenty of hiss and wobble.",
-              -3.0, 0.05,  1.3,  0.95, 0.78, 1.6,  1.1,  3.0, 1.6 },
+              -3.0, 0.05,  1.3,  0.95, 0.78, 1.6,  1.1,  3.0, 0.12 },
         };
         return m[juce::jlimit (0, numMultitrackMachines - 1, i)];
     }
@@ -204,29 +208,29 @@ namespace tape
     {
         static const MachineInfo m[numMasterMachines] = {
             { "Ampex ATR-102", "AMPEX ATR-102", "The classic mastering deck: a huge, deep low end, an open top and very low noise.",
-              1.0, 0.005, 1.4,  0.85, 1.15, -0.2, 0.75, -1.5, 0.5 },
+              1.0, 0.005, 1.4,  0.85, 1.15, -0.2, 0.75, -1.5, 0.03 },
             { "Studer A80 / A820", "STUDER A80", "Smooth and detailed with a slightly silky top. Polished and refined.",
-              0.5, 0.0,   1.0,  1.0,  1.05, 0.3,  0.9, -1.0, 0.6 },
+              0.5, 0.0,   1.0,  1.0,  1.05, 0.3,  0.9, -1.0, 0.027 },
             { "Otari MTR-12", "OTARI MTR-12", "Clean and neutral: an honest print of the mix.",
-              1.0, 0.0,   0.85, 1.0,  1.0,  0.0,  1.0, -1.0, 0.7 },
+              1.0, 0.0,   0.85, 1.0,  1.0,  0.0,  1.0, -1.0, 0.03 },
             { "Ampex 351 (valve)", "AMPEX 351", "Vintage valve electronics: thick even-harmonic warmth, a softer top and more noise.",
-              -2.5, 0.05, 1.2,  0.95, 0.75, 1.5,  0.9,  3.0, 1.5 },
+              -2.5, 0.05, 1.2,  0.95, 0.75, 1.5,  0.9,  3.0, 0.12 },
             { "EMI BTR2 (valve)", "EMI BTR2", "EMI's valve 2-track: the Beatles' mono and stereo masters. Warm and round with gentle valve saturation and a soft top.",
-              -2.0, 0.04, 1.25, 0.95, 0.85, 1.0,  0.9,  2.0, 1.2 },
+              -2.0, 0.04, 1.25, 0.95, 0.85, 1.0,  0.9,  2.0, 0.1 },
             { "None (bit-perfect)", "NO MACHINE", "No machine: the master is recorded bit-for-bit, whatever its tape.",
               0, 0, 1, 1, 1, 0, 1, 0, 0 },
             { "Ampex AG-440", "AMPEX AG-440", "The solid-state Ampex of the late 60s and 70s, in studios and broadcasters everywhere. Warm and solid with a full low end.",
-              0.0, 0.01,  1.25, 0.9,  1.0,  0.4,  0.85, 0.5, 0.8 },
+              0.0, 0.01,  1.25, 0.9,  1.0,  0.4,  0.85, 0.5, 0.05 },
             { "Scully 280", "SCULLY 280", "The 60s / 70s American 2-track for mastering and broadcast. Punchy and direct.",
-              0.0, 0.015, 1.15, 1.0,  1.0,  0.3,  0.95, 0.5, 0.9 },
+              0.0, 0.015, 1.15, 1.0,  1.0,  0.3,  0.95, 0.5, 0.07 },
             { "Studer A810", "STUDER A810", "Studer's 80s microprocessor 2-track. Clean, precise and quiet: the tidiest print of the mix.",
-              1.0, 0.0,   0.95, 1.0,  1.1, -0.1,  0.95, -1.5, 0.5 },
+              1.0, 0.0,   0.95, 1.0,  1.1, -0.1,  0.95, -1.5, 0.033 },
             { "Revox A77", "REVOX A77", "The home-studio reel-to-reel of the late 60s and 70s. A little less headroom and more hiss, with a friendly, slightly soft sound.",
-              -1.5, 0.015, 0.95, 1.05, 0.9,  0.7,  1.1,  2.5, 1.3 },
+              -1.5, 0.015, 0.95, 1.05, 0.9,  0.7,  1.1,  2.5, 0.04 },
             { "Ampex 300 (valve)", "AMPEX 300", "Ampex's 1949 studio recorder, the American standard of the early 50s. Valve warmth and grit, a dull top, a fat low end, plenty of hiss and some wobble.",
-              -3.0, 0.055, 1.25, 0.95, 0.72, 1.8,  0.95, 3.5, 1.6 },
+              -3.0, 0.055, 1.25, 0.95, 0.72, 1.8,  0.95, 3.5, 0.1 },
             { "Telefunken M5 (valve)", "TELEFUNKEN M5", "The German valve studio deck of 1954. Smoother and quieter than the American valve machines: a gentle, silky saturation and a soft top.",
-              -2.0, 0.04,  1.1,  1.0,  0.85, 1.0,  1.0,  2.0, 1.1 },
+              -2.0, 0.04,  1.1,  1.0,  0.85, 1.0,  1.0,  2.0, 0.08 },
         };
         return m[juce::jlimit (0, numMasterMachines - 1, i)];
     }
@@ -276,6 +280,7 @@ namespace tape
             return { A * ((A + 1) + (A - 1) * c + sq) / a0, -2 * A * ((A - 1) + (A + 1) * c) / a0, A * ((A + 1) + (A - 1) * c - sq) / a0,
                      2 * ((A - 1) - (A + 1) * c) / a0, ((A + 1) - (A - 1) * c - sq) / a0 };
         }
+        Biquad scaled (double g) const { auto c = *this; c.b0 *= g; c.b1 *= g; c.b2 *= g; return c; }
         /** First-order shelf (1 + s*t1) / (1 + s*t2), bilinear (exactly invertible by swapping t1/t2). */
         static Biquad firstOrder (double sr, double t1, double t2)
         {
@@ -380,7 +385,7 @@ namespace tape
         Stock stock = Stock::clean;
         double ips = 15.0, sr = 48000.0;
         // record
-        Biquad preEmph, deEmph, biasEq;
+        Biquad preEmph, deEmph, lfPre, lfDe, biasEq;
         float drive = 1.0f, bias = 0.0f, biasOut = 0.0f, modNoise = 0.0f;
         // playback
         Biquad bump, dip, lowCut, hfLoss, hfSoft;
@@ -390,6 +395,40 @@ namespace tape
         bool isClean() const noexcept { return stock == Stock::clean; }
 
         static inline float sat (float u) noexcept { return u / std::sqrt (1.0f + u * u); }
+
+        /** The curve's own figures, for calibrating it: a sine of amplitude a through sat() with the
+            stock's lopsidedness b - the fundamental and third harmonic coming out. */
+        static void curveHarmonics (double a, double b, double& h1, double& h3) noexcept
+        {
+            const int n = 256;
+            double c1 = 0, s1 = 0, c3 = 0, s3 = 0;
+            const double off = b / std::sqrt (1.0 + b * b);
+            for (int i = 0; i < n; ++i)
+            {
+                const double ph = juce::MathConstants<double>::twoPi * i / n, u = a * std::sin (ph) + b;
+                const double y = u / std::sqrt (1.0 + u * u) - off;
+                s1 += y * std::sin (ph); c1 += y * std::cos (ph); s3 += y * std::sin (3 * ph); c3 += y * std::cos (3 * ph);
+            }
+            h1 = 2.0 * std::sqrt (s1 * s1 + c1 * c1) / n;
+            h3 = 2.0 * std::sqrt (s3 * s3 + c3 * c3) / n;
+        }
+        /** The amplitude into sat() that gives 3 % third harmonic (the MOL), and how far the output can
+            rise above that before it stops growing - measured, as SOL is, by driving it 30 dB harder (dB). */
+        static void molPoint (double b, double& amp, double& ceilingDb, double h3Ratio = 0.03) noexcept
+        {
+            double lo = 0.05, hi = 3.0, h1 = 0, h3 = 0;
+            for (int k = 0; k < 40; ++k)
+            {
+                const double m = 0.5 * (lo + hi);
+                curveHarmonics (m, b, h1, h3);
+                (h3 < h3Ratio * h1 ? lo : hi) = m;
+            }
+            amp = 0.5 * (lo + hi);
+            curveHarmonics (amp, b, h1, h3);
+            double hTop = 0, hTop3 = 0;
+            curveHarmonics (amp * 31.6, b, hTop, hTop3);
+            ceilingDb = 20.0 * std::log10 (hTop / h1);
+        }
 
         /** levelOffset / biasOffset: the reel's alignment against what the stock is made for
             (hotter level = less headroom, less hiss; over-bias = darker, smoother; under-bias =
@@ -403,18 +442,57 @@ namespace tape
             const auto& in = info (s);
             if (isClean()) return;
 
-            // Equalisation: NAB 50 us at 7.5 / 15 ips, CCIR 35 us at 15 (70 at 7.5), AES 17.5 us at 30
-            double tau = ips >= 25.0 ? 17.5e-6 : (in.ccir ? (ips >= 12.0 ? 35e-6 : 70e-6) : 50e-6);
-            preEmph = Biquad::firstOrder (sr, tau, tau / 6.0);    // up to +15.6 dB at the top, before the tape
-            deEmph  = Biquad::firstOrder (sr, tau / 6.0, tau);    // exact inverse after it
-
-            // Saturation: ~3 % third harmonic at the stock's headroom above 0 VU (= -18 dBFS)
+            // Record equalisation, as it meets the tape. The treble is boosted into the tape (and taken
+            // out after), so the top saturates first: the boost at 10 kHz is set so each stock's 10 kHz
+            // saturation output (SOL10) lands where its datasheet puts it against the 1 kHz MOL: the gap plus
+            // how far the curve's ceiling sits over its 3 % point (molPoint). BASF's SM911 / SM900 sheets: the gap is about the same at 30 ips as at 15 (a
+            // touch less) and 6 to 7.5 dB wider at 7.5 ips.
             const double d = biasOffset;
             const double biasHeadroom = d < 0.0 ? 2.0 * d : 0.6 * d - 0.15 * d * d;
-            const double peakAtHeadroom = std::pow (10.0, (-18.0 + in.headroomDb + mc.headroomDb - levelOffset + biasHeadroom) / 20.0) * std::sqrt (2.0);
-            drive = (float) (0.49 / peakAtHeadroom);
             bias = (float) (in.asymmetry + mc.asymmetry);
             biasOut = sat (bias);
+            double molAmp = 0.5, ceilingDb = 7.0, h3Ratio = 0.03;
+            const auto gainAt = [this] (const Biquad& c, double f)
+            {
+                const std::complex<double> z = std::polar (1.0, juce::MathConstants<double>::twoPi * f / sr);
+                const auto zi = 1.0 / z;
+                return std::abs ((c.b0 + c.b1 * zi + c.b2 * zi * zi) / (1.0 + c.a1 * zi + c.a2 * zi * zi));
+            };
+            for (int pass = 0; pass < 3; ++pass)
+            {
+            // (the MOL is read after the playback EQ, which takes the 3 kHz harmonic down further than
+            //  the 1 kHz tone - so at the curve itself it's a little more than 3 %)
+            molPoint (bias, molAmp, ceilingDb, h3Ratio);
+            {
+                const double gap = in.solGapDb + (ips >= 25.0 ? -0.5 : ips >= 12.0 ? 0.0 : ips >= 6.0 ? 7.0 : 11.0);
+                // (less 2 dB, found by measuring it as the datasheets do - testTapeDatasheets holds it there)
+                const double target = juce::jlimit (3.0, 22.0, gap + ceilingDb - 2.0);
+                const double ratio = 10.0, w10 = juce::MathConstants<double>::twoPi * juce::jmin (10000.0, 0.4 * sr);
+                auto boostDb = [&] (double t) { const double a = w10 * t; return 10.0 * std::log10 ((1.0 + a * a) / (1.0 + a * a / (ratio * ratio))); };
+                double lo = 1.0e-7, hi = 1.0e-3;
+                for (int k = 0; k < 60; ++k) { const double m = std::sqrt (lo * hi); (boostDb (m) < target ? lo : hi) = m; }
+                const double t1 = std::sqrt (lo * hi);
+                preEmph = Biquad::firstOrder (sr, t1, t1 / ratio);
+                deEmph  = Biquad::firstOrder (sr, t1 / ratio, t1);     // exact inverse after it
+            }
+            h3Ratio = 0.03 * gainAt (preEmph, 3000.0) / gainAt (preEmph, 1000.0);
+            }
+            // NAB (7.5 and 15 ips) also lifts the bass on record by its 3180 us time constant (+3 dB at
+            // 50 Hz, more below) and takes it out on playback, so the low end meets the tape hotter than
+            // on a CCIR machine. Held to +14 dB at the very bottom.
+            if (! in.ccir && ips < 25.0)
+            {
+                const double ta = 3180e-6, tb = 5.0 * ta;
+                lfPre = Biquad::firstOrder (sr, ta, tb).scaled (tb / ta);
+                lfDe  = Biquad::firstOrder (sr, tb, ta).scaled (ta / tb);
+            }
+            else
+                lfPre = lfDe = Biquad {};
+
+            // Saturation: 3 % third harmonic at 1 kHz at the stock's headroom above 0 VU (= -18 dBFS)
+            const double peakAtHeadroom = std::pow (10.0, (-18.0 + in.headroomDb + mc.headroomDb - levelOffset + biasHeadroom) / 20.0) * std::sqrt (2.0);
+            // (the record EQ's own gain at 1 kHz counts: the MOL is measured with it in)
+            drive = (float) (molAmp / (peakAtHeadroom * gainAt (preEmph, 1000.0) * gainAt (lfPre, 1000.0)));
             modNoise = (float) std::pow (10.0, (in.modNoiseDb + (d < 0.0 ? -2.5 * d : 0.0)) / 20.0);
             biasEq = Biquad::highShelf (sr, juce::jmin (0.4 * sr, 6000.0 * ips / 15.0), -1.5 * d);   // printed: over-bias dulls the top
 
@@ -437,11 +515,11 @@ namespace tape
     struct RecordChannel
     {
         HalfBand os;
-        BiquadState pre, de, biasSt;
+        BiquadState pre, de, lfPreSt, lfDeSt, biasSt;
         Noise noise;
         float env = 0.0f;
 
-        void reset (uint32_t seed) noexcept { os.reset(); pre.reset(); de.reset(); biasSt.reset(); env = 0.0f; noise.s = seed | 1u; }
+        void reset (uint32_t seed) noexcept { os.reset(); pre.reset(); de.reset(); lfPreSt.reset(); lfDeSt.reset(); biasSt.reset(); env = 0.0f; noise.s = seed | 1u; }
 
         inline void process (const Shared& sh, const float* in, float* out, int n) noexcept
         {
@@ -449,12 +527,12 @@ namespace tape
             for (int i = 0; i < n; ++i)
             {
                 const float x = in != nullptr ? in[i] : 0.0f;
-                const float e = pre.process (sh.preEmph, x);
+                const float e = pre.process (sh.preEmph, lfPreSt.process (sh.lfPre, x));
                 float a, b;
                 os.upsample (e, a, b);
                 a = (Shared::sat (a * drive + sh.bias) - sh.biasOut) * inv;
                 b = (Shared::sat (b * drive + sh.bias) - sh.biasOut) * inv;
-                float y = biasSt.process (sh.biasEq, de.process (sh.deEmph, os.downsample (a, b)));
+                float y = biasSt.process (sh.biasEq, lfDeSt.process (sh.lfDe, de.process (sh.deEmph, os.downsample (a, b))));
                 env += (std::abs (y) - env) * 0.002f;
                 y += noise.next() * env * sh.modNoise;
                 out[i] = y;
@@ -490,7 +568,10 @@ namespace tape
         }
     };
 
-    /** Transport wow (slow) and flutter (fast, irregular) as a speed multiplier. */
+    /** Transport wow (slow) and flutter (fast, irregular) as a speed multiplier: 1 % rms at 15 ips,
+        half wow and half flutter by power, for the engine to scale by the machine's spec. Slower
+        speeds wobble more - (15 / ips)^0.6, which fits the specs (Studer A800 0.04 % at 15 and 30 ips,
+        0.06 % at 7.5; MCI JH-24 0.04 % at 15, 0.03 % at 30). */
     struct WowFlutter
     {
         double phase = 0.0, fl = 0.0, flState = 0.0;
@@ -498,14 +579,14 @@ namespace tape
 
         double next (double ips, double sr, int n) noexcept
         {
-            const double scale = juce::jlimit (0.5, 3.0, 15.0 / ips);
+            const double scale = std::pow (15.0 / juce::jlimit (3.0, 30.0, ips), 0.6);
             phase += juce::MathConstants<double>::twoPi * 0.55 * n / sr;
             if (phase > juce::MathConstants<double>::twoPi) phase -= juce::MathConstants<double>::twoPi;
             // flutter: noise band-limited to a few Hz around 8 Hz, per block
             const double a = 1.0 - std::exp (-juce::MathConstants<double>::twoPi * 8.0 * n / sr);
             flState += (noise.next() - flState) * a;
             fl += (flState - fl) * a;
-            return 1.0 + scale * (0.00025 * std::sin (phase) + 0.0006 * fl);
+            return 1.0 + scale * (0.01 * std::sin (phase) + 0.00707 / 0.2152 * fl);   // (0.2152: the flutter noise's own rms)
         }
     };
 }

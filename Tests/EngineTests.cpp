@@ -2423,6 +2423,51 @@ static void testReverseRecord()
     e.setReel (nullptr);
 }
 
+static void testTapeDatasheets()
+{
+    std::printf ("[27] the tapes against their datasheets: MOL (3 %% third harmonic at 1 kHz) and SOL10\n");
+    const double sr = 48000.0;
+    auto tone = [&] (const tape::Shared& sh, double f, double dbVu, double& h1, double& h3)
+    {
+        tape::RecordChannel rc;
+        rc.reset (12345u);
+        const int n = (int) (0.4 * sr), from = (int) (0.2 * sr);
+        const double amp = std::pow (10.0, (-18.0 + dbVu) / 20.0) * std::sqrt (2.0);
+        std::vector<float> x ((size_t) n), y ((size_t) n);
+        for (int i = 0; i < n; ++i) x[(size_t) i] = (float) (amp * std::sin (6.283185307 * f * i / sr));
+        rc.process (sh, x.data(), y.data(), n);
+        auto mag = [&] (double fr)
+        {
+            double c = 0, q = 0;
+            for (int i = from; i < n; ++i) { c += y[(size_t) i] * std::cos (6.283185307 * fr * i / sr); q += y[(size_t) i] * std::sin (6.283185307 * fr * i / sr); }
+            return 2.0 * std::sqrt (c * c + q * q) / (n - from);
+        };
+        h1 = mag (f) / (std::pow (10.0, -18.0 / 20.0) * std::sqrt (2.0));      // relative to 0 VU
+        h3 = 3.0 * f < 0.5 * sr ? mag (3.0 * f) / (std::pow (10.0, -18.0 / 20.0) * std::sqrt (2.0)) : 0.0;
+    };
+    struct Case { tape::Stock s; const char* name; };
+    for (auto c : { Case { tape::Stock::us456, "456" }, Case { tape::Stock::highOutput, "GP9" }, Case { tape::Stock::european, "SM911" },
+                    Case { tape::Stock::sm900, "SM900" }, Case { tape::Stock::vintage, "250" }, Case { tape::Stock::scotch111, "111" } })
+    {
+        const auto& si = tape::info (c.s);
+        juce::String line;
+        for (double ips : { 7.5, 15.0, 30.0 })
+        {
+            tape::Shared sh;
+            sh.set (c.s, ips, sr);
+            double mol = 99.0, h1 = 0, h3 = 0;
+            for (double l = -6.0; l < 30.0; l += 0.25) { tone (sh, 1000.0, l, h1, h3); if (h3 >= 0.03 * h1) { mol = l; break; } }
+            double sol = -99.0;
+            for (double l = -12.0; l < 36.0; l += 0.5) { tone (sh, 10000.0, l, h1, h3); sol = juce::jmax (sol, 20.0 * std::log10 (juce::jmax (1.0e-9, h1))); }
+            const double wantGap = si.solGapDb + (ips >= 25.0 ? -0.5 : ips >= 12.0 ? 0.0 : 7.0);
+            if (ips == 15.0) CHECK (std::abs (mol - si.headroomDb) < 1.0, "%s: MOL %.2f dB over 0 VU, datasheet %.1f", c.name, mol, si.headroomDb);
+            CHECK (std::abs ((mol - sol) - wantGap) < 1.5, "%s at %.1f ips: SOL10 %.1f dB under MOL, datasheet %.1f", c.name, ips, mol - sol, wantGap);
+            line << juce::String (ips, 1) << " ips MOL +" << juce::String (mol, 1) << " SOL10 " << juce::String (sol, 1) << "   ";
+        }
+        std::printf ("    %-6s %s\n", c.name, line.toRawUTF8());
+    }
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -2439,6 +2484,7 @@ int main()
         if (only.contains ("24")) testAlignment();
         if (only.contains ("25")) testReversePlay();
         if (only.contains ("26")) testReverseRecord();
+        if (only.contains ("27")) testTapeDatasheets();
         if (only.contains ("3"))  testTapeMachine();
         std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURE(S)\n", failures);
         return failures == 0 ? 0 : 1;
@@ -2465,6 +2511,7 @@ int main()
     testAlignment();
     testReversePlay();
     testReverseRecord();
+    testTapeDatasheets();
    #if JUCE_LINUX || JUCE_MAC
     testCrashRecovery();
    #endif
