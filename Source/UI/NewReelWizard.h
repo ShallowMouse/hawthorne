@@ -694,7 +694,7 @@ inline void showNewReelWizard (juce::Component* over, const juce::String& title,
    #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
     if (melville::isHosted())
     {
-        melville::showPanel (std::unique_ptr<juce::Component> (wizard), title, "hawthorne");
+        melville::showPanel (std::unique_ptr<juce::Component> (wizard), title, "melville");
         return;
     }
    #endif

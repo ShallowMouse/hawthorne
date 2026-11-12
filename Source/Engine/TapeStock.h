@@ -34,8 +34,8 @@ namespace tape
     // Saved by number: only ever add to the end.
     enum class Stock { clean = 0, us456, highOutput, vintage, european, emitape, mastering499, sm900, emi888, emi811, emi815 };
     constexpr int numStocks = 11;
-    /** The order they're offered in (the EMI tapes together, the mastering stocks after); clean goes last. */
-    inline constexpr Stock menuOrder[] = { Stock::emi888, Stock::emitape, Stock::vintage, Stock::emi811, Stock::emi815,
+    /** The order they're offered in: oldest first (clean goes last). */
+    inline constexpr Stock menuOrder[] = { Stock::emi888, Stock::emitape, Stock::emi811, Stock::emi815, Stock::vintage,
                                           Stock::us456, Stock::european, Stock::mastering499, Stock::highOutput, Stock::sm900 };
     /** Where each tape came from, and when (oldest first is menuOrder). */
     inline const char* era (Stock s)
@@ -43,15 +43,15 @@ namespace tape
         switch (s)
         {
             case Stock::emi888:       return "EMI  -  England  -  early 1960s";
-            case Stock::emitape:      return "EMI  -  England  -  1960s";
-            case Stock::vintage:      return "USA  -  1960s";
-            case Stock::emi811:       return "EMI  -  England  -  1966 to 1970";
+            case Stock::emitape:      return "EMI  -  England  -  1963 to 1965";
+            case Stock::emi811:       return "EMI  -  England  -  1966 to 1969";
             case Stock::emi815:       return "EMI  -  England  -  early 1970s";
-            case Stock::us456:        return "USA  -  from 1975";
-            case Stock::european:     return "Germany  -  1980s";
-            case Stock::mastering499: return "USA  -  around 1990";
-            case Stock::highOutput:   return "USA  -  1990s";
-            case Stock::sm900:        return "Europe  -  2000s";
+            case Stock::vintage:      return "3M Scotch  -  USA  -  early 1970s";
+            case Stock::us456:        return "Ampex  -  USA  -  1975";
+            case Stock::european:     return "BASF  -  Germany  -  1986";
+            case Stock::mastering499: return "Ampex  -  USA  -  early 1990s";
+            case Stock::highOutput:   return "Quantegy  -  USA  -  1998";
+            case Stock::sm900:        return "BASF / Emtec  -  Germany  -  late 1990s";
             case Stock::clean:        return "Hawthorne  -  digital";
         }
         return "";
@@ -78,23 +78,23 @@ namespace tape
         static const StockInfo stocks[numStocks] = {
             { "Clean (no tape)",          "CLEAN",         "No tape sound at all. Records bit-for-bit what comes in: no saturation, no EQ change, no hiss, no wow or flutter.",
               99.0, 0.0,   -200.0, -200.0, 0.0, 0.0, false, forMultitrack | forMaster },
-            { "US mastering (456-type)",  "456-TYPE +6",   "Warm, fat and punchy. A strong low-end bump (around 60 Hz at 15 ips) and a slightly rounded top. Saturates fairly early and musically - push the levels for glue and thickness on drums and bass. Moderate hiss. The classic 70s / 80s rock sound.",
+            { "US mastering (456-type)",  "456-TYPE +6",   "Ampex's +6 tape of 1975, the studio standard for the next twenty years. Warm, fat and punchy. A strong low-end bump (around 60 Hz at 15 ips) and a slightly rounded top. Saturates fairly early and musically - push the levels for glue and thickness on drums and bass. Moderate hiss. The classic 70s / 80s rock sound.",
               12.0, 0.025, -58.0,  -63.0,  2.0, 0.5, false, forMultitrack },
-            { "High output (GP9-type)",   "GP9-TYPE +9",   "Clean, tight and modern. The most headroom: you can hit it hard before it gets gritty, so it colours the least. Smaller low bump, full top end, low hiss. Tape glue without obvious distortion.",
+            { "High output (GP9-type)",   "GP9-TYPE +9",   "Quantegy's 1998 refinement of 3M's 996, among the last new analogue tapes. Clean, tight and modern. The most headroom: you can hit it hard before it gets gritty, so it colours the least. Smaller low bump, full top end, low hiss. Tape glue without obvious distortion.",
               15.0, 0.015, -62.0,  -66.0,  1.5, 0.0, false, forMultitrack },
-            { "Vintage 60s (250-type)",   "250-TYPE STD",  "Lo-fi and characterful. Breaks up soonest, with the most even-harmonic grit. Darker, softer top end, the biggest woolly low bump, and the most hiss and modulation noise. The 60s / garage sound.",
+            { "Early 70s (250-type)",     "250-TYPE",      "3M's Scotch 250, the US studio tape of the early 70s before 456 - Abbey Road had moved to Scotch by about 1969. Lo-fi and characterful. Breaks up soonest, with the most even-harmonic grit. Darker, softer top end, the biggest woolly low bump, and the most hiss and modulation noise.",
               8.0,  0.07,  -52.0,  -58.0,  2.5, 2.0, false, forMultitrack },
-            { "European (911-type)",      "911-TYPE +9",   "Smooth and polished. Lots of headroom, a firm but restrained low end and a silky top (European CCIR EQ). The quietest tape. Refined rather than vibey.",
+            { "European (911-type)",      "911-TYPE +9",   "BASF's 1986 answer to 456, with a stable binder. Smooth and polished. Lots of headroom, a firm but restrained low end and a silky top (European CCIR EQ). The quietest tape. Refined rather than vibey.",
               14.0, 0.02,  -63.0,  -67.0,  1.2, 0.3, true, forMultitrack },
-            { "EMI 60s (Emitape-type)",   "EMITAPE",       "The tape the Beatles used at Abbey Road. Standard level: breaks up early and sweetly with plenty of even harmonics, a soft top, a round low end and audible hiss (CCIR EQ). Pair it with the J37 or the 3M M23 - and the BTR2 for the master.",
+            { "EMI 60s (Emitape-type)",   "EMITAPE",       "The Emitape the Beatles recorded on at Abbey Road from Please Please Me to Rubber Soul. Standard level: breaks up early and sweetly with plenty of even harmonics, a soft top, a round low end and audible hiss (CCIR EQ). Pair it with the J37 or the 3M M23 - and the BTR2 for the master.",
               7.0,  0.06,  -53.0,  -58.5,  2.3, 1.6, true, forMultitrack | forMaster },
-            { "Mastering (480/499-type)", "499-TYPE +9",   "Mastering-grade US tape for the 2-track. Big headroom with a warm, solid low end and a clean top: glues the mix without obvious distortion. Low noise.",
+            { "Mastering (499-type)",     "499-TYPE +9",   "Ampex's Grand Master Gold of the early 90s, mastering-grade US tape for the 2-track. Big headroom with a warm, solid low end and a clean top: glues the mix without obvious distortion. Low noise.",
               14.0, 0.02,  -62.0,  -67.0,  2.0, 0.3, false, forMaster },
-            { "Mastering (SM900-type)",   "SM900 +12",     "Very high output mastering tape. Huge headroom and the lowest noise: the cleanest tape print, a subtle firm low end and a full top. For loud, modern masters.",
+            { "Mastering (SM900-type)",   "SM900 +12",     "BASF's very high output mastering tape of the late 90s, made to take on 499 and 996. Huge headroom and the lowest noise: the cleanest tape print, a subtle firm low end and a full top. For loud, modern masters.",
               17.0, 0.012, -65.0,  -70.0,  1.6, 0.0, true, forMaster },
             { "EMI 888 (early 60s)",      "EMITAPE 888",   "EMI's early-60s studio tape, made for Abbey Road. The dirtiest of the EMI tapes: lo-fi and grainy, breaking up early with gritty upper mids, a soft top, a round low end and plenty of hiss (CCIR EQ). Great on rock and on acoustic guitars and percussion.",
               6.5,  0.07,  -51.0,  -56.5,  2.4, 2.2, true, forMultitrack | forMaster },
-            { "EMI 811 (mid-late 60s)",   "EMITAPE 811",   "The Beatles' tape from Revolver on (1966-70). Cleaner than the 888: a better top end and a little less distortion, still warm and sweet when pushed (CCIR EQ). Character without the grit - lovely on single instruments like piano.",
+            { "EMI 811 (mid-late 60s)",   "EMITAPE 811",   "The Beatles' tape from Revolver (1966) until Abbey Road moved to Scotch around 1969. Cleaner than the 888: a better top end and a little less distortion, still warm and sweet when pushed (CCIR EQ). Character without the grit - lovely on single instruments like piano.",
               8.0,  0.05,  -54.0,  -59.0,  2.2, 1.2, true, forMultitrack | forMaster },
             { "EMI 815 (early 70s)",      "EMITAPE 815",   "EMI's early-70s tape: the cleanest of the three. A flatter top end and less distortion, with a rounder bass and natural highs (CCIR EQ). Smooth and controlled - the one to use when you want the EMI sound with the least colour.",
               10.5, 0.03,  -58.0,  -62.0,  2.0, 0.5, true, forMultitrack | forMaster },
@@ -168,19 +168,19 @@ namespace tape
               -0.5, 0.015, 1.35, 0.9, 0.85, 0.8,  0.85, 1.5, 1.3 },
             { "Otari MTR-90", "OTARI MTR-90", "Neutral and solid: modern, honest and quiet, with a dependable transport. Colours the least.",
               1.0, -0.005, 0.9, 1.0,  1.0,  0.0,  1.0, -1.0, 0.8 },
-            { "Studer J37 (EMI, valve 4-track)", "STUDER J37", "The Beatles' 4-track at Abbey Road (1965-67, Revolver, Sgt. Pepper). Valve electronics: thick, warm and slightly compressed, with soft valve grit, a gentle top and more hiss and wobble.",
+            { "Studer J37 (EMI, valve 4-track)", "STUDER J37", "Abbey Road's 4-track from 1965 until 8-track arrived (Revolver, Sgt. Pepper). Valve electronics: thick, warm and slightly compressed, with soft valve grit, a gentle top and more hiss and wobble.",
               -3.0, 0.05, 1.3,  1.0,  0.8,  1.5,  1.1,  3.0, 1.6 },
             { "3M M23 (8-track)", "3M M23", "The Beatles' first 8-track at Abbey Road (1968-69, the White Album, Abbey Road). Early transistor: punchy and solid, a little darker and grainier than later machines.",
               -1.5, 0.025, 1.2, 1.0,  0.95, 0.6,  1.0,  1.5, 1.2 },
             { "None (bit-perfect)", "NO MACHINE", "No machine: nothing between you and the files. No tape sound, no hiss, no wow or flutter - bit-for-bit, whatever the tape on the reel.",
               0, 0, 1, 1, 1, 0, 1, 0, 0 },
-            { "Scully 280 (8-track)", "SCULLY 280", "The 60s American solid-state workhorse. Punchy and forward in the mids, a solid low end and a slightly soft top.",
+            { "Scully 280 (8-track)", "SCULLY 280", "Scully's 1965 solid-state transport; the 1-inch 8-track came in 1966. Punchy and forward in the mids, a solid low end and a slightly soft top.",
               -1.0, 0.02, 1.15, 1.0, 0.95, 0.5,  1.0,  1.5, 1.2 },
-            { "3M M79", "3M M79", "The 70s 2-inch 24-track with the Isoloop drive. Round and warm with smooth low mids and a steady, low-flutter transport.",
+            { "3M M79", "3M M79", "3M's 1972 2-inch 24-track with the Isoloop drive. Round and warm with smooth low mids and a steady, low-flutter transport.",
               -0.5, 0.012, 1.25, 0.95, 0.95, 0.4, 0.9,  1.0, 0.8 },
-            { "Stephens 821B", "STEPHENS 821B", "The capstanless, transformerless 70s 24-track. Open and detailed: a deep, clean low end and an extended top.",
+            { "Stephens 821B", "STEPHENS 821B", "John Stephens' capstanless, transformerless 24-track of 1974. Open and detailed: a deep, clean low end and an extended top.",
               0.5, 0.0,   1.1,  0.9,  1.2, -0.4,  0.8,  0.0, 0.7 },
-            { "Tascam 80-8 (1/2\" 8-track)", "TASCAM 80-8", "The 70s home-studio 8-track: eight narrow tracks on half-inch tape. Less headroom, a lighter low end, a softer top and more hiss.",
+            { "Tascam 80-8 (1/2\" 8-track)", "TASCAM 80-8", "TEAC's 1976 home-studio 8-track: eight narrow tracks on half-inch tape. Less headroom, a lighter low end, a softer top and more hiss.",
               -2.0, 0.02, 0.85, 1.1,  0.9,  0.8,  1.2,  4.0, 1.5 },
         };
         return m[juce::jlimit (0, numMultitrackMachines - 1, i)];
@@ -220,16 +220,16 @@ namespace tape
     /** The machines in the order they're offered: oldest first, no machine (digital) last. */
     inline const std::vector<int>& multitrackOrder()
     {
-        static const std::vector<int> o { 4 /*J37 1964*/, 7 /*Scully 280 1960s*/, 5 /*3M M23 1966*/, 2 /*MM1200 1970s*/, 8 /*3M M79 1970s*/,
-                                          9 /*Stephens 821B 1970s*/, 10 /*Tascam 80-8 1976*/, 0 /*A800 1978*/, 1 /*JH-24 ~1980*/,
-                                          3 /*MTR-90 1980s*/, noMultitrackMachine };
+        static const std::vector<int> o { 4 /*J37 1964*/, 7 /*Scully 280 1965*/, 5 /*3M M23 1966*/, 8 /*3M M79 1972*/,
+                                          9 /*Stephens 821B 1974*/, 2 /*MM1200 1976*/, 10 /*Tascam 80-8 1976*/, 0 /*A800 1978*/,
+                                          3 /*MTR-90 1979*/, 1 /*JH-24 1980*/, noMultitrackMachine };
         return o;
     }
 
     inline const std::vector<int>& masterOrder()
     {
-        static const std::vector<int> o { 4 /*BTR2 1950s*/, 3 /*Ampex 351 1950s*/, 7 /*Scully 280 1960s*/, 6 /*AG-440 1967*/, 9 /*Revox A77 1967*/,
-                                          1 /*A80 1970*/, 0 /*ATR-102 1976*/, 2 /*MTR-12 1980s*/, 8 /*A810 1980s*/, noMasterMachine };
+        static const std::vector<int> o { 4 /*BTR2 late 1940s*/, 3 /*Ampex 351 1958*/, 7 /*Scully 280 1965*/, 6 /*AG-440 1967*/, 9 /*Revox A77 1967*/,
+                                          1 /*A80 1970*/, 0 /*ATR-102 1976*/, 8 /*A810 1982*/, 2 /*MTR-12 1984*/, noMasterMachine };
         return o;
     }
 

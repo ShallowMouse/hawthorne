@@ -26,47 +26,52 @@ inline const MachineStory& multitrackStory (int i)
           "around the world.",
           "Clean and punchy with a tight, controlled low end and an extended top. It flatters a mix without smearing it - "
           "the 'expensive' tape sound." },
-        { "MCI  -  Florida, USA  -  around 1980",
-          "MCI (later bought by Sony) built consoles and machines for working studios, and the JH-24 was its 24-track "
-          "workhorse: reliable, affordable and everywhere in the 80s, with its Autolocator III and colour-coded keys.",
+        { "MCI  -  Florida, USA  -  1980",
+          "MCI, founded in Fort Lauderdale in the 50s and bought by Sony in 1982, built consoles and machines for working "
+          "studios. The JH-24 (1979-80), successor to the JH-16, was its 24-track workhorse: reliable, affordable and "
+          "everywhere in the 80s, with its Autolocator III.",
           "Bright and aggressive, with forward upper mids and a slightly lighter low end. Great on rock drums and guitars "
           "that need to jump out." },
-        { "Ampex  -  California, USA  -  1970s",
-          "Ampex invented the professional tape recorder in America, and the MM1200 was its big 70s multitrack (8, 16 and "
-          "24 tracks), a fixture of rock and pop studios with its row of glowing VUs under the deck.",
+        { "Ampex  -  California, USA  -  1976",
+          "Ampex built America's first professional tape recorders in the late 40s. The MM1200 (1976), successor to the "
+          "MM1000 and MM1100, was its big multitrack of the late 70s and 80s - 8, 16 or 24 tracks on 2-inch tape - and a "
+          "fixture of rock and pop studios.",
           "Big and warm: the fattest low end of the lot and a soft, rounded top. Thick and forgiving." },
-        { "Otari  -  Japan  -  1980s",
-          "Otari's MTR-90 was the solid, dependable 24-track of the 80s and 90s - fast, quiet and built to run all day, found "
-          "in countless commercial and project studios.",
+        { "Otari  -  Japan  -  1979",
+          "Otari's MTR-90 (launched in 1979 as a 24-track 'for the 80s') had a pinch-rollerless, servo-driven transport. "
+          "Solid, fast and quiet, it became one of the best-selling 2-inch 24-tracks ever, in commercial and project studios alike.",
           "Neutral and honest with low noise. It colours the least of the multitracks - tape glue without a strong character." },
-        { "Studer  -  Switzerland  -  1964 to 1972 at Abbey Road",
-          "The valve 4-track on 1-inch tape that EMI's Abbey Road used through the mid-60s: Revolver and Sgt. Pepper's Lonely "
-          "Hearts Club Band were built up on J37s, with reduction mixes bounced between machines. Levels were read on the EMI "
-          "desk's PPMs.",
+        { "Studer  -  Switzerland  -  1964 (Abbey Road from 1965)",
+          "Studer's first multitrack: a valve 4-track on 1-inch tape. Abbey Road bought four in 1965 to replace its Telefunken "
+          "4-tracks, and Revolver and Sgt. Pepper's Lonely Hearts Club Band were built up on them, with reduction mixes "
+          "bounced between machines, until 8-track arrived in 1968. Levels were read on the EMI desk's PPMs.",
           "Valve electronics: thick, warm and slightly compressed, with soft valve grit, a gentle top and more hiss and "
           "wobble. The sound of 60s Abbey Road." },
         { "3M  -  USA  -  1966",
-          "3M's 8-track on 1-inch tape, one of the first 8-tracks. Abbey Road brought one in during 1968, and the Beatles used "
-          "it for much of the White Album and Abbey Road. Each track has its own electronics drawer with a backlit VU.",
+          "3M's Isoloop machine, first shipped in mid-1966 - Wally Heider's 1-inch 8-track was among the first. Abbey Road "
+          "chose the M23 8-track to succeed its J37s in 1968, and the Beatles used it for much of the White Album and Abbey "
+          "Road. Each track has its own electronics drawer with a VU.",
           "Early solid-state: punchy and solid, a little darker and grainier than later machines." },
         { "Hawthorne  -  digital",
           "No machine at all: the reel plays and records straight from its files, whatever tape it's on.",
           "Bit-perfect: exactly what went in. No saturation, EQ, hiss, wow or flutter." },
-        { "Scully  -  Connecticut, USA  -  1960s",
-          "Scully, better known for its record-cutting lathes, built the 280 series of solid-state recorders through the "
-          "60s and 70s, in 2-, 4- and 8-track versions - a fixture of American studios before 16 and 24 tracks took over.",
+        { "Scully  -  Connecticut, USA  -  1965",
+          "Scully, the Bridgeport record-lathe maker, launched the solid-state 280 in 1965 (designed by Bell Sound's Dan "
+          "Cronin) and the 1-inch 8-track in 1966, when studios everywhere were moving to 8 tracks. From 1967 to 1969 its "
+          "8-track was a best seller - Decca in London used Scullys too.",
           "Punchy and forward in the mids with a solid low end and a slightly soft top." },
-        { "3M  -  USA  -  1970s",
+        { "3M  -  Minnesota, USA  -  1972",
           "3M's 2-inch multitrack of the 70s, successor to the M56, in 16- and 24-track versions. Its Isoloop closed-loop "
           "drive held the tape against the heads with very low flutter.",
           "Round and warm: smooth low mids, a gentle top and a very steady transport." },
-        { "Stephens  -  California, USA  -  1970s",
-          "John Stephens' hand-built machines had no capstan - the reel motors alone drove the tape - and transformerless "
-          "electronics. Rare and prized in Los Angeles studios, with up to 40 tracks on 2-inch tape.",
+        { "Stephens  -  Burbank, USA  -  1974",
+          "John Stephens started on 3M M23 transports, then built his own with no capstan or pinch roller - two reel motors "
+          "in a crystal-locked servo loop drove the tape - and transformerless electronics. The 821B was the 24-track; "
+          "a few were built with 40 tracks on 2-inch tape. Rare and prized in Los Angeles studios into the early 80s.",
           "Open and detailed: a deep, clean low end and an extended top. The least 'tapey' of the vintage machines." },
-        { "Tascam (Teac)  -  Japan  -  1976",
-          "The machine that put 8-track recording into home and project studios: eight narrow tracks on half-inch tape, "
-          "often paired with dbx noise reduction. Countless demos and indie records started on one.",
+        { "TEAC / Tascam  -  Japan  -  1976",
+          "The machine that put 8-track recording into home and project studios for under $3,000: eight narrow tracks on "
+          "half-inch tape, often paired with dbx noise reduction. Sold as a TEAC, later with the Tascam badge, until the mid-80s.",
           "Narrow tracks: less headroom, a lighter low end, a softer top and noticeably more hiss. Lo-fi charm." },
     };
     return s[juce::jlimit (0, tape::numMultitrackMachines - 1, i)];
@@ -76,23 +81,24 @@ inline const MachineStory& masterStory (int i)
 {
     static const MachineStory s[] = {
         { "Ampex  -  California, USA  -  1976",
-          "Ampex's ATR-102 is the classic mastering deck - many of the great records of the 70s and 80s were mixed down to "
-          "one, often on half-inch tape. Precise transport, orange-backlit VUs.",
+          "Unveiled at the 1976 AES as the 2-track of the ATR-100 series, the ATR-102 is the classic mastering deck - many "
+          "of the great records of the 70s and 80s were mixed down to one, often on half-inch tape. Its pinch-rollerless, "
+          "servo transport handles tape gently, with almost no flutter.",
           "A huge, deep low end, an open top and very low noise. The 'finished record' sound." },
         { "Studer  -  Switzerland  -  1970",
           "The A80 was Studer's workhorse for two decades, in mastering rooms and broadcasters everywhere. Modular "
           "electronics, each with its own VU.",
           "Smooth and detailed with a slightly silky top. Polished and refined." },
-        { "Otari  -  Japan  -  1980s",
+        { "Otari  -  Japan  -  1984",
           "Otari's compact professional 2-track, on quarter- and half-inch tape - common in mastering, broadcast and "
           "post-production.",
           "Clean and neutral: an honest print of the mix." },
-        { "Ampex  -  California, USA  -  1950s",
-          "The valve-era Ampex: a 350-series transport with 351 electronics in brushed aluminium. It recorded much of the "
-          "music of the 50s and early 60s.",
+        { "Ampex  -  California, USA  -  1958",
+          "The valve-era Ampex: the 350 transport (1953) with the 351 electronics of 1958. More than 10,000 were in use by "
+          "1961, and they recorded much of the music of the late 50s and early 60s.",
           "Vintage valve electronics: thick even-harmonic warmth, a softer top and more noise." },
-        { "EMI  -  England  -  1950s",
-          "EMI's own valve tape recorder, the BTR2 - the mastering machine at Abbey Road for years. The Beatles' early mono "
+        { "EMI  -  England  -  late 1940s",
+          "EMI's own valve tape recorder, the BTR2, built from the late 40s - the 2-track at Abbey Road for years. The Beatles' early mono "
           "and stereo masters were mixed to BTR2s. Housed in EMI green, read on a PPM.",
           "Warm and round with gentle valve saturation and a soft top." },
         { "Hawthorne  -  digital",
@@ -105,7 +111,7 @@ inline const MachineStory& masterStory (int i)
         { "Scully  -  Connecticut, USA  -  1960s",
           "The 2-track version of Scully's 280, at home in mastering rooms and radio stations - often beside a Scully lathe.",
           "Punchy and direct, with a firm middle." },
-        { "Studer  -  Switzerland  -  1980s",
+        { "Studer  -  Switzerland  -  1982",
           "Studer's microprocessor-controlled 2-track of the 80s, built for broadcast and mastering, with a precise transport "
           "and a fluorescent tape counter.",
           "Clean, precise and quiet: the tidiest print of the mix." },
