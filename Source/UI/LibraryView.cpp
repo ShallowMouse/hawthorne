@@ -775,7 +775,7 @@ void LibraryView::importRecordings()
             const int sessionIdx = w->getComboBoxComponent ("session")->getSelectedItemIndex();
             const bool split = stereo > 0 && w->getComboBoxComponent ("stereo")->getSelectedItemIndex() == 0;
             const int stock = w->stockAt ("stock");
-            const int machine = w->getComboBoxComponent ("machine")->getSelectedItemIndex();
+            const int machine = w->machineAt ("machine");
             const double ips = w->getComboBoxComponent ("ips")->getSelectedItemIndex() == 0 ? 7.5
                              : w->getComboBoxComponent ("ips")->getSelectedItemIndex() == 2 ? 30.0 : 15.0;
 

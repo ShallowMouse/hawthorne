@@ -35,9 +35,27 @@ namespace tape
     enum class Stock { clean = 0, us456, highOutput, vintage, european, emitape, mastering499, sm900, emi888, emi811, emi815 };
     constexpr int numStocks = 11;
     /** The order they're offered in (the EMI tapes together, the mastering stocks after); clean goes last. */
-    inline constexpr Stock menuOrder[] = { Stock::us456, Stock::highOutput, Stock::vintage, Stock::european,
-                                          Stock::emitape, Stock::emi888, Stock::emi811, Stock::emi815,
-                                          Stock::mastering499, Stock::sm900 };
+    inline constexpr Stock menuOrder[] = { Stock::emi888, Stock::emitape, Stock::vintage, Stock::emi811, Stock::emi815,
+                                          Stock::us456, Stock::european, Stock::mastering499, Stock::highOutput, Stock::sm900 };
+    /** Where each tape came from, and when (oldest first is menuOrder). */
+    inline const char* era (Stock s)
+    {
+        switch (s)
+        {
+            case Stock::emi888:       return "EMI  -  England  -  early 1960s";
+            case Stock::emitape:      return "EMI  -  England  -  1960s";
+            case Stock::vintage:      return "USA  -  1960s";
+            case Stock::emi811:       return "EMI  -  England  -  1966 to 1970";
+            case Stock::emi815:       return "EMI  -  England  -  early 1970s";
+            case Stock::us456:        return "USA  -  from 1975";
+            case Stock::european:     return "Germany  -  1980s";
+            case Stock::mastering499: return "USA  -  around 1990";
+            case Stock::highOutput:   return "USA  -  1990s";
+            case Stock::sm900:        return "Europe  -  2000s";
+            case Stock::clean:        return "Hawthorne  -  digital";
+        }
+        return "";
+    }
     enum StockUse { forMultitrack = 1, forMaster = 2 };
 
     struct StockInfo
@@ -195,6 +213,24 @@ namespace tape
               -1.5, 0.015, 0.95, 1.05, 0.9,  0.7,  1.1,  2.5, 1.3 },
         };
         return m[juce::jlimit (0, numMasterMachines - 1, i)];
+    }
+
+
+    //==========================================================================
+    /** The machines in the order they're offered: oldest first, no machine (digital) last. */
+    inline const std::vector<int>& multitrackOrder()
+    {
+        static const std::vector<int> o { 4 /*J37 1964*/, 7 /*Scully 280 1960s*/, 5 /*3M M23 1966*/, 2 /*MM1200 1970s*/, 8 /*3M M79 1970s*/,
+                                          9 /*Stephens 821B 1970s*/, 10 /*Tascam 80-8 1976*/, 0 /*A800 1978*/, 1 /*JH-24 ~1980*/,
+                                          3 /*MTR-90 1980s*/, noMultitrackMachine };
+        return o;
+    }
+
+    inline const std::vector<int>& masterOrder()
+    {
+        static const std::vector<int> o { 4 /*BTR2 1950s*/, 3 /*Ampex 351 1950s*/, 7 /*Scully 280 1960s*/, 6 /*AG-440 1967*/, 9 /*Revox A77 1967*/,
+                                          1 /*A80 1970*/, 0 /*ATR-102 1976*/, 2 /*MTR-12 1980s*/, 8 /*A810 1980s*/, noMasterMachine };
+        return o;
     }
 
 

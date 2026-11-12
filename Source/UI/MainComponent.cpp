@@ -1532,8 +1532,8 @@ void MainComponent::showMasterMenu()
     if (has)
     {
         juce::PopupMenu nrMenu;
-        for (int s = 0; s < nr::numSystems; ++s)
-            nrMenu.addItem (1100 + s, nr::info (s).name, ! rec, engine.getMasterNr() == s);
+        for (int k = 0; k < nr::numSystems; ++k)
+            if (const int s = nr::order()[k]; true) nrMenu.addItem (1100 + s, nr::info (s).name, ! rec, engine.getMasterNr() == s);
         m.addSubMenu (juce::String ("Noise reduction: ") + nr::info (engine.getMasterNr()).name, nrMenu, ! rec);
     }
 
@@ -1593,8 +1593,8 @@ void MainComponent::newMaster (std::function<void()> then)
         if (result != 1 || reel == nullptr || engine.isRecording()) return;
         auto name = w->getTextEditorContents ("name").trim();
         const int idx = reel->addMaster (name.isNotEmpty() ? name : reel->nextMasterName(), w->stockAt ("stock"),
-                                         w->getComboBoxComponent ("nr")->getSelectedItemIndex());
-        engine.setMasterMachine (w->getComboBoxComponent ("machine")->getSelectedItemIndex());
+                                         nr::order()[juce::jlimit (0, nr::numSystems - 1, w->getComboBoxComponent ("nr")->getSelectedItemIndex())]);
+        engine.setMasterMachine (w->machineAt ("machine"));
         applySkin();
         engine.mastersChanged();
         engine.setActiveMaster (idx);
@@ -1636,8 +1636,8 @@ void MainComponent::showMachineMenu()
     m.addItem (5, "Alignment (calibration)...", ! rec);
     {
         juce::PopupMenu nrMenu;
-        for (int s = 0; s < nr::numSystems; ++s)
-            nrMenu.addItem (100 + s, nr::info (s).name, ! rec, reel->noiseReduction == s);
+        for (int k = 0; k < nr::numSystems; ++k)
+            if (const int s = nr::order()[k]; true) nrMenu.addItem (100 + s, nr::info (s).name, ! rec, reel->noiseReduction == s);
         nrMenu.addSeparator();
         for (int md = 0; md < nr::numModes; ++md)
             nrMenu.addItem (200 + md, juce::String ("All tracks: ") + nr::modeName (md), ! rec && reel->noiseReduction != nr::none);
@@ -2052,6 +2052,14 @@ void MainComponent::showMachines()
         engine.setMasterMachine (ms);
         applySkin();
     });
+   #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
+    if (melville::isHosted())
+    {
+        // (in MELVILLE's window frame, with Hawthorne's mark, like Hawthorne's settings)
+        melville::showPanel (std::unique_ptr<juce::Component> (picker), "Hawthorne machines", "hawthorne");
+        return;
+    }
+   #endif
     juce::DialogWindow::LaunchOptions o;
     o.content.setOwned (picker);
     o.dialogTitle = "Machines - click one to put the reel on it";

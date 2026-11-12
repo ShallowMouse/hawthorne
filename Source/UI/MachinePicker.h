@@ -118,23 +118,6 @@ inline const MachineStory& masterStory (int i)
 }
 
 //==============================================================================
-/** The machines in the order they're offered: oldest first, no machine (digital) last. */
-inline const std::vector<int>& multitrackOrder()
-{
-    static const std::vector<int> o { 4 /*J37 1964*/, 7 /*Scully 280 1960s*/, 5 /*3M M23 1966*/, 2 /*MM1200 1970s*/, 8 /*3M M79 1970s*/,
-                                      9 /*Stephens 821B 1970s*/, 10 /*Tascam 80-8 1976*/, 0 /*A800 1978*/, 1 /*JH-24 ~1980*/,
-                                      3 /*MTR-90 1980s*/, tape::noMultitrackMachine };
-    return o;
-}
-
-inline const std::vector<int>& masterOrder()
-{
-    static const std::vector<int> o { 4 /*BTR2 1950s*/, 3 /*Ampex 351 1950s*/, 7 /*Scully 280 1960s*/, 6 /*AG-440 1967*/, 9 /*Revox A77 1967*/,
-                                      1 /*A80 1970*/, 0 /*ATR-102 1976*/, 2 /*MTR-12 1980s*/, 8 /*A810 1980s*/, tape::noMasterMachine };
-    return o;
-}
-
-//==============================================================================
 /** A small drawing of the machine's deck and meter, in its own colours. */
 inline void drawMachinePreview (juce::Graphics& g, juce::Rectangle<float> r, const MachineSkin& sk)
 {
@@ -260,9 +243,9 @@ public:
                 }
         };
         // oldest at the top, newest at the bottom (no machine - digital - last)
-        for (int i : multitrackOrder())
+        for (int i : tape::multitrackOrder())
             place (false, i);
-        for (int i : masterOrder())
+        for (int i : tape::masterOrder())
             place (true, i);
         content.setSize (w + 8, top + juce::jmax (rows[0], rows[1]) * (cardH + 14) + 10);
         content.colW = colW;

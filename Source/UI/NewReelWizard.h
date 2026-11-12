@@ -6,6 +6,7 @@
 #include "TapeChoice.h"
 #include "../Engine/TapeStock.h"
 #include "../Engine/NoiseReduction.h"
+#include "../Melville.h"
 
 namespace hawthorne
 {
@@ -135,9 +136,10 @@ inline void drawNrUnit (juce::Graphics& g, juce::Rectangle<float> r, int system,
 
 //==============================================================================
 /**
-    A new session (or a new reel on a session), step by step and in pictures: the session,
-    then the machine (and the tracks), the tape (and the speed), the noise reduction, and
-    a last look at the tape box before it's made.
+    A new session (or a new reel on a session), step by step and in pictures, laid out like
+    the machine room: a card per choice with its picture, where and when it came from, its
+    story and its sound, oldest first. Steps: the session, the machine (and the tracks), the
+    tape (and the speed), the noise reduction, and a last look at the tape box.
 */
 class NewReelWizard : public juce::Component
 {
@@ -151,11 +153,10 @@ public:
 
     NewReelWizard (bool withSession, const NewReelChoice& start, const Look& lk, const juce::String& sessionName,
                    std::function<void (const NewReelChoice&)> create)
-        : choice (start), look (lk), forSession (sessionName), onCreate (std::move (create))
+        : choice (start), look (lk), forSession (sessionName), onCreate (std::move (create)), list (*this)
     {
         if (withSession) steps.push_back (Step::session);
         for (auto s : { Step::machine, Step::tape, Step::nr, Step::ready }) steps.push_back (s);
-        stocks = stocksFor (tape::forMultitrack);
 
         for (auto* e : { &nameEd, &artistEd })
         {
@@ -173,6 +174,11 @@ public:
         nameEd.setText (choice.name, false);
         artistEd.setText (choice.artist, false);
 
+        view.setViewedComponent (&list, false);
+        view.setScrollBarsShown (true, false);
+        view.setScrollBarThickness (10);
+        addChildComponent (view);
+
         for (auto* b : { &backButton, &nextButton, &cancelButton })
         {
             b->setColour (juce::TextButton::buttonColourId, look.panel);
@@ -186,8 +192,23 @@ public:
         cancelButton.onClick = [this] { close(); };
 
         setWantsKeyboardFocus (true);
-        setSize (1000, 740);
+        setSize (1000, 760);
         go (0);
+    }
+
+    /** (Development: every step as a picture, into a folder.) */
+    static void gallery (const juce::File& dir, const Look& lk)
+    {
+        NewReelChoice c;
+        c.name = "Sea Shanties"; c.artist = "The Pequod Crew"; c.stock = 8; c.machine = 4; c.nr = 1; c.ips = 15.0; c.tracks = 24;
+        NewReelWizard w (true, c, lk, {}, nullptr);
+        for (int i = 0; i < (int) w.steps.size(); ++i)
+        {
+            w.go (i);
+            juce::PNGImageFormat png;
+            juce::FileOutputStream out (dir.getChildFile ("wizard-" + juce::String (i + 1) + ".png"));
+            if (out.openedOk()) { out.setPosition (0); out.truncate(); png.writeImageToStream (w.createComponentSnapshot (w.getLocalBounds()), out); }
+        }
     }
 
     bool keyPressed (const juce::KeyPress& k) override
@@ -207,7 +228,7 @@ public:
         backButton.setBounds (foot.removeFromRight (110));
         nameEd.setBounds (60, 210, getWidth() - 120, 44);
         artistEd.setBounds (60, 320, getWidth() - 120, 44);
-        layout();
+        layoutStep();
     }
 
     void paint (juce::Graphics& g) override
@@ -231,64 +252,88 @@ public:
         // the step's question
         g.setColour (look.text);
         g.setFont (font (26.0f, true));
-        g.drawText (question(), 30, 60, getWidth() - 60, 34, juce::Justification::centredLeft);
+        g.drawText (question(), 30, 58, getWidth() - 60, 34, juce::Justification::centredLeft);
         g.setColour (look.dim);
         g.setFont (font (15.0f, false));
-        g.drawText (hint(), 30, 94, getWidth() - 60, 20, juce::Justification::centredLeft);
+        g.drawText (hint(), 30, 92, getWidth() - 60, 20, juce::Justification::centredLeft);
 
         switch (steps[(size_t) index])
         {
             case Step::session: paintSession (g); break;
-            case Step::machine: paintMachines (g); break;
-            case Step::tape:    paintTapes (g); break;
-            case Step::nr:      paintNr (g); break;
+            case Step::machine: paintChips (g, "TRACKS"); break;
+            case Step::tape:    paintChips (g, "SPEED"); break;
+            case Step::nr:      break;
             case Step::ready:   paintReady (g); break;
         }
     }
 
     void mouseMove (const juce::MouseEvent& e) override
     {
-        const int h = hitAt (e.getPosition());
-        if (h != hover) { hover = h; repaint(); }
+        const int h = chipAt (e.getPosition());
+        if (h != hoverChip) { hoverChip = h; repaint(); }
         setMouseCursor (h >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
     }
-    void mouseExit (const juce::MouseEvent&) override { hover = -1; repaint(); }
-
+    void mouseExit (const juce::MouseEvent&) override { hoverChip = -1; repaint(); }
     void mouseDown (const juce::MouseEvent& e) override
     {
-        if (const int h = hitAt (e.getPosition()); h >= 0) { items[(size_t) h].pick(); layout(); repaint(); }
-    }
-
-    void mouseDoubleClick (const juce::MouseEvent& e) override
-    {
-        // a double-click on a card picks it and moves on
-        if (const int h = hitAt (e.getPosition()); h >= 0 && items[(size_t) h].card) next();
-    }
-
-    /** (Development: every step as a picture, into a folder.) */
-    static void gallery (const juce::File& dir, const Look& lk)
-    {
-        NewReelChoice c;
-        c.name = "Sea Shanties"; c.artist = "The Pequod Crew"; c.stock = 8; c.machine = 4; c.nr = 1; c.ips = 15.0; c.tracks = 4 * 6;
-        NewReelWizard w (true, c, lk, {}, nullptr);
-        for (int i = 0; i < (int) w.steps.size(); ++i)
-        {
-            w.go (i);
-            juce::PNGImageFormat png;
-            juce::FileOutputStream out (dir.getChildFile ("wizard-" + juce::String (i + 1) + ".png"));
-            if (out.openedOk()) { out.setPosition (0); out.truncate(); png.writeImageToStream (w.createComponentSnapshot (w.getLocalBounds()), out); }
-        }
+        if (const int h = chipAt (e.getPosition()); h >= 0) { chips[(size_t) h].pick(); layoutChips(); repaint(); }
     }
 
 private:
     enum class Step { session, machine, tape, nr, ready };
 
-    struct Item
+    //--------------------------------------------------------------------------
+    /** The cards of a step, in a scrolling list (like the machine room). */
+    struct CardList : juce::Component
+    {
+        explicit CardList (NewReelWizard& o) : owner (o) {}
+        struct Card { int value; juce::Rectangle<int> r; };
+        std::vector<Card> cards;
+        int hover = -1;
+
+        void set (const std::vector<int>& values, int cols, int cardH, int width)
+        {
+            cards.clear();
+            const int gap = 14, cw = (width - (cols - 1) * gap) / cols;
+            for (size_t i = 0; i < values.size(); ++i)
+                cards.push_back ({ values[i], { ((int) i % cols) * (cw + gap), ((int) i / cols) * (cardH + gap), cw, cardH } });
+            const int rows = ((int) values.size() + cols - 1) / cols;
+            setSize (width, rows * (cardH + gap));
+            hover = -1;
+            repaint();
+        }
+        int at (juce::Point<int> p) const
+        {
+            for (size_t i = 0; i < cards.size(); ++i) if (cards[i].r.contains (p)) return (int) i;
+            return -1;
+        }
+        void paint (juce::Graphics& g) override
+        {
+            for (size_t i = 0; i < cards.size(); ++i) owner.paintCard (g, cards[i].r, cards[i].value, (int) i == hover);
+        }
+        void mouseMove (const juce::MouseEvent& e) override
+        {
+            const int h = at (e.getPosition());
+            if (h != hover) { hover = h; repaint(); }
+            setMouseCursor (h >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+        }
+        void mouseExit (const juce::MouseEvent&) override { hover = -1; repaint(); }
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            if (const int h = at (e.getPosition()); h >= 0) { owner.pickCard (cards[(size_t) h].value); repaint(); owner.repaint(); }
+        }
+        void mouseDoubleClick (const juce::MouseEvent& e) override
+        {
+            if (at (e.getPosition()) >= 0) owner.next();     // (a double-click picks it and moves on)
+        }
+        NewReelWizard& owner;
+    };
+
+    struct Chip
     {
         juce::Rectangle<int> r;
-        bool card = false, chosen = false;
-        int value = 0;
         juce::String label;
+        bool chosen = false;
         std::function<void()> pick;
     };
 
@@ -328,9 +373,9 @@ private:
         switch (steps[(size_t) index])
         {
             case Step::session: return "A session holds the reels for one job: an album, a single, a client.";
-            case Step::machine: return "The machine can be changed later. The track count can't.";
-            case Step::tape:    return "The tape stays with the reel for life. Slower tape: bigger low bump, darker top, more hiss.";
-            case Step::nr:      return "Hiss reduction across the whole reel. Can be changed later, and switched per track.";
+            case Step::machine: return "Oldest first. The machine can be changed later; the track count can't.";
+            case Step::tape:    return "Oldest first. The tape stays with the reel for life. Slower tape: bigger low bump, darker top, more hiss.";
+            case Step::nr:      return "Oldest first. Hiss reduction across the whole reel: can be changed later, and switched per track.";
             case Step::ready:   return "Check the box. CREATE threads it up on the deck.";
         }
         return {};
@@ -346,8 +391,12 @@ private:
         if (session) nameEd.grabKeyboardFocus(); else grabKeyboardFocus();
         backButton.setEnabled (index > 0);
         nextButton.setButtonText (index == (int) steps.size() - 1 ? "CREATE" : "NEXT");
-        hover = -1;
-        layout();
+        hoverChip = -1;
+        layoutStep();
+        view.setViewPosition (0, 0);
+        // (the chosen card in view)
+        for (auto& c : list.cards)
+            if (isChosen (c.value)) { view.setViewPosition (0, juce::jmax (0, c.r.getY() - 10)); break; }
         repaint();
     }
 
@@ -376,122 +425,182 @@ private:
 
     void close()
     {
-        if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState (0);
+        if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) { dw->exitModalState (0); return; }
+        if (auto* tw = findParentComponentOfClass<juce::DocumentWindow>()) tw->setVisible (false);     // (MELVILLE's own frame)
     }
 
-    int hitAt (juce::Point<int> p) const
+    //--------------------------------------------------------------------------
+    std::vector<int> valuesFor (Step s) const
     {
-        for (size_t i = 0; i < items.size(); ++i) if (items[i].r.contains (p)) return (int) i;
+        std::vector<int> v;
+        if (s == Step::machine) return tape::multitrackOrder();
+        if (s == Step::tape) return stocksFor (tape::forMultitrack);             // (oldest first, clean last)
+        if (s == Step::nr) for (int k = 0; k < nr::numSystems; ++k) v.push_back (nr::order()[k]);
+        return v;
+    }
+
+    bool isChosen (int value) const
+    {
+        switch (steps[(size_t) index])
+        {
+            case Step::machine: return choice.machine == value;
+            case Step::tape:    return choice.stock == value;
+            case Step::nr:      return choice.nr == value;
+            default:            return false;
+        }
+    }
+
+    void pickCard (int value)
+    {
+        switch (steps[(size_t) index])
+        {
+            case Step::machine: choice.machine = value; break;
+            case Step::tape:    choice.stock = value; break;
+            case Step::nr:      choice.nr = value; break;
+            default: break;
+        }
+    }
+
+    void layoutStep()
+    {
+        const auto s = steps[(size_t) index];
+        const bool cardsHere = s == Step::machine || s == Step::tape || s == Step::nr;
+        view.setVisible (cardsHere);
+        if (cardsHere)
+        {
+            const int bottom = s == Step::nr ? getHeight() - 84 : getHeight() - 136;
+            view.setBounds (30, 124, getWidth() - 60, bottom - 124);
+            const int w = view.getWidth() - view.getScrollBarThickness() - 6;
+            list.set (valuesFor (s), 2, s == Step::machine ? 290 : s == Step::tape ? 210 : 190, w);
+        }
+        layoutChips();
+    }
+
+    void layoutChips()
+    {
+        chips.clear();
+        const int y = getHeight() - 124;
+        auto add = [&] (const juce::StringArray& labels, const std::vector<int>& values, int current, int cw, std::function<void (int)> set)
+        {
+            for (int i = 0; i < labels.size(); ++i)
+            {
+                Chip c;
+                c.r = { 30 + 130 + i * (cw + 8), y, cw, 34 };
+                c.label = labels[i];
+                c.chosen = values[(size_t) i] == current;
+                const int v = values[(size_t) i];
+                c.pick = [set, v] { set (v); };
+                chips.push_back (c);
+            }
+        };
+        const auto s = steps[(size_t) index];
+        if (s == Step::machine)
+            add ({ "8", "16", "24", "32", "48", "64", "72", "96" }, { 8, 16, 24, 32, 48, 64, 72, 96 }, choice.tracks, 74,
+                 [this] (int v) { choice.tracks = v; });
+        else if (s == Step::tape)
+            add ({ juce::String (juce::CharPointer_UTF8 ("7\xc2\xbd ips")), "15 ips", "30 ips" }, { 75, 150, 300 },
+                 (int) std::round (choice.ips * 10.0), 96, [this] (int v) { choice.ips = v / 10.0; });
+    }
+
+    int chipAt (juce::Point<int> p) const
+    {
+        for (size_t i = 0; i < chips.size(); ++i) if (chips[i].r.contains (p)) return (int) i;
         return -1;
     }
 
-    /** The cards and chips on this step, where they go and what a click does. */
-    void layout()
+    //--------------------------------------------------------------------------
+    // the cards
+    void cardFrame (juce::Graphics& g, juce::Rectangle<int> r, bool chosen, bool hot) const
     {
-        items.clear();
-        const int x0 = 30, w = getWidth() - 60;
-        auto chips = [&] (int y, const juce::String& title, const juce::StringArray& labels, const std::vector<int>& values,
-                          int current, std::function<void (int)> set, int cw = 74)
-        {
-            juce::ignoreUnused (title);
-            const int gap = 8;
-            for (int i = 0; i < labels.size(); ++i)
-            {
-                Item it;
-                it.r = { x0 + 130 + i * (cw + gap), y, cw, 34 };
-                it.label = labels[i];
-                it.value = values[(size_t) i];
-                it.chosen = values[(size_t) i] == current;
-                const int v = values[(size_t) i];
-                it.pick = [set, v] { set (v); };
-                items.push_back (it);
-            }
-        };
+        g.setColour (look.panel);
+        g.fillRoundedRectangle (r.toFloat(), 6.0f);
+        g.setColour (chosen ? look.accent : hot ? look.dim : look.panel.brighter (0.15f));
+        g.drawRoundedRectangle (r.toFloat().reduced (1.0f), 6.0f, chosen ? 2.5f : 1.0f);
+    }
 
+    /** Name (with IN USE / CHOSEN), where and when, the story, and the sound: as in the machine room. */
+    void cardText (juce::Graphics& g, juce::Rectangle<int> a, bool chosen, const juce::String& name, const juce::String& maker,
+                   const juce::String& story, const juce::String& sound, int storyLines) const
+    {
+        auto title = a.removeFromTop (22);
+        if (chosen)
+        {
+            g.setColour (look.accent);
+            g.setFont (font (12.0f, true));
+            g.drawText ("CHOSEN", title.removeFromRight (70), juce::Justification::centredRight);
+        }
+        g.setColour (look.text);
+        g.setFont (font (16.0f, true));
+        g.drawFittedText (name, title, juce::Justification::centredLeft, 1, 0.8f);
+        g.setColour (look.dim);
+        g.setFont (font (12.0f, true));
+        g.drawFittedText (maker, a.removeFromTop (17), juce::Justification::centredLeft, 1, 0.8f);
+        a.removeFromTop (4);
+        if (story.isNotEmpty())
+        {
+            g.setColour (look.text.withAlpha (0.9f));
+            g.setFont (font (13.0f, false));
+            g.drawFittedText (story, a.removeFromTop (storyLines * 17), juce::Justification::topLeft, storyLines, 1.0f);
+        }
+        if (sound.isNotEmpty())
+        {
+            g.setColour (look.accent.brighter (0.2f));
+            g.setFont (font (13.0f, true));
+            g.drawFittedText ("Sound: " + sound, a, juce::Justification::topLeft, 3, 1.0f);
+        }
+    }
+
+    void paintCard (juce::Graphics& g, juce::Rectangle<int> r, int value, bool hot) const
+    {
+        const bool chosen = isChosen (value);
+        cardFrame (g, r, chosen, hot);
+        auto a = r.reduced (12);
         switch (steps[(size_t) index])
         {
-            case Step::session: break;
             case Step::machine:
             {
-                const int cols = 4, gap = 10, cw = (w - (cols - 1) * gap) / cols, ch = 150;
-                int n = 0;
-                for (int m : multitrackOrder())      // oldest first, digital last
-                {
-                    Item it;
-                    it.card = true;
-                    it.r = { x0 + (n % cols) * (cw + gap), 130 + (n / cols) * (ch + gap), cw, ch };
-                    it.value = m;
-                    it.chosen = choice.machine == m;
-                    it.pick = [this, m] { choice.machine = m; };
-                    items.push_back (it);
-                    ++n;
-                }
-                chips (636, "TRACKS", { "8", "16", "24", "32", "48", "64", "72", "96" }, { 8, 16, 24, 32, 48, 64, 72, 96 },
-                       choice.tracks, [this] (int v) { choice.tracks = v; });
+                drawMachinePreview (g, a.removeFromTop (106).toFloat(), MachineSkin::multitrack (value));
+                a.removeFromTop (8);
+                const auto& st = multitrackStory (value);
+                cardText (g, a, chosen, tape::multitrackMachine (value).name, st.maker, st.history, st.sound, 5);
                 break;
             }
             case Step::tape:
             {
-                const int cols = 6, gap = 12, cw = (w - (cols - 1) * gap) / cols, ch = 180;
-                for (size_t n = 0; n < stocks.size(); ++n)
-                {
-                    Item it;
-                    it.card = true;
-                    it.r = { x0 + ((int) n % cols) * (cw + gap), 128 + ((int) n / cols) * (ch + gap), cw, ch };
-                    it.value = stocks[n];
-                    it.chosen = choice.stock == stocks[n];
-                    const int s = stocks[n];
-                    it.pick = [this, s] { choice.stock = s; };
-                    items.push_back (it);
-                }
-                chips (556, "SPEED", { juce::String (juce::CharPointer_UTF8 ("7\xc2\xbd ips")), "15 ips", "30 ips" }, { 75, 150, 300 },
-                       (int) std::round (choice.ips * 10.0), [this] (int v) { choice.ips = v / 10.0; }, 96);
+                auto pic = a.removeFromLeft (150);
+                drawTapeBox (g, pic.toFloat().withSizeKeepingCentre (150.0f, 150.0f), value, font (13.0f, true));
+                a.removeFromLeft (14);
+                const auto& info = tape::info ((tape::Stock) value);
+                cardText (g, a, chosen, info.name, tape::era ((tape::Stock) value), info.description, {}, 9);
                 break;
             }
             case Step::nr:
             {
-                const int cols = nr::numSystems, gap = 14, cw = (w - (cols - 1) * gap) / cols, ch = 290;
-                for (int n = 0; n < nr::numSystems; ++n)
-                {
-                    Item it;
-                    it.card = true;
-                    it.r = { x0 + n * (cw + gap), 136, cw, ch };
-                    it.value = n;
-                    it.chosen = choice.nr == n;
-                    it.pick = [this, n] { choice.nr = n; };
-                    items.push_back (it);
-                }
+                drawNrUnit (g, a.removeFromTop (74).toFloat(), value, font (12.0f, true));
+                a.removeFromTop (10);
+                cardText (g, a, chosen, nr::info (value).name, nr::era (value), nr::info (value).description, {}, 5);
                 break;
             }
-            case Step::ready: break;
+            default: break;
         }
     }
 
-    void cardFrame (juce::Graphics& g, const Item& it, bool hot) const
+    void paintChips (juce::Graphics& g, const juce::String& title) const
     {
-        auto r = it.r.toFloat();
-        g.setColour (look.panel);
-        g.fillRoundedRectangle (r, 6.0f);
-        g.setColour (it.chosen ? look.accent : hot ? look.dim : look.panel.brighter (0.15f));
-        g.drawRoundedRectangle (r.reduced (1.0f), 6.0f, it.chosen ? 2.5f : 1.0f);
-    }
-
-    void paintChips (juce::Graphics& g, const juce::String& title, int y) const
-    {
+        if (chips.empty()) return;
         g.setColour (look.dim);
         g.setFont (font (14.0f, true));
-        g.drawText (title, 30, y, 120, 34, juce::Justification::centredLeft);
-        for (size_t i = 0; i < items.size(); ++i)
+        g.drawText (title, 30, chips.front().r.getY(), 120, 34, juce::Justification::centredLeft);
+        for (size_t i = 0; i < chips.size(); ++i)
         {
-            const auto& it = items[i];
-            if (it.card) continue;
-            auto r = it.r.toFloat();
-            g.setColour (it.chosen ? look.accent : look.panel);
+            const auto& c = chips[i];
+            auto r = c.r.toFloat();
+            g.setColour (c.chosen ? look.accent : look.panel);
             g.fillRoundedRectangle (r, 4.0f);
-            if (! it.chosen && (int) i == hover) { g.setColour (look.dim); g.drawRoundedRectangle (r.reduced (0.5f), 4.0f, 1.0f); }
-            g.setColour (it.chosen ? look.onAccent : look.text);
+            if (! c.chosen && (int) i == hoverChip) { g.setColour (look.dim); g.drawRoundedRectangle (r.reduced (0.5f), 4.0f, 1.0f); }
+            g.setColour (c.chosen ? look.onAccent : look.text);
             g.setFont (font (15.0f, true));
-            g.drawText (it.label, it.r, juce::Justification::centred);
+            g.drawText (c.label, c.r, juce::Justification::centred);
         }
     }
 
@@ -502,80 +611,16 @@ private:
         g.drawText ("SESSION NAME", 60, 184, 300, 20, juce::Justification::centredLeft);
         g.drawText ("ARTIST", 60, 294, 300, 20, juce::Justification::centredLeft);
         // a stack of tape boxes, waiting
-        auto shelf = juce::Rectangle<float> (60.0f, 410.0f, (float) getWidth() - 120.0f, 150.0f);
-        const int show[] = { 5, 8, 9, 10, 1, 4 };
+        auto shelf = juce::Rectangle<float> (60.0f, 420.0f, (float) getWidth() - 120.0f, 150.0f);
+        const int show[] = { 8, 5, 3, 9, 10, 1 };
         const float bw = 120.0f, gap = (shelf.getWidth() - 6 * bw) / 5.0f;
         for (int i = 0; i < 6; ++i)
             drawTapeBox (g, { shelf.getX() + (float) i * (bw + gap), shelf.getY(), bw, bw }, show[i], font (12.0f, true));
     }
 
-    void paintMachines (juce::Graphics& g) const
-    {
-        for (size_t i = 0; i < items.size(); ++i)
-        {
-            const auto& it = items[i];
-            if (! it.card) continue;
-            cardFrame (g, it, (int) i == hover);
-            auto a = it.r.reduced (8);
-            drawMachinePreview (g, a.removeFromTop (84).toFloat(), MachineSkin::multitrack (it.value));
-            a.removeFromTop (5);
-            g.setColour (look.text);
-            g.setFont (font (15.0f, true));
-            g.drawFittedText (tape::multitrackMachine (it.value).name, a.removeFromTop (20), juce::Justification::centredLeft, 1, 0.8f);
-            g.setColour (look.dim);
-            g.setFont (font (12.0f, false));
-            g.drawFittedText (multitrackStory (it.value).maker, a.removeFromTop (18), juce::Justification::centredLeft, 1, 0.8f);
-        }
-        // what the chosen machine sounds like
-        g.setColour (look.text.withAlpha (0.9f));
-        g.setFont (font (14.0f, false));
-        g.drawFittedText (multitrackStory (choice.machine).sound, 30, 606, getWidth() - 60, 22, juce::Justification::centredLeft, 1, 0.8f);
-        paintChips (g, "TRACKS", 636);
-    }
-
-    void paintTapes (juce::Graphics& g) const
-    {
-        for (size_t i = 0; i < items.size(); ++i)
-        {
-            const auto& it = items[i];
-            if (! it.card) continue;
-            cardFrame (g, it, (int) i == hover);
-            auto a = it.r.reduced (10);
-            drawTapeBox (g, a.removeFromTop (118).toFloat(), it.value, font (12.0f, true));
-            a.removeFromTop (6);
-            g.setColour (look.text);
-            g.setFont (font (13.5f, true));
-            g.drawFittedText (tape::info ((tape::Stock) it.value).name, a, juce::Justification::centredTop, 2, 0.8f);
-        }
-        // what the chosen tape sounds like
-        g.setColour (look.text.withAlpha (0.9f));
-        g.setFont (font (14.0f, false));
-        g.drawFittedText (tape::info ((tape::Stock) choice.stock).description, 30, 506, getWidth() - 60, 42,
-                          juce::Justification::topLeft, 2, 0.9f);
-        paintChips (g, "SPEED", 556);
-    }
-
-    void paintNr (juce::Graphics& g) const
-    {
-        for (size_t i = 0; i < items.size(); ++i)
-        {
-            const auto& it = items[i];
-            cardFrame (g, it, (int) i == hover);
-            auto a = it.r.reduced (14);
-            drawNrUnit (g, a.removeFromTop (110).toFloat(), it.value, font (12.0f, true));
-            a.removeFromTop (12);
-            g.setColour (look.text);
-            g.setFont (font (17.0f, true));
-            g.drawText (nr::info (it.value).name, a.removeFromTop (24), juce::Justification::centredLeft);
-            g.setColour (look.text.withAlpha (0.85f));
-            g.setFont (font (13.0f, false));
-            g.drawFittedText (nr::info (it.value).description, a, juce::Justification::topLeft, 8, 0.9f);
-        }
-    }
-
     void paintReady (juce::Graphics& g) const
     {
-        // the box, the machine, and the label on the box
+        // the box, the machine and the rack, and the label on the box
         drawTapeBox (g, { 40.0f, 140.0f, 300.0f, 300.0f }, choice.stock, font (20.0f, true));
         drawMachinePreview (g, { 380.0f, 140.0f, 300.0f, 130.0f }, MachineSkin::multitrack (choice.machine));
         drawNrUnit (g, { 380.0f, 300.0f, 300.0f, 90.0f }, choice.nr, font (12.0f, true));
@@ -583,24 +628,33 @@ private:
         auto label = juce::Rectangle<float> (720.0f, 140.0f, (float) getWidth() - 760.0f, 300.0f);
         g.setColour (juce::Colour (0xfff1ead6));
         g.fillRoundedRectangle (label, 3.0f);
-        g.setColour (juce::Colour (0xff9db4c9));
-        for (float y = label.getY() + 52.0f; y < label.getBottom() - 10.0f; y += 34.0f)
-            g.drawHorizontalLine ((int) y, label.getX() + 10.0f, label.getRight() - 10.0f);
+        const juce::Colour rule (0xff9db4c9), ink (0xff1b2a6b), key (0xff5d6a7a);
         auto l = label.reduced (14.0f, 12.0f);
-        g.setColour (juce::Colour (0xff1b2a6b));
+        auto ruled = [&] (juce::Rectangle<float> r)      // (the ruled line under a line of writing)
+        {
+            g.setColour (rule);
+            g.drawHorizontalLine ((int) r.getBottom() + 2, label.getX() + 10.0f, label.getRight() - 10.0f);
+        };
+        auto t1 = l.removeFromTop (26.0f);
+        g.setColour (ink);
         g.setFont (font (18.0f, true));
-        g.drawFittedText (forSession.isNotEmpty() ? forSession : choice.name, l.removeFromTop (24).toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
+        g.drawFittedText (forSession.isNotEmpty() ? forSession : choice.name, t1.toNearestInt(), juce::Justification::bottomLeft, 1, 0.7f);
+        ruled (t1);
+        auto t2 = l.removeFromTop (24.0f);
+        g.setColour (ink);
         g.setFont (font (13.0f, false));
         g.drawText (forSession.isNotEmpty() ? juce::String ("NEW REEL") : (choice.artist.isNotEmpty() ? choice.artist : juce::String ("-")),
-                    l.removeFromTop (18), juce::Justification::centredLeft);
-        l.removeFromTop (8);
+                    t2, juce::Justification::bottomLeft);
+        ruled (t2);
+        l.removeFromTop (4.0f);
         auto row = [&] (const juce::String& k, const juce::String& v)
         {
             auto r = l.removeFromTop (34.0f);
-            g.setColour (juce::Colour (0xff5d6a7a));
+            ruled (r);
+            g.setColour (key);
             g.setFont (font (11.0f, true));
             g.drawText (k, r.removeFromLeft (70.0f), juce::Justification::bottomLeft);
-            g.setColour (juce::Colour (0xff1b2a6b));
+            g.setColour (ink);
             g.setFont (font (15.0f, true));
             g.drawFittedText (v, r.toNearestInt(), juce::Justification::bottomLeft, 1, 0.7f);
         };
@@ -621,22 +675,31 @@ private:
     juce::String forSession;
     std::function<void (const NewReelChoice&)> onCreate;
     std::vector<Step> steps;
-    std::vector<int> stocks;
-    std::vector<Item> items;
-    int index = 0, hover = -1;
+    std::vector<Chip> chips;
+    int index = 0, hoverChip = -1;
+    CardList list;
+    juce::Viewport view;
     juce::TextEditor nameEd, artistEd;
     juce::TextButton backButton { "BACK" }, nextButton { "NEXT" }, cancelButton { "CANCEL" };
 
     JUCE_DECLARE_NON_COPYABLE (NewReelWizard)
 };
 
-/** Opens the wizard in a modal window over `over`. */
+/** Opens the wizard over `over`: in MELVILLE's own window frame inside MELVILLE, else a modal window. */
 inline void showNewReelWizard (juce::Component* over, const juce::String& title, bool withSession, const NewReelChoice& start,
                                const NewReelWizard::Look& look, const juce::String& sessionName,
                                std::function<void (const NewReelChoice&)> onCreate)
 {
+    auto* wizard = new NewReelWizard (withSession, start, look, sessionName, std::move (onCreate));
+   #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
+    if (melville::isHosted())
+    {
+        melville::showPanel (std::unique_ptr<juce::Component> (wizard), title, "hawthorne");
+        return;
+    }
+   #endif
     juce::DialogWindow::LaunchOptions o;
-    o.content.setOwned (new NewReelWizard (withSession, start, look, sessionName, std::move (onCreate)));
+    o.content.setOwned (wizard);
     o.dialogTitle = title;
     o.dialogBackgroundColour = look.bg;
     o.componentToCentreAround = over;

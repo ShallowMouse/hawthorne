@@ -77,29 +77,52 @@ struct ReelDialog : juce::AlertWindow
 
     void addMachinePicker (const juce::String& id, const juce::String& label, bool twoTrack, int current)
     {
+        // (oldest first)
+        const auto& order = twoTrack ? tape::masterOrder() : tape::multitrackOrder();
         juce::StringArray names;
-        const int count = twoTrack ? tape::numMasterMachines : tape::numMultitrackMachines;
-        for (int i = 0; i < count; ++i)
-            names.add ((twoTrack ? tape::masterMachine (i) : tape::multitrackMachine (i)).name);
-        addPicker (id, label, names, current, [twoTrack] (int i)
+        int sel = 0;
+        for (size_t k = 0; k < order.size(); ++k)
         {
-            return juce::String ((twoTrack ? tape::masterMachine (i) : tape::multitrackMachine (i)).description);
+            names.add ((twoTrack ? tape::masterMachine (order[k]) : tape::multitrackMachine (order[k])).name);
+            if (order[k] == current) sel = (int) k;
+        }
+        addPicker (id, label, names, sel, [twoTrack, &order] (int k)
+        {
+            const int m = order[(size_t) juce::jlimit (0, (int) order.size() - 1, k)];
+            return juce::String ((twoTrack ? tape::masterMachine (m) : tape::multitrackMachine (m)).description);
         }, 64);
+        machineOrders[id] = twoTrack;
     }
+
+    /** The machine chosen in a machine picker. */
+    int machineAt (const juce::String& id)
+    {
+        const bool twoTrack = machineOrders.count (id) > 0 && machineOrders[id];
+        const auto& order = twoTrack ? tape::masterOrder() : tape::multitrackOrder();
+        auto* c = getComboBoxComponent (id);
+        return c == nullptr ? 0 : order[(size_t) juce::jlimit (0, (int) order.size() - 1, c->getSelectedItemIndex())];
+    }
+    std::map<juce::String, bool> machineOrders;
 
     void addNrPicker (const juce::String& id, int current)
     {
         juce::StringArray names;
-        for (int i = 0; i < nr::numSystems; ++i) names.add (nr::info (i).name);
-        addPicker (id, "Noise reduction (can be changed later):", names, current,
-                   [] (int i) { return juce::String (nr::info (i).description); }, 64);
+        int sel = 0;
+        for (int k = 0; k < nr::numSystems; ++k)
+        {
+            names.add (nr::info (nr::order()[k]).name);
+            if (nr::order()[k] == current) sel = k;
+        }
+        addPicker (id, "Noise reduction (can be changed later):", names, sel,
+                   [] (int k) { return juce::String (nr::info (nr::order()[juce::jlimit (0, nr::numSystems - 1, k)]).description); }, 64);
     }
 
     /** Puts the chosen NR on a new reel (and its tape box field). */
     template <typename ReelT>
     void applyNr (const juce::String& id, ReelT& reel)
     {
-        const int s = getComboBoxComponent (id) != nullptr ? getComboBoxComponent (id)->getSelectedItemIndex() : 0;
+        const int k = getComboBoxComponent (id) != nullptr ? getComboBoxComponent (id)->getSelectedItemIndex() : nr::numSystems - 1;
+        const int s = nr::order()[juce::jlimit (0, nr::numSystems - 1, k)];
         reel.noiseReduction = juce::jlimit (0, nr::numSystems - 1, s);
         if (s != nr::none) reel.info.set ("Noise Reduction", nr::info (s).name);
     }

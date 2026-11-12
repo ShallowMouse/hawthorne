@@ -60,6 +60,15 @@ namespace nr
         };
         return i[juce::jlimit (0, numSystems - 1, s)];
     }
+    /** The order they're offered in: oldest first (Dolby A 1966, dbx 1971, Dolby SR 1986), none last. */
+    inline const int* order() { static const int o[numSystems] = { 1, 3, 2, 0 }; return o; }
+    /** Where each came from, and when. */
+    inline const char* era (int s)
+    {
+        static const char* e[numSystems] = { "No unit in the rack", "Dolby Laboratories  -  England  -  1966",
+                                             "Dolby Laboratories  -  1986", "dbx  -  USA  -  1971" };
+        return e[juce::jlimit (0, numSystems - 1, s)];
+    }
 
     //==========================================================================
     /** First-order section y = b0 x + z (positive-real, so the decoder's feedback is always stable). */
