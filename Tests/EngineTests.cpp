@@ -2341,6 +2341,88 @@ static void testReversePlay()
     e.setReel (nullptr);
 }
 
+static void testReverseRecord()
+{
+    std::printf ("[26] reverse recording: REVERSE latched, the take laid onto the tape backwards\n");
+    juce::String err;
+    auto reel = Reel::create (makeTempDir ("reverse-rec"), "ReverseRec", kSR, 8, err);
+    const int len = (int) (20 * kSR);
+    for (int t = 0; t < 2; ++t)
+    {
+        // tracks 1 and 2: every sample says where it is on the tape
+        const auto f = reel->getTapeFile (t);
+        f.getParentDirectory().createDirectory();
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::OutputStream> os (f.createOutputStream().release());
+        std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (os.get(), kSR, 1, 24, {}, 0));
+        os.release();
+        juce::AudioBuffer<float> b (1, len);
+        for (int i = 0; i < len; ++i) b.setSample (0, i, encode (0, i));
+        w->writeFromAudioSampleBuffer (b, 0, len);
+    }
+    TapeEngine e;
+    e.setReel (reel.get());
+    prepareEngine (e, 512, 8);
+    for (int t = 0; t < 8; ++t) { e.setTrackToMix (t, false); e.setTrackOutputs (t, {}); }
+    e.setArmed (1, true);
+
+    juce::AudioBuffer<float> in (8, 512), out (4, 512);
+    in.clear();
+    int64 played = 0;
+    auto run = [&] (double seconds)
+    {
+        for (int b = 0; b < (int) (seconds * kSR / 512); ++b)
+        {
+            for (int k = 0; k < 512; ++k) in.setSample (1, k, encode (1, played + k));   // track 2's input counts the samples played
+            e.process (in.getArrayOfReadPointers(), 8, out.getArrayOfWritePointers(), 4, 512);
+            played += 512;
+            if (b % 4 == 0) { e.tick(); juce::Thread::sleep (4); }
+        }
+    };
+
+    const auto start = (int64) (12 * kSR);
+    e.locate (start);
+    CHECK (e.setReverseMode (true).isEmpty() && e.getReverseMode(), "REVERSE latches");
+    CHECK (! e.isPlaying(), "latching REVERSE doesn't roll the tape");
+    CHECK (e.autoRecord().isNotEmpty(), "no auto punch backwards");
+    CHECK (e.record().isEmpty() && e.isRecording() && e.isReversing(), "REC with REVERSE lit records backwards");
+    run (4.0);
+    CHECK (e.getPosition() < start - (int64) (3.5 * kSR), "the tape ran back while recording (%.2f s)", (double) e.getPosition() / kSR);
+    e.stop();
+    CHECK (! e.isRecording() && ! e.isPlaying() && e.getReverseMode(), "STOP stops; REVERSE stays lit");
+
+    const auto tape = readTape (*reel, 1);
+    // Sample c of the pass was played with the tape at (start - c), and belongs `latency` further on.
+    const auto mid = start - (int64) (2 * kSR);
+    const auto high = decode (1, tape[(size_t) mid]) + mid;
+    std::printf ("    first sample of the pass at %lld (%lld after where REC was pressed: the latency)\n",
+                 (long long) high, (long long) (high - start));
+    CHECK (high > start && high - start < 4096, "the take sits where it was played (%lld)", (long long) (high - start));
+
+    int64 newWrong = 0, newChecked = 0, oldWrong = 0, oldChecked = 0, lowEdge = high;
+    for (int64 p = mid; p >= 0 && matches (1, tape[(size_t) p], high - p); --p) lowEdge = p;
+    for (int64 p = lowEdge + 2000; p <= high - 2000; ++p, ++newChecked) if (! matches (1, tape[(size_t) p], high - p)) ++newWrong;
+    for (int64 p = 0; p < lowEdge - 2000; ++p, ++oldChecked)            if (! matches (0, tape[(size_t) p], p)) ++oldWrong;
+    for (int64 p = high + 2000; p < (int64) tape.size() && p < len; ++p, ++oldChecked) if (! matches (0, tape[(size_t) p], p)) ++oldWrong;
+    CHECK (newChecked > (int64) (3 * kSR) && newWrong == 0, "the take, reversed, sample by sample (%lld wrong of %lld)", (long long) newWrong, (long long) newChecked);
+    CHECK (oldWrong == 0, "the tape either side untouched (%lld wrong of %lld)", (long long) oldWrong, (long long) oldChecked);
+    std::printf ("    %.2f s laid down backwards from %.2f s to %.2f s: %lld wrong; the tape either side intact\n",
+                 (double) (high - lowEdge + 1) / kSR, (double) lowEdge / kSR, (double) high / kSR, (long long) newWrong);
+
+    const auto t0 = readTape (*reel, 0);
+    int64 t0Wrong = 0;
+    for (int64 p = 0; p < len && p < (int64) t0.size(); ++p) if (! matches (0, t0[(size_t) p], p)) ++t0Wrong;
+    CHECK (t0Wrong == 0, "the unarmed track untouched (%lld)", (long long) t0Wrong);
+
+    CHECK (! reel->takeLog.empty() && reel->takeLog.back().end == high + 1, "take sheet: ends where the pass began (%lld vs %lld)",
+           reel->takeLog.empty() ? -1LL : (long long) reel->takeLog.back().end, (long long) (high + 1));
+
+    CHECK (e.setReverseMode (false).isEmpty() && ! e.getReverseMode(), "REVERSE off");
+    CHECK (e.play().isEmpty() && e.isPlaying() && ! e.isReversing(), "PLAY plays forwards again");
+    e.stop();
+    e.setReel (nullptr);
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -2356,6 +2438,7 @@ int main()
         if (only.contains ("23")) testNoiseReduction();
         if (only.contains ("24")) testAlignment();
         if (only.contains ("25")) testReversePlay();
+        if (only.contains ("26")) testReverseRecord();
         if (only.contains ("3"))  testTapeMachine();
         std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURE(S)\n", failures);
         return failures == 0 ? 0 : 1;
@@ -2381,6 +2464,7 @@ int main()
     testNoiseReduction();
     testAlignment();
     testReversePlay();
+    testReverseRecord();
    #if JUCE_LINUX || JUCE_MAC
     testCrashRecovery();
    #endif

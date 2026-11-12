@@ -330,7 +330,7 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     if (fadeOutReq.exchange (false) && recording.load() && ! fadeOutActive)
     {
         auto* cp = pass.load();
-        if (cp != nullptr && cp->mode.load() == 1 && playing.load())
+        if (cp != nullptr && cp->mode.load() == 1 && ! cp->reverse && playing.load())
         {
             fadeOutActive = true;
             fadeOutLeft = fadeLen;
@@ -500,7 +500,18 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
             masterRec[(size_t) side].reset (0x2468ACEu + (uint32_t) side);
             masterEnc[(size_t) side].reset();
         }
-        if (rp->rate == 1.0 && posFrac == 0.0)
+        if (rp->reverse)
+        {
+            // backwards at speed, on whole samples: each sample is heard `latency` later,
+            // when the tape has run on (back) past where it belongs
+            posFrac = 0.0;
+            rp->trackStart.store (pos + rp->latency);
+            rp->masterStart.store (pos + rp->masterLatency);
+            rp->mode.store (1);
+            fadeInLeft = 0;
+            fadeOutActive = false;
+        }
+        else if (rp->rate == 1.0 && posFrac == 0.0)
         {
             rp->trackStart.store (pos - rp->latency);
             rp->masterStart.store (pos - rp->masterLatency);
@@ -1047,6 +1058,7 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         {
             playing = false;            // backwards off the head of the reel: it stops there
             reverseA = false;
+            if (recording.load()) { recording = false; passEnded = true; }   // (a backwards take ends there too)
             reverseHold = 0;
             reverseFeed.setActive (false);
         }
@@ -1281,6 +1293,8 @@ juce::String TapeEngine::checkCanRoll() const
 
 juce::String TapeEngine::play()
 {
+    if (reverseLatch.load())
+        return playReverse();       // REVERSE is latched: PLAY plays backwards
     if (playing)
     {
         reverseA = false;           // rolling backwards: turn round, forwards again
@@ -1328,10 +1342,63 @@ juce::String TapeEngine::playReverse()
     return {};
 }
 
+juce::String TapeEngine::setReverseMode (bool on)
+{
+    if (on == reverseLatch.load())
+        return {};
+    if (on)
+    {
+        if (recording)
+            return "Hawthorne is recording forwards - punch out first, then switch to REVERSE.";
+        if (chaseSource.load() != 0)
+            return "Hawthorne is chasing timecode - the tape can't run backwards while it follows another clock.";
+        if (playing && ! reverseA.load())
+            if (auto err = playReverse(); err.isNotEmpty())
+                return err;
+        reverseLatch = true;
+        return {};
+    }
+    reverseLatch = false;
+    if (recording && reverseA.load())
+        punchOut();
+    if (playing && reverseA.load())
+        reverseA = false;           // turn round: forwards again
+    return {};
+}
+
+juce::String TapeEngine::recordReverse()
+{
+    if (chaseSource.load() != 0)
+        return "Hawthorne is chasing timecode - it can't record backwards while it follows another clock.";
+    if (std::abs (targetRate.load() - 1.0) > 1.0e-9)
+        return "Recording backwards runs the tape at the reel's own speed.\nTurn varispeed off and set the deck to the reel's speed.";
+    if (auto err = checkCanRoll(); err.isNotEmpty())
+        return err;
+
+    windCancel();
+    apSession = false;
+    if (auto err = beginRecordPass (false, true); err.isNotEmpty())
+        return err;
+
+    if (! reverseA.load())
+    {
+        reverseFeed.prime (position.load());
+        reverseFeed.setActive (true);
+        reverseA = true;
+    }
+    if (! playing)
+        currentRate = -1.0;
+    recording = true;
+    playing = true;
+    return {};
+}
+
 juce::String TapeEngine::record()
 {
     if (recording)
         return {};
+    if (reverseLatch.load())
+        return recordReverse();
     if (reverseA.load() || (playing && currentRate.load() < 0.0))
         return "The tape is playing backwards - play it forwards to record.";
 
@@ -1620,6 +1687,8 @@ void TapeEngine::updateLoopRegion()
 juce::String TapeEngine::autoRecord()
 {
     if (reel == nullptr || recording || apSession) return {};
+    if (reverseLatch.load())
+        return "Auto punch runs forwards - switch REVERSE off first.";
     if (reel->punchIn < 0 || reel->punchOut <= reel->punchIn)
         return "Set the punch IN and OUT points first.";
     if (auto err = checkCanRoll(); err.isNotEmpty())
@@ -1656,6 +1725,12 @@ juce::String TapeEngine::autoRecord()
 
 void TapeEngine::punchOutSmooth()
 {
+    if (ownedPass != nullptr && ownedPass->reverse)
+    {
+        apSession = false;
+        punchOut();                 // a backwards pass is crossfaded when it's written to the tape
+        return;
+    }
     if (recording && playing && pass.load() != nullptr)
     {
         fadeOutReq = true;        // the audio thread crossfades and ends the pass; tick() tidies up
@@ -1969,7 +2044,7 @@ double TapeEngine::getRecordTimeRemainingSeconds() const
 //==============================================================================
 // Message thread: record passes
 
-juce::String TapeEngine::beginRecordPass (bool pendingStart)
+juce::String TapeEngine::beginRecordPass (bool pendingStart, bool reverse)
 {
     jassert (ownedPass == nullptr);
 
@@ -2025,8 +2100,9 @@ juce::String TapeEngine::beginRecordPass (bool pendingStart)
                      + (juce::isPositiveAndBelow (reel->activeMaster, (int) reel->masters.size())
                           && reel->masters[(size_t) reel->activeMaster].stock != 0
                           && reel->masterMachine != tape::noMasterMachine ? tape::HalfBand::latency : 0);
-    p->rate = targetRate.load();
-    p->crossfade = pendingStart || playing.load();
+    p->reverse = reverse;
+    p->rate = reverse ? -targetRate.load() : targetRate.load();
+    p->crossfade = ! reverse && (pendingStart || playing.load());
     p->rsChannel.fill (-1);
     {
         int ch = 0;
@@ -2034,8 +2110,8 @@ juce::String TapeEngine::beginRecordPass (bool pendingStart)
             if (armed[(size_t) t]) p->rsChannel[(size_t) t] = ch++;
         // Both resamplers are ready even if the pass turns out to go straight to tape
         // (decided on the first audio block, where the exact tape position is known).
-        p->trackRs.prepare (juce::jmax (1, ch), p->rate, vsChunk);
-        p->masterRs.prepare (2, p->rate, vsChunk);
+        p->trackRs.prepare (juce::jmax (1, ch), std::abs (p->rate), vsChunk);    // (a backwards pass never resamples)
+        p->masterRs.prepare (2, std::abs (p->rate), vsChunk);
     }
 
     auto abandon = [&p]
@@ -2050,10 +2126,19 @@ juce::String TapeEngine::beginRecordPass (bool pendingStart)
             return nullptr;
 
         auto tape = std::make_unique<TapeFile>();
-        if (! tape->open (file, sr, err))
+        if (! reverse)
+        {
+            if (! tape->open (file, sr, err))
+                return nullptr;
+            return std::make_shared<RecordingStream> (std::move (tape), file, fifoSize, flushInterval, startAt, 0);
+        }
+        // backwards: the pass goes to a scratch file first, and onto the tape reversed at the end
+        const auto scratch = juce::File::getSpecialLocation (juce::File::tempDirectory).getNonexistentChildFile ("hawthorne-reverse", ".wav");
+        if (! TapeFile::createEmpty (scratch, sr, err) || ! tape->open (scratch, sr, err))
             return nullptr;
-
-        return std::make_shared<RecordingStream> (std::move (tape), file, fifoSize, flushInterval, startAt, 0);
+        auto s = std::make_shared<RecordingStream> (std::move (tape), file, fifoSize, flushInterval, startAt, 0);
+        s->setReverse (scratch, sr);
+        return s;
     };
 
     for (int t = 0; t < numTracks.load(); ++t)
@@ -2166,8 +2251,8 @@ void TapeEngine::endRecordPass()
         e.take   = reel->nextTake++;
         e.when   = (juce::Time::getCurrentTime() - juce::RelativeTime::seconds ((double) passLength / reel->sampleRate))
                        .formatted ("%d %b %Y  %H:%M");
-        e.start  = juce::jmax ((juce::int64) 0, first);
-        e.end    = first + passLength;
+        e.start  = juce::jmax ((juce::int64) 0, p->reverse ? first - passLength + 1 : first);
+        e.end    = p->reverse ? first + 1 : first + passLength;
 
         // "1-4, 7" style track list
         juce::StringArray parts;

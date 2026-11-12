@@ -32,16 +32,18 @@ namespace hawthorne
 namespace tape
 {
     // Saved by number: only ever add to the end.
-    enum class Stock { clean = 0, us456, highOutput, vintage, european, emitape, mastering499, sm900, emi888, emi811, emi815 };
-    constexpr int numStocks = 11;
+    enum class Stock { clean = 0, us456, highOutput, vintage, european, emitape, mastering499, sm900, emi888, emi811, emi815, scotch111, basfLgs };
+    constexpr int numStocks = 13;
     /** The order they're offered in: oldest first (clean goes last). */
-    inline constexpr Stock menuOrder[] = { Stock::emi888, Stock::emitape, Stock::emi811, Stock::emi815, Stock::vintage,
+    inline constexpr Stock menuOrder[] = { Stock::scotch111, Stock::basfLgs, Stock::emi888, Stock::emitape, Stock::emi811, Stock::emi815, Stock::vintage,
                                           Stock::us456, Stock::european, Stock::mastering499, Stock::highOutput, Stock::sm900 };
     /** Where each tape came from, and when (oldest first is menuOrder). */
     inline const char* era (Stock s)
     {
         switch (s)
         {
+            case Stock::scotch111:    return "3M Scotch  -  USA  -  1948";
+            case Stock::basfLgs:      return "BASF  -  Germany  -  1950s";
             case Stock::emi888:       return "EMI  -  England  -  early 1960s";
             case Stock::emitape:      return "EMI  -  England  -  1963 to 1965";
             case Stock::emi811:       return "EMI  -  England  -  1966 to 1969";
@@ -98,6 +100,10 @@ namespace tape
               8.0,  0.05,  -54.0,  -59.0,  2.2, 1.2, true, forMultitrack | forMaster },
             { "EMI Emitape 815",      "EMITAPE 815",   "EMI's early-70s tape: the cleanest of the three. A flatter top end and less distortion, with a rounder bass and natural highs (CCIR EQ). Smooth and controlled - the one to use when you want the EMI sound with the least colour.",
               10.5, 0.03,  -58.0,  -62.0,  2.0, 0.5, true, forMultitrack | forMaster },
+            { "Scotch 111",               "SCOTCH 111",    "3M's acetate tape of 1948, the American studio standard through the 50s and into the 60s - machines of the day were lined up to it. Low output and early, grainy break-up, a dull, soft top, a thick low end and lots of hiss and modulation noise (NAB EQ). Pair it with the Ampex 300s and the 351.",
+              5.0,  0.075, -48.0,  -53.0,  2.6, 2.6, false, forMultitrack | forMaster },
+            { "BASF LGS",                 "BASF LGS",      "BASF's PVC-based standard tape of the 50s, from the home of the Magnetophon. Steadier and a touch cleaner than Scotch 111 - a smoother break-up and a little less hiss - with a soft, rounded top (CCIR EQ). Pair it with the Telefunken M5.",
+              6.0,  0.055, -51.0,  -55.0,  2.2, 2.0, true, forMultitrack | forMaster },
         };
         return stocks[juce::jlimit (0, numStocks - 1, (int) s)];
     }
@@ -123,6 +129,8 @@ namespace tape
         {
             case Stock::vintage:      return 2.5;
             case Stock::emitape:      return 2.0;
+            case Stock::scotch111:    return 2.0;
+            case Stock::basfLgs:      return 2.0;
             case Stock::emi888:       return 2.0;
             case Stock::emi811:       return 2.5;
             case Stock::highOutput:   return 3.5;
@@ -155,7 +163,7 @@ namespace tape
 
     inline constexpr MachineInfo neutralMachine { "None", "", "", 0, 0, 1, 1, 1, 0, 1, 0, 1 };
 
-    constexpr int numMultitrackMachines = 11;    // 6 is "None": bit-perfect (later machines are added after it)
+    constexpr int numMultitrackMachines = 13;    // 6 is "None": bit-perfect (later machines are added after it)
     constexpr int noMultitrackMachine = 6;
     inline const MachineInfo& multitrackMachine (int i)
     {
@@ -182,11 +190,15 @@ namespace tape
               0.5, 0.0,   1.1,  0.9,  1.2, -0.4,  0.8,  0.0, 0.7 },
             { "Tascam 80-8 (1/2\" 8-track)", "TASCAM 80-8", "TEAC's 1976 home-studio 8-track: eight narrow tracks on half-inch tape. Less headroom, a lighter low end, a softer top and more hiss.",
               -2.0, 0.02, 0.85, 1.1,  0.9,  0.8,  1.2,  4.0, 1.5 },
+            { "Ampex 300-3 (1/2\" 3-track)", "AMPEX 300-3", "Ampex's valve 3-track of the mid 50s, on half-inch tape: thick, warm and compressed, with a dull top, a big low end, lots of hiss and an unsteady transport.",
+              -3.5, 0.055, 1.35, 0.95, 0.75, 1.8,  1.1,  3.5, 1.7 },
+            { "Ampex 300-8 (Sel-Sync 8-track)", "AMPEX 300-8", "The first Sel-Sync 8-track, on 1-inch tape (1957): valve electronics, warm and dense, soft on top with plenty of hiss and wobble.",
+              -3.0, 0.05,  1.3,  0.95, 0.78, 1.6,  1.1,  3.0, 1.6 },
         };
         return m[juce::jlimit (0, numMultitrackMachines - 1, i)];
     }
 
-    constexpr int numMasterMachines = 10;        // 5 is "None": bit-perfect (later machines are added after it)
+    constexpr int numMasterMachines = 12;        // 5 is "None": bit-perfect (later machines are added after it)
     constexpr int noMasterMachine = 5;
     inline const MachineInfo& masterMachine (int i)
     {
@@ -211,6 +223,10 @@ namespace tape
               1.0, 0.0,   0.95, 1.0,  1.1, -0.1,  0.95, -1.5, 0.5 },
             { "Revox A77", "REVOX A77", "The home-studio reel-to-reel of the late 60s and 70s. A little less headroom and more hiss, with a friendly, slightly soft sound.",
               -1.5, 0.015, 0.95, 1.05, 0.9,  0.7,  1.1,  2.5, 1.3 },
+            { "Ampex 300 (valve)", "AMPEX 300", "Ampex's 1949 studio recorder, the American standard of the early 50s. Valve warmth and grit, a dull top, a fat low end, plenty of hiss and some wobble.",
+              -3.0, 0.055, 1.25, 0.95, 0.72, 1.8,  0.95, 3.5, 1.6 },
+            { "Telefunken M5 (valve)", "TELEFUNKEN M5", "The German valve studio deck of 1954. Smoother and quieter than the American valve machines: a gentle, silky saturation and a soft top.",
+              -2.0, 0.04,  1.1,  1.0,  0.85, 1.0,  1.0,  2.0, 1.1 },
         };
         return m[juce::jlimit (0, numMasterMachines - 1, i)];
     }
@@ -220,7 +236,7 @@ namespace tape
     /** The machines in the order they're offered: oldest first, no machine (digital) last. */
     inline const std::vector<int>& multitrackOrder()
     {
-        static const std::vector<int> o { 4 /*J37 1964*/, 7 /*Scully 280 1965*/, 5 /*3M M23 1966*/, 8 /*3M M79 1972*/,
+        static const std::vector<int> o { 11 /*Ampex 300-3 mid 50s*/, 12 /*Ampex 300-8 1957*/, 4 /*J37 1964*/, 7 /*Scully 280 1965*/, 5 /*3M M23 1966*/, 8 /*3M M79 1972*/,
                                           9 /*Stephens 821B 1974*/, 2 /*MM1200 1976*/, 10 /*Tascam 80-8 1976*/, 0 /*A800 1978*/,
                                           3 /*MTR-90 1979*/, 1 /*JH-24 1980*/, noMultitrackMachine };
         return o;
@@ -228,7 +244,7 @@ namespace tape
 
     inline const std::vector<int>& masterOrder()
     {
-        static const std::vector<int> o { 4 /*BTR2 late 1940s*/, 3 /*Ampex 351 1958*/, 7 /*Scully 280 1965*/, 6 /*AG-440 1967*/, 9 /*Revox A77 1967*/,
+        static const std::vector<int> o { 4 /*BTR2 late 1940s*/, 10 /*Ampex 300 1949*/, 11 /*Telefunken M5 1954*/, 3 /*Ampex 351 1958*/, 7 /*Scully 280 1965*/, 6 /*AG-440 1967*/, 9 /*Revox A77 1967*/,
                                           1 /*A80 1970*/, 0 /*ATR-102 1976*/, 8 /*A810 1982*/, 2 /*MTR-12 1984*/, noMasterMachine };
         return o;
     }

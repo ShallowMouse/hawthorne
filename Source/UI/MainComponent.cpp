@@ -667,7 +667,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
         {
             switch (command)
             {
-                case melville::deckReverse:     if (engine.isReversing()) doStop(); else doReverse(); break;
+                case melville::deckReverse:     doReverse(); break;
                 case melville::deckMark:        addMarker(); break;
                 case melville::deckPrevMarker:  jumpToMarker (-1); break;
                 case melville::deckNextMarker:  jumpToMarker (1); break;
@@ -2781,8 +2781,9 @@ void MainComponent::showAlert (const juce::String& title, const juce::String& me
 
 void MainComponent::doReverse()
 {
-    if (auto err = engine.playReverse(); err.isNotEmpty())
-        showAlert ("Cannot play backwards", err);
+    // REVERSE latches: the transport's direction for PLAY and REC
+    if (auto err = engine.setReverseMode (! engine.getReverseMode()); err.isNotEmpty())
+        showAlert ("Cannot reverse", err);
 }
 
 void MainComponent::doPlay()
@@ -2884,7 +2885,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
 
     const auto c = k.getTextCharacter();
 
-    if (k == juce::KeyPress (juce::KeyPress::spaceKey, juce::ModifierKeys::shiftModifier, 0)) { if (engine.isReversing()) doStop(); else doReverse(); return true; }
+    if (k == juce::KeyPress (juce::KeyPress::spaceKey, juce::ModifierKeys::shiftModifier, 0)) { doReverse(); return true; }
     if (k == juce::KeyPress::spaceKey)                       { if (engine.isPlaying()) doStop(); else doPlay(); return true; }
     if (c == 'r' || c == 'R' || k.getKeyCode() == juce::KeyPress::numberPadMultiply) { doRecord(); return true; }
     if (c == 'm' || c == 'M')                                { addMarker(); return true; }
@@ -2963,8 +2964,8 @@ void MainComponent::timerCallback()
         lastRolling = rolling;
     }
 
-    playKey.setLit (rolling && ! engine.isReversing());
-    revKey.setLit (rolling && engine.isReversing());
+    playKey.setLit (rolling);
+    revKey.setLit (engine.getReverseMode());
     const int windDir = engine.getWindDirection();
     rewKey.setLit (windDir < 0);
     liftKey.setLit (engine.getLifterDefeat());

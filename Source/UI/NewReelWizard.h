@@ -40,6 +40,8 @@ inline void drawTapeBox (juce::Graphics& g, juce::Rectangle<float> r, int stock,
         { 0xff2f5a3a, 0xffe8e3d3 },   // EMI 888
         { 0xff7a2430, 0xffe8e3d3 },   // EMI 811
         { 0xff263f7a, 0xffe3b341 },   // EMI 815
+        { 0xffd8c9a3, 0xffb3261e },   // Scotch 111
+        { 0xff9aa3a8, 0xff1f3e8c },   // BASF LGS
     };
     const auto& lk = looks[(size_t) juce::jlimit (0, (int) std::size (looks) - 1, stock)];
     const juce::Colour body (lk.body), band (lk.band);

@@ -250,8 +250,8 @@ private:
                  ffwKey  { ">>",   "Fast forward: winds on while held (Right arrow: forward 5 seconds)", Colours::mustard },
                  stopKey { "STOP", "Stop (Space)",                    Colours::mustard },
                  playKey { "PLAY", "Play (Space)",                    Colours::mustard },
-                 revKey  { "REVERSE", "Reverse play: the tape runs backwards past the heads (Shift+Space) - reverse guitar, backwards cymbals. "
-                                      "Never records; PLAY turns it round, STOP stops.", Colours::mustard },
+                 revKey  { "REVERSE", "Reverse (Shift+Space): latches on and off. While it's lit the tape runs backwards - PLAY plays it "
+                                      "backwards and REC records backwards (reverse guitar, backwards cymbals). Off again turns the tape round.", Colours::mustard },
                  recKey  { "REC",  "Record / punch in-out (R)",       Colours::red },
                  markKey { "MARK", "Drop a marker here (M)",          Colours::mustard },
                  clickKey { "CLICK", "Click on / off (needs a tempo - TEMPO)", Colours::mustard },

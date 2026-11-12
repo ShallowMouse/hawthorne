@@ -25,6 +25,12 @@ RecordingStream::~RecordingStream()
     finish();
 }
 
+void RecordingStream::setReverse (const juce::File& scratchFile, double sampleRate)
+{
+    reverseScratch = scratchFile;
+    reverseRate = sampleRate;
+}
+
 //==============================================================================
 void RecordingStream::push (const float* data, int numSamples) noexcept
 {
@@ -88,6 +94,16 @@ bool RecordingStream::positionLocked()
     const auto sp = startPos != nullptr ? startPos->load() : (juce::int64) 0;
     if (sp == notStarted)
         return false; // audio thread hasn't recorded the first block yet
+
+    if (reverseScratch != juce::File())
+    {
+        // backwards: the scratch file takes the pass in the order it was played
+        skipRemaining = 0;
+        if (! tape->seek (0))
+            writeError = true;
+        positioned = true;
+        return true;
+    }
 
     // Latency compensation: the first captured sample belongs `latency` samples
     // before the tape position at which it arrived.
@@ -207,7 +223,87 @@ bool RecordingStream::finish()
         writeError = true;
 
     tape.reset();
+
+    if (reverseScratch != juce::File())
+    {
+        if (positioned && ! writeError && ! spliceReversedLocked())
+            writeError = true;
+        reverseScratch.deleteFile();
+        reverseScratch = juce::File();
+    }
     return ! writeError;
+}
+
+bool RecordingStream::spliceReversedLocked()
+{
+    // The pass, as played: sample k was heard with the tape at (first - k).
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::AudioFormatReader> in (wav.createReaderFor (new juce::FileInputStream (reverseScratch), true));
+    if (in == nullptr)
+        return false;
+    const juce::int64 n = in->lengthInSamples;
+    if (n <= 0 || startPos == nullptr || startPos->load() == notStarted)
+        return true;
+
+    const juce::int64 high = startPos->load() - latency;       // tape position of the first sample played
+    const juce::int64 low  = high - n + 1;                      // ... and of the last (nearest the head)
+    if (high < 0)
+        return true;                                            // all of it before the head of the tape
+
+    // What's on the tape under the ends of the pass, for the crossfades in and out.
+    const int fade = juce::jmax (1, (int) (reverseRate * 0.01));
+    std::vector<float> oldLow ((size_t) fade, 0.0f), oldHigh ((size_t) fade, 0.0f);
+    if (file.existsAsFile())
+        if (std::unique_ptr<juce::AudioFormatReader> old (wav.createReaderFor (new juce::FileInputStream (file), true)); old != nullptr)
+        {
+            auto grab = [&] (juce::int64 from, std::vector<float>& dest)
+            {
+                const auto start = juce::jmax ((juce::int64) 0, from);
+                const auto skip = (int) (start - from);
+                if (start < old->lengthInSamples && skip < fade)
+                {
+                    float* dd[] = { dest.data() + skip };
+                    old->read (dd, 1, start, (int) juce::jmin ((juce::int64) (fade - skip), old->lengthInSamples - start));
+                }
+            };
+            grab (low, oldLow);
+            grab (high - fade + 1, oldHigh);
+        }
+
+    TapeFile out;
+    juce::String err;
+    if (! file.existsAsFile() && ! TapeFile::createEmpty (file, reverseRate, err))
+        return false;
+    if (! out.open (file, reverseRate, err))
+        return false;
+    if (! out.seek (juce::jmax ((juce::int64) 0, low)))
+        return false;
+
+    // Write it reversed, oldest-on-tape first: tape position low + j holds pass sample n - 1 - j.
+    constexpr int chunk = 65536;
+    juce::AudioBuffer<float> buf (1, chunk);
+    bool ok = true;
+    for (juce::int64 j = 0; j < n && ok; j += chunk)
+    {
+        const int m = (int) juce::jmin ((juce::int64) chunk, n - j);
+        in->read (&buf, 0, m, n - j - m, true, false);
+        buf.reverse (0, 0, m);
+        float* x = buf.getWritePointer (0);
+        for (int k = 0; k < m; ++k)
+        {
+            const auto jj = j + k;
+            auto mix = [] (float a, float b, double w) { w = std::sin (0.5 * juce::MathConstants<double>::pi * w); w *= w; return (float) (w * a + (1.0 - w) * b); };
+            if (jj < fade)          x[k] = mix (x[k], oldLow[(size_t) jj], (double) jj / fade);        // the punch out (played last)
+            if (jj >= n - fade)     x[k] = mix (x[k], oldHigh[(size_t) (jj - (n - fade))], (double) (n - 1 - jj) / fade);  // the punch in
+        }
+        int from = 0;
+        if (low + j < 0) from = (int) juce::jmin ((juce::int64) m, -(low + j));     // past the head of the tape
+        if (m - from > 0 && ! out.write (x + from, m - from))
+            ok = false;
+    }
+    if (! out.close())
+        ok = false;
+    return ok;
 }
 
 //==============================================================================

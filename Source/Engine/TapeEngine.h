@@ -46,6 +46,10 @@ public:
         Never records; PLAY goes forwards again, STOP stops. */
     juce::String playReverse();
     bool isReversing() const noexcept { return reverseA.load(); }
+    /** REVERSE, latched: the transport's direction. While it's on, PLAY plays backwards and REC
+        records backwards (the take lands on the tape reversed); off again turns the tape round. */
+    juce::String setReverseMode (bool on);
+    bool getReverseMode() const noexcept { return reverseLatch.load(); }
     juce::String record();          // from stop: roll + record; while playing: punch in
     void punchOut();                // stop recording, keep rolling
     void stop();
@@ -334,6 +338,7 @@ private:
         int latency = 0;
         double rate = 1.0;                                   // constant for the whole pass
         bool crossfade = false;                              // punched in on a rolling tape: fade in over the old
+        bool reverse = false;                                // the tape runs backwards: written reversed when the pass ends
         std::atomic<int> mode { 0 };                         // 0 not started, 1 straight to tape, 2 resampled (varispeed)
         std::atomic<juce::int64> trackStart { RecordingStream::notStarted }, masterStart { RecordingStream::notStarted };   // first tape sample written
         RecordResampler trackRs, masterRs;
@@ -345,7 +350,7 @@ private:
                        float* const* outputs, int numOutputs, int numSamples) noexcept;
 
     juce::String checkCanRoll() const;
-    juce::String beginRecordPass (bool pendingStart = false);
+    juce::String beginRecordPass (bool pendingStart = false, bool reverse = false);
     void endRecordPass();
     void rebuildPlaybackGraph();
     void rebuildRouting();
@@ -421,6 +426,8 @@ private:
     SpoolMonitor spool;
     ReverseFeeder reverseFeed;
     std::atomic<bool> reverseA { false };
+    std::atomic<bool> reverseLatch { false };
+    juce::String recordReverse();
     int reverseHold = 0;                     // audio thread: samples still read from the feeder after turning forwards
     void feedReverseFiles();
     RouteHost route;

@@ -73,6 +73,16 @@ inline const MachineStory& multitrackStory (int i)
           "The machine that put 8-track recording into home and project studios for under $3,000: eight narrow tracks on "
           "half-inch tape, often paired with dbx noise reduction. Sold as a TEAC, later with the Tascam badge, until the mid-80s.",
           "Narrow tracks: less headroom, a lighter low end, a softer top and noticeably more hiss. Lo-fi charm." },
+        { "Ampex  -  California, USA  -  mid 1950s",
+          "In 1953 Ampex announced 2- and 3-track machines on quarter-inch tape, and soon 3- and 4-track ones on half-inch. "
+          "RCA Victor recorded its great orchestral sessions on valve 300-3s at 15 ips, mixing down to 2-track masters while "
+          "the world waited for stereo at home.",
+          "Valve electronics on wide tracks: thick, warm and compressed, a dull top, a big low end, lots of hiss and some wobble." },
+        { "Ampex  -  California, USA  -  1957",
+          "Ross Snyder at Ampex invented Sel-Sync in 1955 - playing back from the record head, so new parts could be laid "
+          "in time with old ones. The first Sel-Sync machine, a 1-inch 8-track, went to Les Paul early in 1957 for $10,000. "
+          "He called it the Octopus. Ampex built only a handful in the late 50s.",
+          "Valve electronics: warm and dense, soft on top, with plenty of hiss and wobble. Overdubs without bouncing." },
     };
     return s[juce::jlimit (0, tape::numMultitrackMachines - 1, i)];
 }
@@ -119,6 +129,15 @@ inline const MachineStory& masterStory (int i)
           "Studer's semi-professional sister brand. The A77 was the reel-to-reel of home studios, radio and musicians for a "
           "decade - many a demo and bounce went through one.",
           "A little less headroom and more hiss, with a friendly, slightly soft sound." },
+        { "Ampex  -  California, USA  -  1949",
+          "After the 200A of 1948 - America's first professional tape recorder - Ampex brought out the Model 300 in 1949, "
+          "and it became the studio standard of the early 50s. Les Paul's early sound-on-sound records were made on a 300 "
+          "that Bing Crosby gave him.",
+          "Valve warmth and grit, a dull top, a fat low end, plenty of hiss and some wobble." },
+        { "Telefunken  -  Germany  -  1954",
+          "The Magnetophon was AEG's - tape recording began with it in Berlin in 1935. The M5 of 1954 was the valve studio "
+          "and broadcast deck of post-war Germany, built in later versions for decades. Read on a peak meter, German style.",
+          "Smoother and quieter than the American valve machines: a gentle, silky saturation and a soft top." },
     };
     return s[juce::jlimit (0, tape::numMasterMachines - 1, i)];
 }

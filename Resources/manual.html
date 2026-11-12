@@ -53,7 +53,7 @@ th { background:#ece2c8; font:700 13px "Courier New", monospace; }
   <a href="#stock">Tape stock</a>
   <a href="#machines">Machines</a>
   <a href="#masters">Masters</a>
-  <a href="#flip">Reverse play</a>
+  <a href="#flip">Reverse play and recording</a>
   <a href="#importexport">Import and export</a>
   <div class="h">STUDIO</div>
   <a href="#routing">Routing</a>
@@ -154,6 +154,8 @@ th { background:#ece2c8; font:700 13px "Courier New", monospace; }
 <p>Each reel is made on a tape stock, chosen when the reel is created and fixed for its life. The tape is <b>printed</b>: what you record goes through the tape's record side (EQ, saturation, modulation noise) into the files, so it's part of the recording, just like real tape. Playback adds the tape's head bump, high-frequency loss and hiss live.</p>
 <table>
   <tr><th>Stock</th><th>Sound</th></tr>
+  <tr><td>Scotch 111</td><td>3M, 1948: the American studio standard of the 50s. Lowest output, grainy break-up, dull top, most hiss.</td></tr>
+  <tr><td>BASF LGS</td><td>BASF, 1950s: German PVC tape. Smoother and a touch quieter than 111, soft top; CCIR EQ.</td></tr>
   <tr><td>EMI Emitape 888</td><td>EMI, early 1960s. The dirtiest EMI tape: lo-fi and grainy, gritty upper mids, a soft top, plenty of hiss.</td></tr>
   <tr><td>EMI Emitape 77</td><td>EMI, 1963&ndash;65: the Beatles' tape from Please Please Me to Rubber Soul. Sweet early break-up, soft top, audible hiss.</td></tr>
   <tr><td>EMI Emitape 811</td><td>EMI, 1966&ndash;69: the Beatles' tape from Revolver on. A better top and a little less distortion than the 888, still warm when pushed.</td></tr>
@@ -170,6 +172,8 @@ th { background:#ece2c8; font:700 13px "Courier New", monospace; }
 <p><b>MACHINE &rarr; Machines</b> &mdash; or click the machine's badge on the deck or on the master meters &mdash; opens the machine room: a card for every machine with how it looks, its story and its sound (and a link to photos of the real thing). Click one to put the reel on it. It chooses the multitrack and the 2-track the reel plays on, and the deck, keys, counter and meters take on that machine's look. Unlike the tape, you can change them any time: the record side is printed when you record, the playback side follows the machine, so switching changes how existing tape sounds back. Each also has its own wow and flutter.</p>
 <table>
   <tr><th>Multitrack</th><th>Character</th></tr>
+  <tr><td>Ampex 300-3 (1/2" 3-track)</td><td>Mid 1950s. Valve 3-track: thick, compressed, dull top, lots of hiss and wobble.</td></tr>
+  <tr><td>Ampex 300-8 (Sel-Sync 8-track)</td><td>1957. The first Sel-Sync 8-track (Les Paul's Octopus): warm, dense, soft top.</td></tr>
   <tr><td>Studer J37 (EMI, valve 4-track)</td><td>1964; Abbey Road from 1965 (Revolver, Sgt. Pepper): thick, warm valve grit, gentle top, more wobble.</td></tr>
   <tr><td>Scully 280 (8-track)</td><td>1965 (8-track 1966). American solid-state: punchy, forward mids, slightly soft top.</td></tr>
   <tr><td>3M M23 (8-track)</td><td>1966; the Beatles 1968&ndash;69: punchy, solid, a little darker and grainier.</td></tr>
@@ -184,6 +188,8 @@ th { background:#ece2c8; font:700 13px "Courier New", monospace; }
 <table>
   <tr><th>2-track (master)</th><th>Character</th></tr>
   <tr><td>EMI BTR2 (valve)</td><td>Late 1940s. The Beatles' mono and stereo masters: warm and round.</td></tr>
+  <tr><td>Ampex 300 (valve)</td><td>1949. The early-50s American standard: valve grit, dull top, fat low end.</td></tr>
+  <tr><td>Telefunken M5 (valve)</td><td>1954. German valve studio deck: smoother and quieter, silky saturation.</td></tr>
   <tr><td>Ampex 351 (valve)</td><td>1958. Vintage valve warmth, softer top.</td></tr>
   <tr><td>Scully 280</td><td>1965. Mastering and broadcast: punchy and direct.</td></tr>
   <tr><td>Ampex AG-440</td><td>1967. The everyday solid-state 2-track of the late 60s and 70s: warm and solid.</td></tr>
@@ -237,7 +243,7 @@ th { background:#ece2c8; font:700 13px "Courier New", monospace; }
 <h2 id="align">Alignment (calibration)</h2>
 <p><b>MACHINE &rarr; Alignment</b> opens the alignment panel, as a tech would line the machine up for each reel:</p>
 <ul>
-  <li><b>Operating level</b>: 0 (185 nWb/m), +3 (260), +6 (370) or +9 (520). Hawthorne's 0 VU stays at -18 dBFS; a hotter level drives the tape harder &mdash; less hiss, but it saturates sooner. Each tape is made for one (Ampex 456 +6, GP9 and SM911 +9, Emitape 815 +3, Scotch 250 and Emitape 77 / 888 / 811 0...), and new reels start there.</li>
+  <li><b>Operating level</b>: 0 (185 nWb/m), +3 (260), +6 (370) or +9 (520). Hawthorne's 0 VU stays at -18 dBFS; a hotter level drives the tape harder &mdash; less hiss, but it saturates sooner. Each tape is made for one (Ampex 456 +6, GP9 and SM911 +9, Emitape 815 +3, Scotch 111 / 250, BASF LGS and Emitape 77 / 888 / 811 0...), and new reels start there.</li>
   <li><b>Record bias</b> (overbias at 10 kHz, -1 to +4 dB): over-biasing is darker and smoother with a firmer low end; under-biasing is brighter, grittier and noisier. Double-click the knob for the tape's recommended bias.</li>
   <li><b>Line-up oscillator</b>: a 100 Hz, 1 kHz or 10 kHz tone at 0 VU into every track. The meters show it back off the repro head, so you can watch 10 kHz drop as you over-bias and the level compress as you go hotter.</li>
   <li><b>Record tones</b>: 1 kHz, 10 kHz and 100 Hz, 30 s each, at the head of the reel on every track (over anything there), with markers and a line on the take sheet.</li>
@@ -248,12 +254,13 @@ th { background:#ece2c8; font:700 13px "Courier New", monospace; }
 <p>A master is a stereo mix recorded onto the reel, sample-aligned with its tracks &mdash; the 2-track. In the sidebar:</p>
 <ul>
   <li><b>Master menu</b>: choose, create, rename and delete masters, pick the 2-track machine, and export stereo WAVs (the whole reel or marker to marker).</li>
-  <li><b>New master</b> asks for its tape: mastering stocks (Ampex 499, Emtec SM900) are only for the 2-track; the EMI tapes (Emitape 77, 888, 811, 815) and Clean work too.</li>
+  <li><b>New master</b> asks for its tape: mastering stocks (Ampex 499, Emtec SM900) are only for the 2-track; the 50s tapes (Scotch 111, BASF LGS), the EMI tapes (Emitape 77, 888, 811, 815) and Clean work too.</li>
   <li><span class="key">ARM</span> (master) records the mix along with the tracks; <span class="key">TAPE</span> lets you hear the master tape instead of the live mix.</li>
 </ul>
 
-<h2 id="flip">Reverse play</h2>
-<p>The <b>REVERSE</b> key (left of PLAY, or <kbd>Shift</kbd>+<kbd>Space</kbd>) runs the tape backwards past the heads: everything on it plays in reverse, at the deck's speed and varispeed &mdash; backwards cymbals, reverse guitar, hidden messages. Press it while playing and the motor turns round; <b>PLAY</b> turns it forwards again without stopping, <b>STOP</b> stops. It stops by itself at the head of the reel. The click follows the tape either way. Reverse play never records: play forwards to record. (A reel flipped over in an older Hawthorne shows FLIPPED, and MACHINE &rarr; Turn the reel back over puts it right.)</p>
+<h2 id="flip">Reverse play and recording</h2>
+<p>The <b>REVERSE</b> key (left of PLAY, or <kbd>Shift</kbd>+<kbd>Space</kbd>) latches on and off: while it's lit, the tape runs backwards past the heads. <b>PLAY</b> plays everything on it in reverse, at the deck's speed and varispeed &mdash; backwards cymbals, reverse guitar, hidden messages. Press REVERSE while playing and the motor turns round; press it again and it turns forwards without stopping. <b>STOP</b> stops (REVERSE stays lit, so PLAY carries on backwards). It stops by itself at the head of the reel. The click follows the tape either way.</p>
+<p><b>Recording backwards</b>: with REVERSE lit, <b>REC</b> records with the tape running backwards, as on a real machine: what you play while the reel runs back is laid onto the tape the other way round, so when you play it forwards it comes out reversed &mdash; play a guitar solo over the song running backwards and it plays forwards as a reverse solo, in time. Punching in and out works as usual (crossfaded at both ends); the take is written onto the tape the moment you punch out. It runs at the reel's own speed (no varispeed), and auto punch only runs forwards. (A reel flipped over in an older Hawthorne shows FLIPPED, and MACHINE &rarr; Turn the reel back over puts it right.)</p>
 
 <h2 id="importexport">Import and export</h2>
 <ul>
@@ -316,7 +323,7 @@ th { background:#ece2c8; font:700 13px "Courier New", monospace; }
 <table>
   <tr><th>Key</th><th>Does</th></tr>
   <tr><td><kbd>Space</kbd></td><td>Play / stop</td></tr>
-  <tr><td><kbd>Shift</kbd>+<kbd>Space</kbd></td><td>Reverse play / stop</td></tr>
+  <tr><td><kbd>Shift</kbd>+<kbd>Space</kbd></td><td>REVERSE on / off (the tape's direction for PLAY and REC)</td></tr>
   <tr><td><kbd>R</kbd> or numpad <kbd>*</kbd></td><td>Record / punch in / punch out (auto punch when AUTO is lit)</td></tr>
   <tr><td><kbd>Enter</kbd> or <kbd>Home</kbd></td><td>Return to zero</td></tr>
   <tr><td><kbd>&larr;</kbd> <kbd>&rarr;</kbd></td><td>Back / forward 5 seconds</td></tr>

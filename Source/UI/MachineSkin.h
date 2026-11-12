@@ -130,6 +130,21 @@ struct MachineSkin
               Meter::vu, C (0xfffbe5a8), C (0xffe9b456), C (0xff1d1a14), C (0xffc0392b), C (0xff141414), C (0xff1b1b1b), C (0xffe9e6dc), C (0xff1d1a14),
               C (0xff1a1a1a), C (0xff141414), C (0xff2e2e2e),
               C (0xff1a1a1a), C (0xffd9dbdc) },
+            // Ampex 300-3: Ampex battleship-grey hammertone console, black bakelite keys; a rack of valve
+            // electronics, each with a cream-faced VU meter. No counter of its own (a drum stands in).
+            { "AMPEX", "300-3", C (0xff7d8285), C (0xff6c7174), C (0xff4a4e51), C (0xff141618), C (0xff3a3e41), false,
+              Keys::bakelite, C (0xff1b1a18), C (0xffeee6cf),
+              Counter::drum, C (0xfff3eedc), C (0xff121212),
+              Meter::vu, C (0xfff9e3ae), C (0xffe9bf62), C (0xff1d1a14), C (0xffa8231b), C (0xff5d6164), C (0xff4a4e51), C (0xffeee6cf), C (0xff1d1a14),
+              C (0xff6c7174), C (0xff5d6164), C (0xff4a4e51),
+              C (0xff1b1a18), C (0xffd9d9d4) },
+            // Ampex 300-8: the same Ampex grey, with eight valve record/play drawers and their VUs.
+            { "AMPEX", "300-8", C (0xff7d8285), C (0xff6c7174), C (0xff4a4e51), C (0xff141618), C (0xff3a3e41), false,
+              Keys::bakelite, C (0xff1b1a18), C (0xffeee6cf),
+              Counter::drum, C (0xfff3eedc), C (0xff121212),
+              Meter::vu, C (0xfff9e3ae), C (0xffe9bf62), C (0xff1d1a14), C (0xffa8231b), C (0xff5d6164), C (0xff4a4e51), C (0xffeee6cf), C (0xff1d1a14),
+              C (0xff595e61), C (0xff4f5457), C (0xff3f4346),
+              C (0xff1b1a18), C (0xffd9d9d4) },
         };
         return s[juce::jlimit (0, tape::numMultitrackMachines - 1, i)];
     }
@@ -191,6 +206,16 @@ struct MachineSkin
               Keys::square, C (0xff8c8f92), C (0xff111111), Counter::drum, C (0xfff3eedc), C (0xff121212),
               Meter::vu, C (0xfff7e6b4), C (0xffe6c070), C (0xff1d1a14), C (0xffc0392b), C (0xff1a1a1a), C (0xff141414), C (0xffe9e6dc), C (0xff1d1a14),
               C (0xff1a1a1a), C (0xff141414), C (0xff2e2e2e), C (0xff1a1a1a), C (0xffd9dbdc) },
+            // Ampex 300: battleship grey, black bakelite keys, cream VU on the valve electronics
+            { "AMPEX", "300", C (0xff7d8285), C (0xff6c7174), C (0xff4a4e51), C (0xff141618), C (0xff3a3e41), false,
+              Keys::bakelite, C (0xff1b1a18), C (0xffeee6cf), Counter::drum, C (0xfff3eedc), C (0xff121212),
+              Meter::vu, C (0xfff9e3ae), C (0xffe9bf62), C (0xff1d1a14), C (0xffa8231b), C (0xff5d6164), C (0xff4a4e51), C (0xffeee6cf), C (0xff1d1a14),
+              C (0xff6c7174), C (0xff5d6164), C (0xff4a4e51), C (0xff1b1a18), C (0xffd9d9d4) },
+            // Telefunken M5: pale grey-blue German studio cabinet, ivory keys, a black-faced peak meter
+            { "TELEFUNKEN", "M5", C (0xffb7c0c4), C (0xffa4adb1), C (0xff7b8488), C (0xff1a1f22), C (0xff4a5458), false,
+              Keys::ivory, C (0xfff1ead6), C (0xff1a1f22), Counter::drum, C (0xfff3eedc), C (0xff121212),
+              Meter::ppm, C (0xff151515), C (0xff0b0b0b), C (0xfff2f2ee), C (0xfff2f2ee), C (0xff5c666a), C (0xff2a2f31), C (0xfff1ead6), C (0xfff5f5f0),
+              C (0xffa4adb1), C (0xff98a1a5), C (0xff7b8488), C (0xff1a1f22), C (0xffe6ebed) },
         };
         return s[juce::jlimit (0, tape::numMasterMachines - 1, i)];
     }

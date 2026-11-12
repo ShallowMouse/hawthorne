@@ -46,6 +46,12 @@ public:
                      int latencySamples);
     ~RecordingStream();
 
+    /** Recording with the tape running backwards: the pass is captured, in the order it was
+        played, into a scratch file (the stream's TapeFile), and finish() writes it onto the
+        real tape reversed - its first sample at *startPos, running down towards the head -
+        crossfaded into what was there. Call before the disk thread sees the stream. */
+    void setReverse (const juce::File& scratchFile, double sampleRate);
+
     //==========================================================================
     // Audio thread
     void push (const float* data, int numSamples) noexcept;
@@ -76,11 +82,14 @@ private:
     void writeSilenceLocked (juce::int64 numSamples);
     void writeBlockLocked (int start, int num);
     bool positionLocked();
+    bool spliceReversedLocked();
 
     const juce::File file;
     const int flushInterval;
     const std::atomic<juce::int64>* startPos;
     const int latency;
+    juce::File reverseScratch;          // set: a backwards pass (see setReverse)
+    double reverseRate = 48000.0;
 
     // FIFO shared between audio thread (writer) and disk thread (reader)
     juce::AbstractFifo fifo;
