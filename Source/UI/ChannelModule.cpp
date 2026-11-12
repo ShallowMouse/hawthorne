@@ -147,8 +147,10 @@ void ChannelModule::resized()
 {
     auto r = getLocalBounds();
     auto controls = r.removeFromBottom (controlsHeight).reduced (4, 3);
-    // the NR strip's place is always kept, so the bridge doesn't move when NR is switched
-    stripArea = r.removeFromBottom (nrHeight);
+    // the NR strip sits above the meter, under the track's colour; its place is always kept,
+    // so the bridge doesn't move when NR is switched
+    r.removeFromTop (4);
+    stripArea = r.removeFromTop (nrHeight);
     nrArea = nrSystem != 0 ? stripArea : juce::Rectangle<int>();
     meter.setBounds (r.reduced (0, 2));
 
