@@ -30,13 +30,13 @@ inline void drawTapeBox (juce::Graphics& g, juce::Rectangle<float> r, int stock,
     struct Look { juce::uint32 body, band; };
     static const Look looks[] = {
         { 0xffeceae4, 0xffc9c6be },   // clean
-        { 0xffe9e4d6, 0xffc8322a },   // 456-type
-        { 0xff1d1d1f, 0xffc9a648 },   // GP9-type
-        { 0xffc9b48a, 0xff6b3f22 },   // 250-type
-        { 0xff2f4f7a, 0xffe8c547 },   // 911-type
+        { 0xffe9e4d6, 0xffc8322a },   // Ampex 456
+        { 0xff1d1d1f, 0xffc9a648 },   // Quantegy GP9
+        { 0xffc9b48a, 0xff6b3f22 },   // Scotch 250
+        { 0xff2f4f7a, 0xffe8c547 },   // BASF SM911
         { 0xffe8e3d3, 0xff1f3e8c },   // Emitape
-        { 0xff8d9196, 0xffe07a2c },   // 499-type
-        { 0xff222428, 0xffb9bec4 },   // SM900-type
+        { 0xffc19a45, 0xff1d1d1f },   // Ampex 499 (Grand Master Gold)
+        { 0xff222428, 0xffb9bec4 },   // Emtec SM900
         { 0xff2f5a3a, 0xffe8e3d3 },   // EMI 888
         { 0xff7a2430, 0xffe8e3d3 },   // EMI 811
         { 0xff263f7a, 0xffe3b341 },   // EMI 815

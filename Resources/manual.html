@@ -154,14 +154,14 @@ th { background:#ece2c8; font:700 13px "Courier New", monospace; }
 <p>Each reel is made on a tape stock, chosen when the reel is created and fixed for its life. The tape is <b>printed</b>: what you record goes through the tape's record side (EQ, saturation, modulation noise) into the files, so it's part of the recording, just like real tape. Playback adds the tape's head bump, high-frequency loss and hiss live.</p>
 <table>
   <tr><th>Stock</th><th>Sound</th></tr>
-  <tr><td>EMI 888 (early 60s)</td><td>EMI, early 1960s. The dirtiest EMI tape: lo-fi and grainy, gritty upper mids, a soft top, plenty of hiss.</td></tr>
-  <tr><td>EMI 60s (Emitape-type)</td><td>EMI, 1963&ndash;65: the Beatles' tape from Please Please Me to Rubber Soul. Sweet early break-up, soft top, audible hiss.</td></tr>
-  <tr><td>EMI 811 (mid-late 60s)</td><td>EMI, 1966&ndash;69: the Beatles' tape from Revolver on. A better top and a little less distortion than the 888, still warm when pushed.</td></tr>
-  <tr><td>EMI 815 (early 70s)</td><td>EMI, early 1970s. The cleanest EMI tape: flatter top, less distortion, rounder bass. Made for +3.</td></tr>
-  <tr><td>Early 70s (250-type)</td><td>3M Scotch, early 1970s. Breaks up first, darkest top, most hiss.</td></tr>
-  <tr><td>US mastering (456-type)</td><td>Ampex, 1975. Warm, fat, punchy; strong low bump; saturates musically. The 70s / 80s rock sound.</td></tr>
-  <tr><td>European (911-type)</td><td>BASF, 1986. Smooth, polished, quietest; CCIR EQ.</td></tr>
-  <tr><td>High output (GP9-type)</td><td>Quantegy, 1998. Clean, tight, most headroom; glue without obvious distortion.</td></tr>
+  <tr><td>EMI Emitape 888</td><td>EMI, early 1960s. The dirtiest EMI tape: lo-fi and grainy, gritty upper mids, a soft top, plenty of hiss.</td></tr>
+  <tr><td>EMI Emitape 77</td><td>EMI, 1963&ndash;65: the Beatles' tape from Please Please Me to Rubber Soul. Sweet early break-up, soft top, audible hiss.</td></tr>
+  <tr><td>EMI Emitape 811</td><td>EMI, 1966&ndash;69: the Beatles' tape from Revolver on. A better top and a little less distortion than the 888, still warm when pushed.</td></tr>
+  <tr><td>EMI Emitape 815</td><td>EMI, early 1970s. The cleanest EMI tape: flatter top, less distortion, rounder bass. Made for +3.</td></tr>
+  <tr><td>Scotch 250</td><td>3M Scotch, early 1970s. Breaks up first, darkest top, most hiss.</td></tr>
+  <tr><td>Ampex 456 Grand Master</td><td>Ampex, 1975. Warm, fat, punchy; strong low bump; saturates musically. The 70s / 80s rock sound.</td></tr>
+  <tr><td>BASF SM911</td><td>BASF, 1986. Smooth, polished, quietest; CCIR EQ.</td></tr>
+  <tr><td>Quantegy GP9</td><td>Quantegy, 1998. Clean, tight, most headroom; glue without obvious distortion.</td></tr>
   <tr><td>Clean</td><td>No tape sound at all: bit-for-bit.</td></tr>
 </table>
 <p>Slower tape speeds give a bigger low bump, a darker top and more hiss. Hit the tape harder (more level) for more saturation.</p>
@@ -237,7 +237,7 @@ th { background:#ece2c8; font:700 13px "Courier New", monospace; }
 <h2 id="align">Alignment (calibration)</h2>
 <p><b>MACHINE &rarr; Alignment</b> opens the alignment panel, as a tech would line the machine up for each reel:</p>
 <ul>
-  <li><b>Operating level</b>: 0 (185 nWb/m), +3 (260), +6 (370) or +9 (520). Hawthorne's 0 VU stays at -18 dBFS; a hotter level drives the tape harder &mdash; less hiss, but it saturates sooner. Each tape is made for one (456-type +6, GP9-type +9, EMI 815 +3, 250-type, Emitape and EMI 888 / 811 0...), and new reels start there.</li>
+  <li><b>Operating level</b>: 0 (185 nWb/m), +3 (260), +6 (370) or +9 (520). Hawthorne's 0 VU stays at -18 dBFS; a hotter level drives the tape harder &mdash; less hiss, but it saturates sooner. Each tape is made for one (Ampex 456 +6, GP9 and SM911 +9, Emitape 815 +3, Scotch 250 and Emitape 77 / 888 / 811 0...), and new reels start there.</li>
   <li><b>Record bias</b> (overbias at 10 kHz, -1 to +4 dB): over-biasing is darker and smoother with a firmer low end; under-biasing is brighter, grittier and noisier. Double-click the knob for the tape's recommended bias.</li>
   <li><b>Line-up oscillator</b>: a 100 Hz, 1 kHz or 10 kHz tone at 0 VU into every track. The meters show it back off the repro head, so you can watch 10 kHz drop as you over-bias and the level compress as you go hotter.</li>
   <li><b>Record tones</b>: 1 kHz, 10 kHz and 100 Hz, 30 s each, at the head of the reel on every track (over anything there), with markers and a line on the take sheet.</li>
@@ -248,7 +248,7 @@ th { background:#ece2c8; font:700 13px "Courier New", monospace; }
 <p>A master is a stereo mix recorded onto the reel, sample-aligned with its tracks &mdash; the 2-track. In the sidebar:</p>
 <ul>
   <li><b>Master menu</b>: choose, create, rename and delete masters, pick the 2-track machine, and export stereo WAVs (the whole reel or marker to marker).</li>
-  <li><b>New master</b> asks for its tape: mastering stocks (499-type, SM900-type) are only for the 2-track; the EMI tapes (Emitape, 888, 811, 815) and Clean work too.</li>
+  <li><b>New master</b> asks for its tape: mastering stocks (Ampex 499, Emtec SM900) are only for the 2-track; the EMI tapes (Emitape 77, 888, 811, 815) and Clean work too.</li>
   <li><span class="key">ARM</span> (master) records the mix along with the tracks; <span class="key">TAPE</span> lets you hear the master tape instead of the live mix.</li>
 </ul>
 

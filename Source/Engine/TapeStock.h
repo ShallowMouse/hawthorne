@@ -78,25 +78,25 @@ namespace tape
         static const StockInfo stocks[numStocks] = {
             { "Clean (no tape)",          "CLEAN",         "No tape sound at all. Records bit-for-bit what comes in: no saturation, no EQ change, no hiss, no wow or flutter.",
               99.0, 0.0,   -200.0, -200.0, 0.0, 0.0, false, forMultitrack | forMaster },
-            { "US mastering (456-type)",  "456-TYPE +6",   "Ampex's +6 tape of 1975, the studio standard for the next twenty years. Warm, fat and punchy. A strong low-end bump (around 60 Hz at 15 ips) and a slightly rounded top. Saturates fairly early and musically - push the levels for glue and thickness on drums and bass. Moderate hiss. The classic 70s / 80s rock sound.",
+            { "Ampex 456 Grand Master",  "AMPEX 456",   "Ampex's +6 tape of 1975, the studio standard for the next twenty years. Warm, fat and punchy. A strong low-end bump (around 60 Hz at 15 ips) and a slightly rounded top. Saturates fairly early and musically - push the levels for glue and thickness on drums and bass. Moderate hiss. The classic 70s / 80s rock sound.",
               12.0, 0.025, -58.0,  -63.0,  2.0, 0.5, false, forMultitrack },
-            { "High output (GP9-type)",   "GP9-TYPE +9",   "Quantegy's 1998 refinement of 3M's 996, among the last new analogue tapes. Clean, tight and modern. The most headroom: you can hit it hard before it gets gritty, so it colours the least. Smaller low bump, full top end, low hiss. Tape glue without obvious distortion.",
+            { "Quantegy GP9",             "QUANTEGY GP9",   "Quantegy's 1998 refinement of 3M's 996, among the last new analogue tapes. Clean, tight and modern. The most headroom: you can hit it hard before it gets gritty, so it colours the least. Smaller low bump, full top end, low hiss. Tape glue without obvious distortion.",
               15.0, 0.015, -62.0,  -66.0,  1.5, 0.0, false, forMultitrack },
-            { "Early 70s (250-type)",     "250-TYPE",      "3M's Scotch 250, the US studio tape of the early 70s before 456 - Abbey Road had moved to Scotch by about 1969. Lo-fi and characterful. Breaks up soonest, with the most even-harmonic grit. Darker, softer top end, the biggest woolly low bump, and the most hiss and modulation noise.",
+            { "Scotch 250",               "SCOTCH 250",      "3M's Scotch 250, the US studio tape of the early 70s before 456 - Abbey Road had moved to Scotch by about 1969. Lo-fi and characterful. Breaks up soonest, with the most even-harmonic grit. Darker, softer top end, the biggest woolly low bump, and the most hiss and modulation noise.",
               8.0,  0.07,  -52.0,  -58.0,  2.5, 2.0, false, forMultitrack },
-            { "European (911-type)",      "911-TYPE +9",   "BASF's 1986 answer to 456, with a stable binder. Smooth and polished. Lots of headroom, a firm but restrained low end and a silky top (European CCIR EQ). The quietest tape. Refined rather than vibey.",
+            { "BASF SM911",               "BASF SM 911",   "BASF's 1986 answer to 456, with a stable binder. Smooth and polished. Lots of headroom, a firm but restrained low end and a silky top (European CCIR EQ). The quietest tape. Refined rather than vibey.",
               14.0, 0.02,  -63.0,  -67.0,  1.2, 0.3, true, forMultitrack },
-            { "EMI 60s (Emitape-type)",   "EMITAPE",       "The Emitape the Beatles recorded on at Abbey Road from Please Please Me to Rubber Soul. Standard level: breaks up early and sweetly with plenty of even harmonics, a soft top, a round low end and audible hiss (CCIR EQ). Pair it with the J37 or the 3M M23 - and the BTR2 for the master.",
+            { "EMI Emitape 77",           "EMITAPE 77",       "The Emitape the Beatles recorded on at Abbey Road from Please Please Me to Rubber Soul. Standard level: breaks up early and sweetly with plenty of even harmonics, a soft top, a round low end and audible hiss (CCIR EQ). Pair it with the J37 or the 3M M23 - and the BTR2 for the master.",
               7.0,  0.06,  -53.0,  -58.5,  2.3, 1.6, true, forMultitrack | forMaster },
-            { "Mastering (499-type)",     "499-TYPE +9",   "Ampex's Grand Master Gold of the early 90s, mastering-grade US tape for the 2-track. Big headroom with a warm, solid low end and a clean top: glues the mix without obvious distortion. Low noise.",
+            { "Ampex 499 Grand Master Gold", "AMPEX 499",   "Ampex's Grand Master Gold of the early 90s, mastering-grade US tape for the 2-track. Big headroom with a warm, solid low end and a clean top: glues the mix without obvious distortion. Low noise.",
               14.0, 0.02,  -62.0,  -67.0,  2.0, 0.3, false, forMaster },
-            { "Mastering (SM900-type)",   "SM900 +12",     "BASF's very high output mastering tape of the late 90s, made to take on 499 and 996. Huge headroom and the lowest noise: the cleanest tape print, a subtle firm low end and a full top. For loud, modern masters.",
+            { "Emtec SM900",              "EMTEC SM 900",     "BASF's very high output mastering tape of the late 90s, made to take on 499 and 996. Huge headroom and the lowest noise: the cleanest tape print, a subtle firm low end and a full top. For loud, modern masters.",
               17.0, 0.012, -65.0,  -70.0,  1.6, 0.0, true, forMaster },
-            { "EMI 888 (early 60s)",      "EMITAPE 888",   "EMI's early-60s studio tape, made for Abbey Road. The dirtiest of the EMI tapes: lo-fi and grainy, breaking up early with gritty upper mids, a soft top, a round low end and plenty of hiss (CCIR EQ). Great on rock and on acoustic guitars and percussion.",
+            { "EMI Emitape 888",      "EMITAPE 888",   "EMI's early-60s studio tape, made for Abbey Road. The dirtiest of the EMI tapes: lo-fi and grainy, breaking up early with gritty upper mids, a soft top, a round low end and plenty of hiss (CCIR EQ). Great on rock and on acoustic guitars and percussion.",
               6.5,  0.07,  -51.0,  -56.5,  2.4, 2.2, true, forMultitrack | forMaster },
-            { "EMI 811 (mid-late 60s)",   "EMITAPE 811",   "The Beatles' tape from Revolver (1966) until Abbey Road moved to Scotch around 1969. Cleaner than the 888: a better top end and a little less distortion, still warm and sweet when pushed (CCIR EQ). Character without the grit - lovely on single instruments like piano.",
+            { "EMI Emitape 811",   "EMITAPE 811",   "The Beatles' tape from Revolver (1966) until Abbey Road moved to Scotch around 1969. Cleaner than the 888: a better top end and a little less distortion, still warm and sweet when pushed (CCIR EQ). Character without the grit - lovely on single instruments like piano.",
               8.0,  0.05,  -54.0,  -59.0,  2.2, 1.2, true, forMultitrack | forMaster },
-            { "EMI 815 (early 70s)",      "EMITAPE 815",   "EMI's early-70s tape: the cleanest of the three. A flatter top end and less distortion, with a rounder bass and natural highs (CCIR EQ). Smooth and controlled - the one to use when you want the EMI sound with the least colour.",
+            { "EMI Emitape 815",      "EMITAPE 815",   "EMI's early-70s tape: the cleanest of the three. A flatter top end and less distortion, with a rounder bass and natural highs (CCIR EQ). Smooth and controlled - the one to use when you want the EMI sound with the least colour.",
               10.5, 0.03,  -58.0,  -62.0,  2.0, 0.5, true, forMultitrack | forMaster },
         };
         return stocks[juce::jlimit (0, numStocks - 1, (int) s)];
@@ -114,7 +114,7 @@ namespace tape
             case Stock::mastering499: return 9;
             case Stock::sm900:        return 12;
             case Stock::emi815:       return 3;
-            default:                  return 0;     // standard-level tapes (250, Emitape, EMI 888 / 811) and clean
+            default:                  return 0;     // standard-level tapes (Scotch 250, Emitape 77 / 888 / 811) and clean
         }
     }
     inline double recommendedBias (Stock s)
