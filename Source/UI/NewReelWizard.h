@@ -21,7 +21,21 @@ struct NewReelChoice
     int stock = 1;
     int machine = 0;
     int nr = 0;
+    double bpm = 120.0;            // 0: no tempo (Hawthorne on its own)
+    int beatsPerBar = 4;
+    int desk = -1;                 // inside MELVILLE: WHITMAN's desk (-1: as it is)
+    bool usualCables = true;       // inside MELVILLE: the patchbay starts with the usual cables, or empty
 };
+
+/** Inside MELVILLE the wizard also asks for the desk and the patchbay. */
+inline bool wizardAsksStudio()
+{
+   #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
+    return melville::isHosted();
+   #else
+    return false;
+   #endif
+}
 
 //==============================================================================
 /** A tape box, drawn: the stock's colours, its name on the band, and the reel through the window. */
@@ -141,7 +155,8 @@ inline void drawNrUnit (juce::Graphics& g, juce::Rectangle<float> r, int system,
     A new session (or a new reel on a session), step by step and in pictures, laid out like
     the machine room: a card per choice with its picture, where and when it came from, its
     story and its sound, oldest first. Steps: the session, the machine (and the tracks), the
-    tape (and the speed), the noise reduction, and a last look at the tape box.
+    tape (and the speed), the noise reduction, the tempo, and inside MELVILLE the desk and the
+    patchbay, then a last look at the tape box.
 */
 class NewReelWizard : public juce::Component
 {
@@ -158,9 +173,21 @@ public:
         : choice (start), look (lk), forSession (sessionName), onCreate (std::move (create)), list (*this)
     {
         if (withSession) steps.push_back (Step::session);
-        for (auto s : { Step::machine, Step::tape, Step::nr, Step::ready }) steps.push_back (s);
+        for (auto s : { Step::machine, Step::tape, Step::nr, Step::tempo }) steps.push_back (s);
+       #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
+        if (wizardAsksStudio())
+        {
+            if (! melville::deskCards().empty())
+            {
+                steps.push_back (Step::desk);
+                if (choice.desk < 0 && melville::currentDesk) choice.desk = melville::currentDesk();
+            }
+            steps.push_back (Step::wiring);
+        }
+       #endif
+        steps.push_back (Step::ready);
 
-        for (auto* e : { &nameEd, &artistEd })
+        for (auto* e : { &nameEd, &artistEd, &bpmEd })
         {
             e->setFont (font (20.0f, false));
             e->setColour (juce::TextEditor::backgroundColourId, look.panel);
@@ -175,6 +202,11 @@ public:
         artistEd.setTextToShowWhenEmpty ("Who it's for (optional)", look.dim);
         nameEd.setText (choice.name, false);
         artistEd.setText (choice.artist, false);
+        bpmEd.setInputRestrictions (6, "0123456789.");
+        bpmEd.setJustification (juce::Justification::centred);
+        bpmEd.setFont (font (34.0f, true));
+        bpmEd.setText (choice.bpm > 0.0 ? juce::String (choice.bpm, choice.bpm == std::floor (choice.bpm) ? 0 : 1) : juce::String ("120"), false);
+        bpmEd.onTextChange = [this] { readBpm(); repaint(); };
 
         view.setViewedComponent (&list, false);
         view.setScrollBarsShown (true, false);
@@ -230,6 +262,7 @@ public:
         backButton.setBounds (foot.removeFromRight (110));
         nameEd.setBounds (60, 210, getWidth() - 120, 44);
         artistEd.setBounds (60, 320, getWidth() - 120, 44);
+        bpmEd.setBounds (60, 210, 200, 64);
         layoutStep();
     }
 
@@ -265,6 +298,9 @@ public:
             case Step::machine: paintChips (g, "TRACKS"); break;
             case Step::tape:    paintChips (g, "SPEED"); break;
             case Step::nr:      break;
+            case Step::tempo:   paintTempo (g); paintChips (g, "BAR"); break;
+            case Step::desk:    break;
+            case Step::wiring:  break;
             case Step::ready:   paintReady (g); break;
         }
     }
@@ -282,7 +318,7 @@ public:
     }
 
 private:
-    enum class Step { session, machine, tape, nr, ready };
+    enum class Step { session, machine, tape, nr, tempo, desk, wiring, ready };
 
     //--------------------------------------------------------------------------
     /** The cards of a step, in a scrolling list (like the machine room). */
@@ -352,6 +388,9 @@ private:
             case Step::machine: return "MACHINE";
             case Step::tape:    return "TAPE";
             case Step::nr:      return "NOISE REDUCTION";
+            case Step::tempo:   return "TEMPO";
+            case Step::desk:    return "DESK";
+            case Step::wiring:  return "PATCHBAY";
             case Step::ready:   return "READY";
         }
         return {};
@@ -365,6 +404,9 @@ private:
             case Step::machine: return "Which machine, and how many tracks?";
             case Step::tape:    return "Which tape, at what speed?";
             case Step::nr:      return "Noise reduction?";
+            case Step::tempo:   return "What tempo?";
+            case Step::desk:    return "Which desk will it be mixed on?";
+            case Step::wiring:  return "How should the patchbay start?";
             case Step::ready:   return forSession.isNotEmpty() ? "A new reel for \"" + forSession + "\"" : "Ready to thread up";
         }
         return {};
@@ -377,7 +419,11 @@ private:
             case Step::session: return "A session holds the reels for one job: an album, a single, a client.";
             case Step::machine: return "Oldest first. The machine can be changed later; the track count can't.";
             case Step::tape:    return "Oldest first. The tape stays with the reel for life. Slower tape: bigger low bump, darker top, more hiss.";
-            case Step::nr:      return "Oldest first. Hiss reduction across the whole reel: can be changed later, and switched per track.";
+            case Step::nr:      return "None first, then oldest first. Hiss reduction across the whole reel: can be changed later, and switched per track.";
+            case Step::tempo:   return wizardAsksStudio() ? "The song's tempo and bar: the click, THOREAU and the bar counter follow it. Can be changed later."
+                                                         : "For the click and the bar counter. Can be changed later, or none at all.";
+            case Step::desk:    return "Oldest first. A new reel starts with a clean desk: every fader, EQ and send back to flat.";
+            case Step::wiring:  return "A new reel starts with a clean studio. Every connection is a cable you can see and pull.";
             case Step::ready:   return "Check the box. CREATE threads it up on the deck.";
         }
         return {};
@@ -388,9 +434,11 @@ private:
     {
         index = juce::jlimit (0, (int) steps.size() - 1, i);
         const bool session = steps[(size_t) index] == Step::session;
+        const bool tempo = steps[(size_t) index] == Step::tempo;
         nameEd.setVisible (session);
         artistEd.setVisible (session);
-        if (session) nameEd.grabKeyboardFocus(); else grabKeyboardFocus();
+        bpmEd.setVisible (tempo && choice.bpm > 0.0);
+        if (session) nameEd.grabKeyboardFocus(); else if (bpmEd.isVisible()) bpmEd.grabKeyboardFocus(); else grabKeyboardFocus();
         backButton.setEnabled (index > 0);
         nextButton.setButtonText (index == (int) steps.size() - 1 ? "CREATE" : "NEXT");
         hoverChip = -1;
@@ -417,6 +465,17 @@ private:
                 return;
             }
         }
+        if (steps[(size_t) index] == Step::tempo && choice.bpm > 0.0)
+        {
+            readBpm();
+            if (choice.bpm < 20.0 || choice.bpm > 400.0)
+            {
+                bpmEd.setColour (juce::TextEditor::outlineColourId, Colours::red);
+                bpmEd.grabKeyboardFocus();
+                bpmEd.repaint();
+                return;
+            }
+        }
         if (index < (int) steps.size() - 1) { go (index + 1); return; }
 
         const auto made = choice;
@@ -438,6 +497,10 @@ private:
         if (s == Step::machine) return tape::multitrackOrder();
         if (s == Step::tape) return stocksFor (tape::forMultitrack);             // (oldest first, clean last)
         if (s == Step::nr) for (int k = 0; k < nr::numSystems; ++k) v.push_back (nr::order()[k]);
+       #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
+        if (s == Step::desk) for (auto& d : melville::deskCards()) v.push_back (d.id);
+       #endif
+        if (s == Step::wiring) v = { 1, 0 };      // the usual cables, an empty bay
         return v;
     }
 
@@ -448,6 +511,8 @@ private:
             case Step::machine: return choice.machine == value;
             case Step::tape:    return choice.stock == value;
             case Step::nr:      return choice.nr == value;
+            case Step::desk:    return choice.desk == value;
+            case Step::wiring:  return (choice.usualCables ? 1 : 0) == value;
             default:            return false;
         }
     }
@@ -459,6 +524,8 @@ private:
             case Step::machine: choice.machine = value; break;
             case Step::tape:    choice.stock = value; break;
             case Step::nr:      choice.nr = value; break;
+            case Step::desk:    choice.desk = value; break;
+            case Step::wiring:  choice.usualCables = value != 0; break;
             default: break;
         }
     }
@@ -466,14 +533,14 @@ private:
     void layoutStep()
     {
         const auto s = steps[(size_t) index];
-        const bool cardsHere = s == Step::machine || s == Step::tape || s == Step::nr;
+        const bool cardsHere = s == Step::machine || s == Step::tape || s == Step::nr || s == Step::desk || s == Step::wiring;
         view.setVisible (cardsHere);
         if (cardsHere)
         {
-            const int bottom = s == Step::nr ? getHeight() - 84 : getHeight() - 136;
+            const int bottom = (s == Step::machine || s == Step::tape) ? getHeight() - 136 : getHeight() - 84;
             view.setBounds (30, 124, getWidth() - 60, bottom - 124);
             const int w = view.getWidth() - view.getScrollBarThickness() - 6;
-            list.set (valuesFor (s), 2, s == Step::machine ? 290 : s == Step::tape ? 210 : 190, w);
+            list.set (valuesFor (s), 2, s == Step::machine ? 290 : s == Step::tape ? 210 : s == Step::desk ? 300 : s == Step::wiring ? 330 : 190, w);
         }
         layoutChips();
     }
@@ -502,6 +569,23 @@ private:
         else if (s == Step::tape)
             add ({ juce::String (juce::CharPointer_UTF8 ("7\xc2\xbd ips")), "15 ips", "30 ips" }, { 75, 150, 300 },
                  (int) std::round (choice.ips * 10.0), 96, [this] (int v) { choice.ips = v / 10.0; });
+        else if (s == Step::tempo)
+        {
+            // the bar; on its own Hawthorne can also have no tempo at all
+            juce::StringArray labels { "2/4", "3/4", "4/4", "5/4", "6/4", "7/4" };
+            std::vector<int> values { 2, 3, 4, 5, 6, 7 };
+            if (! wizardAsksStudio()) { labels.add ("NO TEMPO"); values.push_back (0); }
+            add (labels, values, choice.bpm > 0.0 ? choice.beatsPerBar : 0, 74, [this] (int v)
+            {
+                if (v == 0) { choice.bpm = 0.0; bpmEd.setVisible (false); }
+                else
+                {
+                    choice.beatsPerBar = v;
+                    if (choice.bpm <= 0.0) { choice.bpm = 120.0; bpmEd.setVisible (true); readBpm(); }
+                }
+            });
+            if (! wizardAsksStudio() && ! chips.empty()) chips.back().r.setWidth (110);
+        }
     }
 
     int chipAt (juce::Point<int> p) const
@@ -583,6 +667,34 @@ private:
                 cardText (g, a, chosen, nr::info (value).name, nr::era (value), nr::info (value).description, {}, 5);
                 break;
             }
+           #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
+            case Step::desk:
+            {
+                for (auto& d : melville::deskCards())
+                    if (d.id == value)
+                    {
+                        if (d.draw) d.draw (g, a.removeFromTop (110).toFloat().withSizeKeepingCentre ((float) juce::jmin (a.getWidth(), 260), 110.0f));
+                        a.removeFromTop (8);
+                        cardText (g, a, chosen, d.name, d.maker, d.history, d.sound, 5);
+                    }
+                break;
+            }
+           #endif
+            case Step::wiring:
+            {
+                drawBay (g, a.removeFromTop (130).toFloat(), value != 0);
+                a.removeFromTop (10);
+                if (value != 0)
+                    cardText (g, a, chosen, "The usual cables", "Your usual wiring, or MELVILLE's",
+                              "Interface into the tracks, the tracks through EMERSON to WHITMAN and back for the 2-track, "
+                              "the mix and the click to TWAIN, TWAIN to the speakers and headphones: all as cables on the bay. "
+                              "Pull or move any of them.", {}, 6);
+                else
+                    cardText (g, a, chosen, "An empty patchbay", "Nothing connected",
+                              "Every cable out: nothing reaches the tape, the desk or the speakers until you patch it. "
+                              "For building the studio up from scratch.", {}, 6);
+                break;
+            }
             default: break;
         }
     }
@@ -620,6 +732,78 @@ private:
             drawTapeBox (g, { shelf.getX() + (float) i * (bw + gap), shelf.getY(), bw, bw }, show[i], font (12.0f, true));
     }
 
+    /** A strip of patchbay: two rows of jacks, with cables hanging between them (or none). */
+    void drawBay (juce::Graphics& g, juce::Rectangle<float> r, bool cables) const
+    {
+        auto bay = r.withSizeKeepingCentre (juce::jmin (r.getWidth(), 360.0f), 110.0f);
+        g.setColour (juce::Colour (0xff1c1d1f));
+        g.fillRoundedRectangle (bay, 4.0f);
+        const int n = 10;
+        const float pitch = bay.getWidth() / (float) n;
+        std::vector<juce::Point<float>> top, bottom;
+        for (int i = 0; i < n; ++i)
+        {
+            const float x = bay.getX() + pitch * ((float) i + 0.5f);
+            top.push_back ({ x, bay.getY() + 30.0f });
+            bottom.push_back ({ x, bay.getBottom() - 30.0f });
+        }
+        for (auto& p : top)    { g.setColour (juce::Colour (0xff3a3c40)); g.fillEllipse (juce::Rectangle<float> (13.0f, 13.0f).withCentre (p)); g.setColour (juce::Colours::black); g.fillEllipse (juce::Rectangle<float> (7.0f, 7.0f).withCentre (p)); }
+        for (auto& p : bottom) { g.setColour (juce::Colour (0xff3a3c40)); g.fillEllipse (juce::Rectangle<float> (13.0f, 13.0f).withCentre (p)); g.setColour (juce::Colours::black); g.fillEllipse (juce::Rectangle<float> (7.0f, 7.0f).withCentre (p)); }
+        if (! cables) return;
+        const juce::Colour cols[] = { juce::Colour (0xffc8322a), juce::Colour (0xffe0b23a), juce::Colour (0xff2f6fae), juce::Colour (0xff3f8f4f) };
+        const int from[] = { 0, 1, 2, 3, 5, 7, 8 }, to[] = { 2, 3, 6, 4, 9, 0, 5 };
+        for (int k = 0; k < 7; ++k)
+        {
+            const auto a = top[(size_t) from[k]], b = bottom[(size_t) to[k]];
+            juce::Path p;
+            p.startNewSubPath (a);
+            p.cubicTo (a.translated (0.0f, 40.0f), b.translated (0.0f, -40.0f), b);
+            g.setColour (cols[k % 4]);
+            g.strokePath (p, juce::PathStrokeType (3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
+    }
+
+    /** A metronome, swinging at the tempo chosen (still with no tempo). */
+    void paintTempo (juce::Graphics& g) const
+    {
+        g.setColour (look.dim);
+        g.setFont (font (14.0f, true));
+        if (choice.bpm > 0.0) g.drawText ("BEATS PER MINUTE", 60, 184, 300, 20, juce::Justification::centredLeft);
+        else                  g.drawText ("NO TEMPO: the bar counter and click are off for this reel", 60, 184, 600, 20, juce::Justification::centredLeft);
+        const juce::Point<float> base ((float) getWidth() - 260.0f, 520.0f);
+        juce::Path body;
+        body.startNewSubPath (base.x - 90.0f, base.y);
+        body.lineTo (base.x - 40.0f, base.y - 300.0f);
+        body.lineTo (base.x + 40.0f, base.y - 300.0f);
+        body.lineTo (base.x + 90.0f, base.y);
+        body.closeSubPath();
+        g.setColour (juce::Colour (0xff5a3b26));
+        g.fillPath (body);
+        g.setColour (juce::Colour (0xfff1ead6));
+        g.fillRect (base.x - 14.0f, base.y - 270.0f, 28.0f, 200.0f);
+        const float lean = choice.bpm > 0.0 ? juce::jlimit (-0.45f, 0.45f, 0.45f - (float) (choice.bpm - 40.0) / 300.0f) : 0.0f;
+        const juce::Point<float> pivot (base.x, base.y - 50.0f);
+        const auto tip = pivot.translated (std::sin (lean) * 250.0f, -std::cos (lean) * 250.0f);
+        g.setColour (juce::Colour (0xff1b1916));
+        g.drawLine ({ pivot, tip }, 4.0f);
+        g.setColour (look.accent);
+        const auto weight = pivot.translated (std::sin (lean) * 160.0f, -std::cos (lean) * 160.0f);
+        g.fillRect (juce::Rectangle<float> (26.0f, 18.0f).withCentre (weight));
+        if (choice.bpm > 0.0)
+        {
+            g.setColour (look.text);
+            g.setFont (font (16.0f, true));
+            g.drawText (juce::String (choice.beatsPerBar) + "/4", 280, 230, 120, 30, juce::Justification::centredLeft);
+        }
+    }
+
+    void readBpm()
+    {
+        const double v = bpmEd.getText().getDoubleValue();
+        if (v > 0.0) choice.bpm = v;
+        bpmEd.setColour (juce::TextEditor::outlineColourId, look.dim.withAlpha (0.6f));
+    }
+
     void paintReady (juce::Graphics& g) const
     {
         // the box, the machine and the rack, and the label on the box
@@ -627,7 +811,7 @@ private:
         drawMachinePreview (g, { 380.0f, 140.0f, 300.0f, 130.0f }, MachineSkin::multitrack (choice.machine));
         drawNrUnit (g, { 380.0f, 300.0f, 300.0f, 90.0f }, choice.nr, font (12.0f, true));
 
-        auto label = juce::Rectangle<float> (720.0f, 140.0f, (float) getWidth() - 760.0f, 300.0f);
+        auto label = juce::Rectangle<float> (720.0f, 140.0f, (float) getWidth() - 760.0f, 400.0f);
         g.setColour (juce::Colour (0xfff1ead6));
         g.fillRoundedRectangle (label, 3.0f);
         const juce::Colour rule (0xff9db4c9), ink (0xff1b2a6b), key (0xff5d6a7a);
@@ -665,11 +849,21 @@ private:
         row ("TAPE", tape::info ((tape::Stock) choice.stock).name);
         row ("SPEED", choice.ips == 7.5 ? juce::String (juce::CharPointer_UTF8 ("7\xc2\xbd ips")) : juce::String ((int) choice.ips) + " ips");
         row ("NR", nr::info (choice.nr).name);
+        row ("TEMPO", choice.bpm > 0.0 ? juce::String (choice.bpm, choice.bpm == std::floor (choice.bpm) ? 0 : 1) + " bpm  " + juce::String (choice.beatsPerBar) + "/4"
+                                       : juce::String ("none"));
+       #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
+        if (wizardAsksStudio())
+        {
+            for (auto& d : melville::deskCards())
+                if (d.id == choice.desk) row ("DESK", d.name);
+            row ("BAY", choice.usualCables ? "the usual cables" : "empty");
+        }
+       #endif
 
         g.setColour (look.dim);
         g.setFont (font (14.0f, false));
-        g.drawText ("Fixed for the reel's life: the tracks and the tape. Change the machine and NR whenever you like.",
-                    40, 470, getWidth() - 80, 22, juce::Justification::centredLeft);
+        g.drawText ("Fixed for the reel's life: the tracks and the tape. Change the machine, NR and tempo whenever you like.",
+                    40, 570, getWidth() - 80, 22, juce::Justification::centredLeft);
     }
 
     NewReelChoice choice;
@@ -681,7 +875,7 @@ private:
     int index = 0, hoverChip = -1;
     CardList list;
     juce::Viewport view;
-    juce::TextEditor nameEd, artistEd;
+    juce::TextEditor nameEd, artistEd, bpmEd;
     juce::TextButton backButton { "BACK" }, nextButton { "NEXT" }, cancelButton { "CANCEL" };
 
     JUCE_DECLARE_NON_COPYABLE (NewReelWizard)

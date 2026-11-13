@@ -60,8 +60,8 @@ namespace nr
         };
         return i[juce::jlimit (0, numSystems - 1, s)];
     }
-    /** The order they're offered in: oldest first (Dolby A 1966, dbx 1971, Dolby SR 1986), none last. */
-    inline const int* order() { static const int o[numSystems] = { 1, 3, 2, 0 }; return o; }
+    /** The order they're offered in: none first, then oldest first (Dolby A 1966, dbx 1971, Dolby SR 1986). */
+    inline const int* order() { static const int o[numSystems] = { 0, 1, 3, 2 }; return o; }
     /** Where each came from, and when. */
     inline const char* era (int s)
     {

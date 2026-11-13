@@ -672,6 +672,31 @@ static void applyNr (ReelT& reel, int system)
     if (reel.noiseReduction != nr::none) reel.info.set ("Noise Reduction", nr::info (reel.noiseReduction).name);
 }
 
+template <typename ReelT>
+static void applyTempo (ReelT& reel, const NewReelChoice& c)
+{
+    reel.tempoBpm = c.bpm > 0.0 ? juce::jlimit (20.0, 400.0, c.bpm) : 0.0;
+    reel.beatsPerBar = juce::jlimit (1, 16, c.beatsPerBar);
+}
+
+static void studioFor (const NewReelChoice& c)
+{
+    // inside MELVILLE: the new reel's studio starts clean, on the desk and patchbay chosen
+   #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
+    if (melville::isHosted())
+    {
+        auto& l = melville::library();
+        l.newStudio.bpm = c.bpm;
+        l.newStudio.beatsPerBar = c.beatsPerBar;
+        l.newStudio.desk = c.desk;
+        l.newStudio.usualCables = c.usualCables;
+        l.newStudioPending = true;
+    }
+   #else
+    juce::ignoreUnused (c);
+   #endif
+}
+
 void LibraryView::wizardGallery (const juce::File& dir)
 {
     NewReelWizard::gallery (dir, wizardLook());
@@ -697,11 +722,13 @@ void LibraryView::newSession()
         if (reel == nullptr) { showError ("New Session", err); return; }
         reel->machine = c.machine;
         applyNr (*reel, c.nr);
+        applyTempo (*reel, c);
         reel->save (err);
 
         const auto file = reel->getFile();
         refresh();
         select (file);
+        studioFor (c);
         if (onLoadReel) onLoadReel (file);
     });
 }
@@ -905,11 +932,13 @@ void LibraryView::newReel()
         if (reel == nullptr) { showError ("New Reel", err); return; }
         reel->machine = c.machine;
         applyNr (*reel, c.nr);
+        applyTempo (*reel, c);
         reel->save (err);
 
         const auto file = reel->getFile();
         refresh();
         select (file);
+        studioFor (c);
         if (onLoadReel) onLoadReel (file);
     });
 }
