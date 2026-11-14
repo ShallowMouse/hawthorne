@@ -99,8 +99,9 @@ public:
     juce::String setSpeed (double deckIps, bool variOn, double variPercent, bool save = true);
     double getTargetSpeed() const noexcept { return targetRate.load(); }
     double getSpeed() const noexcept       { return currentRate.load(); }   // what the tape is doing now
-    static constexpr double maxVarispeedPercent = 50.0;
-    static constexpr double maxSpeedRatio = 4.0 * 1.5;                     // 7.5 ips reel on a 30 ips deck, +50 %
+    // VARI: an octave each way - half speed (-50 %) to twice the speed (+100 %), -12 .. +12 st on any deck speed
+    static constexpr double minVarispeedPercent = -50.0, maxVarispeedPercent = 100.0;
+    static constexpr double maxSpeedRatio = 4.0 * (1.0 + maxVarispeedPercent / 100.0);   // 7.5 ips reel on a 30 ips deck, VARI at the top
 
     bool isPlaying() const noexcept    { return playing.load(); }
     bool isRecording() const noexcept  { return recording.load(); }

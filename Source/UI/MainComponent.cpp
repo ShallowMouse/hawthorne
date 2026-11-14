@@ -531,12 +531,13 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     ips30Key.onClick = [this] { if (reel != nullptr) changeSpeed (30.0, reel->variOn, reel->variPercent); };
     variKey.onClick  = [this] { if (reel != nullptr) changeSpeed (reel->deckIps, ! reel->variOn, reel->variPercent); };
 
-    variKnob.setRange (-TapeEngine::maxVarispeedPercent, TapeEngine::maxVarispeedPercent, 0.0);
+    variKnob.setRange (TapeEngine::minVarispeedPercent, TapeEngine::maxVarispeedPercent, 0.0);
+    variKnob.setSkewFactorFromMidPoint (0.0);            // (0 at the top: an octave down to the left, an octave up to the right)
     variKnob.setDoubleClickReturnValue (true, 0.0);
     variKnob.setMouseDragSensitivity (800);              // 0.125 % per pixel; type a value for exact
     variKnob.setVelocityModeParameters (0.4, 1, 0.0, true, juce::ModifierKeys::shiftModifier);   // shift = fine
     variKnob.setWantsKeyboardFocus (false);
-    variKnob.setTooltip ("Varispeed -50 % .. +50 %. Drag (shift = fine), double-click for 0.");
+    variKnob.setTooltip ("Varispeed -50 % .. +100 % (an octave down / up). Drag (shift = fine), double-click for 0.");
     variKnob.onValueChange = [this] { if (reel != nullptr) changeSpeed (reel->deckIps, true, variKnob.getValue(), false); };
     variKnob.onDragEnd = [this] { saveReel(); };
     addAndMakeVisible (variKnob);
@@ -558,13 +559,13 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     {
         if (reel == nullptr) return;
         const double v = variPctLabel.getText().retainCharacters ("+-0123456789.").getDoubleValue();
-        changeSpeed (reel->deckIps, true, juce::jlimit (-TapeEngine::maxVarispeedPercent, TapeEngine::maxVarispeedPercent, v));
+        changeSpeed (reel->deckIps, true, juce::jlimit (TapeEngine::minVarispeedPercent, TapeEngine::maxVarispeedPercent, v));
     };
     variStLabel.onTextChange = [this]
     {
         if (reel == nullptr) return;
         const double st = variStLabel.getText().retainCharacters ("+-0123456789.").getDoubleValue();
-        changeSpeed (reel->deckIps, true, juce::jlimit (-TapeEngine::maxVarispeedPercent, TapeEngine::maxVarispeedPercent,
+        changeSpeed (reel->deckIps, true, juce::jlimit (TapeEngine::minVarispeedPercent, TapeEngine::maxVarispeedPercent,
                                                         (std::pow (2.0, st / 12.0) - 1.0) * 100.0));
     };
 
@@ -1496,18 +1497,18 @@ void MainComponent::stepSemitone (int direction)
         return;
 
     // In whole semitones from the speed the reel was recorded at - the deck's speed and VARI together.
-    // VARI reaches -50 % (an octave down) but only +50 % (+7 st), so past what it can do the deck's speed
-    // changes, as on a real machine (twice the tape speed is an octave up): it stays on the deck speed it's on
-    // while VARI can get there, a deck speed that needs no VARI at all wins (back to 15 ips at 0), and
-    // otherwise the one that needs the least.
+    // VARI reaches an octave each way; past that the deck's speed changes, as on a real machine (twice the
+    // tape speed is an octave up): it stays on the deck speed it's on while VARI can get there, a deck speed
+    // that needs no VARI at all wins (back to 15 ips at 0, 30 ips at +12), and otherwise the one that needs
+    // the least.
     const double cur = 12.0 * std::log2 (reel->getSpeedRatio());
     const double target = direction > 0 ? std::floor (cur + 1.0e-6) + 1.0 : std::ceil (cur - 1.0e-6) - 1.0;
     const double ratio = std::pow (2.0, target / 12.0);
-    const double maxPct = TapeEngine::maxVarispeedPercent;
+    const double minPct = TapeEngine::minVarispeedPercent, maxPct = TapeEngine::maxVarispeedPercent;
 
     double deck = -1.0, pct = 0.0;
     auto needed = [&] (double d) { return (ratio / (d / reel->ips) - 1.0) * 100.0; };
-    auto reaches = [&] (double p) { return p >= -maxPct - 1.0e-9 && p <= maxPct + 1.0e-9; };
+    auto reaches = [&] (double p) { return p >= minPct - 1.0e-9 && p <= maxPct + 1.0e-9; };
     for (double d : { 7.5, 15.0, 30.0 })                              // (a deck speed with no VARI needed)
         if (std::abs (needed (d)) < 1.0e-6) { deck = d; pct = 0.0; }
     if (deck < 0.0 && reaches (needed (reel->deckIps))) { deck = reel->deckIps; pct = needed (deck); }
@@ -1515,9 +1516,9 @@ void MainComponent::stepSemitone (int direction)
         for (double d : { 7.5, 15.0, 30.0 })
             if (reaches (needed (d)) && (deck < 0.0 || std::abs (needed (d)) < std::abs (pct))) { deck = d; pct = needed (d); }
     if (deck < 0.0)
-        return;                                                       // (past 30 ips + 50 %, or below 7.5 ips - 50 %)
+        return;                                                       // (past 30 ips + 100 %, or below 7.5 ips - 50 %)
 
-    changeSpeed (deck, true, juce::jlimit (-maxPct, maxPct, pct));
+    changeSpeed (deck, true, juce::jlimit (minPct, maxPct, pct));
 }
 
 juce::String MainComponent::speedText() const

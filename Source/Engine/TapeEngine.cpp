@@ -1830,7 +1830,7 @@ juce::String TapeEngine::setSpeed (double deckIps, bool variOn, double variPerce
 
     reel->deckIps = (deckIps == 7.5 || deckIps == 30.0) ? deckIps : 15.0;
     reel->variOn = variOn;
-    reel->variPercent = juce::jlimit (-maxVarispeedPercent, maxVarispeedPercent, variPercent);
+    reel->variPercent = juce::jlimit (minVarispeedPercent, maxVarispeedPercent, variPercent);
     targetRate = reel->getSpeedRatio();
 
     if (save)
