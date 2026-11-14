@@ -1495,13 +1495,29 @@ void MainComponent::stepSemitone (int direction)
     if (reel == nullptr)
         return;
 
-    // From wherever it is now to the next whole semitone up / down.
-    const double cur = reel->variOn ? 12.0 * std::log2 (1.0 + reel->variPercent / 100.0) : 0.0;
-    double target = direction > 0 ? std::floor (cur + 1.0e-6) + 1.0 : std::ceil (cur - 1.0e-6) - 1.0;
-    const double maxSt = 12.0 * std::log2 (1.0 + TapeEngine::maxVarispeedPercent / 100.0);
-    const double minSt = 12.0 * std::log2 (1.0 - TapeEngine::maxVarispeedPercent / 100.0);
-    target = juce::jlimit (std::ceil (minSt - 1.0e-6), std::floor (maxSt + 1.0e-6), target);
-    changeSpeed (reel->deckIps, true, (std::pow (2.0, target / 12.0) - 1.0) * 100.0);
+    // In whole semitones from the speed the reel was recorded at - the deck's speed and VARI together.
+    // VARI reaches -50 % (an octave down) but only +50 % (+7 st), so past what it can do the deck's speed
+    // changes, as on a real machine (twice the tape speed is an octave up): it stays on the deck speed it's on
+    // while VARI can get there, a deck speed that needs no VARI at all wins (back to 15 ips at 0), and
+    // otherwise the one that needs the least.
+    const double cur = 12.0 * std::log2 (reel->getSpeedRatio());
+    const double target = direction > 0 ? std::floor (cur + 1.0e-6) + 1.0 : std::ceil (cur - 1.0e-6) - 1.0;
+    const double ratio = std::pow (2.0, target / 12.0);
+    const double maxPct = TapeEngine::maxVarispeedPercent;
+
+    double deck = -1.0, pct = 0.0;
+    auto needed = [&] (double d) { return (ratio / (d / reel->ips) - 1.0) * 100.0; };
+    auto reaches = [&] (double p) { return p >= -maxPct - 1.0e-9 && p <= maxPct + 1.0e-9; };
+    for (double d : { 7.5, 15.0, 30.0 })                              // (a deck speed with no VARI needed)
+        if (std::abs (needed (d)) < 1.0e-6) { deck = d; pct = 0.0; }
+    if (deck < 0.0 && reaches (needed (reel->deckIps))) { deck = reel->deckIps; pct = needed (deck); }
+    if (deck < 0.0)
+        for (double d : { 7.5, 15.0, 30.0 })
+            if (reaches (needed (d)) && (deck < 0.0 || std::abs (needed (d)) < std::abs (pct))) { deck = d; pct = needed (d); }
+    if (deck < 0.0)
+        return;                                                       // (past 30 ips + 50 %, or below 7.5 ips - 50 %)
+
+    changeSpeed (deck, true, juce::jlimit (-maxPct, maxPct, pct));
 }
 
 juce::String MainComponent::speedText() const
