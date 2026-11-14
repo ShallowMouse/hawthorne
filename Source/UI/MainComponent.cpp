@@ -680,6 +680,25 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
                 case melville::deckRehearse:    rehKey.onClick(); break;
                 case melville::deckLocate:      gotoLocate (arg); break;
                 case melville::deckStoreLocate: storeLocate (arg); break;
+                case melville::deckSemitoneUp:   stepSemitone (1); break;
+                case melville::deckSemitoneDown: stepSemitone (-1); break;
+                case melville::deckSave:         saveReel(); break;
+                case melville::deckGotoEnd:      if (reel != nullptr && ! engine.isRecording()) locate (engine.getReelLength()); break;
+                case melville::deckDeleteMarker:                 // (the marker the counter is in: the last one at or before it)
+                    if (reel != nullptr && ! reel->markers.empty())
+                    {
+                        const auto pos = engine.getPosition();
+                        int at = -1;
+                        for (int k = 0; k < (int) reel->markers.size(); ++k)
+                            if (reel->markers[(size_t) k].position <= pos) at = k;
+                        if (at >= 0)
+                        {
+                            reel->markers.erase (reel->markers.begin() + at);
+                            saveReel();
+                            markers.refresh();
+                        }
+                    }
+                    break;
                 default: break;
             }
             locatorPanel.repaint();
@@ -2916,6 +2935,15 @@ void MainComponent::timerCallback()
    #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
     {
         auto& t = melville::transport();          // (MELVILLE's counter and lamps: with no reel, MELVILLE's clock fills them)
+        t.speed = reel != nullptr ? engine.getTargetSpeed() : 1.0;   // (varispeed / deck ips, for a hardware transport)
+        // bar . beat, exactly as this counter shows it (count-in bars are negative, no bar 0)
+        if (reel == nullptr) t.barBeatState = 0;
+        else
+        {
+            int bar = 0, beat = 0;
+            if (reel->barBeatAt (engine.getPosition(), bar, beat)) { t.bar = bar; t.beat = beat; t.barBeatState = 1; }
+            else t.barBeatState = -1;
+        }
         if (reel != nullptr)
         {
         t.position = engine.getPosition();
