@@ -35,7 +35,7 @@ void TransportKey::paintButton (juce::Graphics& g, bool highlighted, bool down)
         }
         g.setColour (c);
         g.setFont (uiFont (size, true));
-        g.drawText (label, area, juce::Justification::centred);
+        g.drawFittedText (label, area.toNearestInt(), juce::Justification::centred, 1, 0.75f);   // (a long label shrinks to fit)
     };
     auto pressed = [&] (float radius)
     {
@@ -213,6 +213,56 @@ int MeterBridge::layoutForWidth (int width, int minHeight)
     const int h = juce::jmax (needed, minHeight);
     setSize (width, h);
     return h;
+}
+
+void MeterBridge::listenToArmKeys()
+{
+    for (auto* m : modules)
+    {
+        m->armKey().removeMouseListener (this);
+        m->armKey().addMouseListener (this, false);
+    }
+}
+
+int MeterBridge::moduleAt (juce::Point<int> p) const
+{
+    for (int i = 0; i < modules.size(); ++i)
+        if (modules[i]->getBounds().contains (p))
+            return i;
+    return -1;
+}
+
+void MeterBridge::mouseDown (const juce::MouseEvent& e)
+{
+    // only an ARM key starts an arm drag (a right-click is the track menu)
+    armDragging = false;
+    if (e.mods.isPopupMenu()) return;
+    for (int i = 0; i < modules.size(); ++i)
+        if (e.eventComponent == &modules[i]->armKey())
+        {
+            armDragging = true;
+            armDragState = ! modules[i]->armed();
+            armDragDone.assign ((size_t) modules.size(), 0);
+            armDragDone[(size_t) i] = 1;
+            modules[i]->arm (armDragState);
+            return;
+        }
+}
+
+void MeterBridge::mouseDrag (const juce::MouseEvent& e)
+{
+    if (! armDragging) return;
+    const int i = moduleAt (e.getEventRelativeTo (this).getPosition());
+    if (i >= 0 && i < (int) armDragDone.size() && ! armDragDone[(size_t) i])
+    {
+        armDragDone[(size_t) i] = 1;
+        modules[i]->arm (armDragState);
+    }
+}
+
+void MeterBridge::mouseUp (const juce::MouseEvent&)
+{
+    armDragging = false;
 }
 
 void MeterBridge::paint (juce::Graphics& g)
@@ -410,7 +460,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     networkButton.setTooltip ("Hawthorne Link: record audio sent from other PCs");
     audioButton.onClick   = [this] { showAudioSettings(); };
 
-    for (auto* k : { &rtzKey, &rewKey, &ffwKey, &liftKey, &stopKey, &revKey, &playKey, &recKey, &markKey, &clickKey, &inputKey })
+    for (auto* k : { &rtzKey, &rewKey, &ffwKey, &liftKey, &stopKey, &revKey, &playKey, &recKey, &allSafeKey, &allReadyKey, &markKey, &clickKey, &inputKey })
         addAndMakeVisible (k);
     revKey.setIcon (Icon::reverse);
     revKey.onClick = [this] { doReverse(); };
@@ -530,6 +580,16 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
     ips15Key.onClick = [this] { if (reel != nullptr) changeSpeed (15.0, reel->variOn, reel->variPercent); };
     ips30Key.onClick = [this] { if (reel != nullptr) changeSpeed (30.0, reel->variOn, reel->variPercent); };
     variKey.onClick  = [this] { if (reel != nullptr) changeSpeed (reel->deckIps, ! reel->variOn, reel->variPercent); };
+
+    // ALL SAFE / ALL READY: every track at once (arming is locked during a take, as on the keys)
+    auto armAll = [this] (bool on)
+    {
+        if (reel == nullptr || engine.isRecording()) return;
+        for (int t = 0; t < engine.getNumTracks(); ++t)
+            engine.setArmed (t, on);
+    };
+    allSafeKey.onClick  = [armAll] { armAll (false); };
+    allReadyKey.onClick = [armAll] { armAll (true); };
 
     variKnob.setRange (TapeEngine::minVarispeedPercent, TapeEngine::maxVarispeedPercent, 0.0);
     variKnob.setSkewFactorFromMidPoint (0.0);            // (0 at the top: an octave down to the left, an octave up to the right)
@@ -1313,6 +1373,7 @@ void MainComponent::rebuildModules()
         bridge.addAndMakeVisible (m);
     }
 
+    bridge.listenToArmKeys();
     bridge.nrStrip = engine.getNoiseReduction() != nr::none;
     refreshTrackNames();
     refreshInputChoices();
@@ -2413,7 +2474,8 @@ void MainComponent::setupPanels()
 {
     // the transport deck
     for (juce::Component* c : { (juce::Component*) &rtzKey, (juce::Component*) &rewKey, (juce::Component*) &ffwKey, (juce::Component*) &liftKey,
-                                (juce::Component*) &stopKey, (juce::Component*) &revKey, (juce::Component*) &playKey, (juce::Component*) &recKey, (juce::Component*) &markKey,
+                                (juce::Component*) &stopKey, (juce::Component*) &revKey, (juce::Component*) &playKey, (juce::Component*) &recKey,
+                                (juce::Component*) &allSafeKey, (juce::Component*) &allReadyKey, (juce::Component*) &markKey,
                                 (juce::Component*) &clickKey, (juce::Component*) &inputKey, (juce::Component*) &tempoBox, (juce::Component*) &syncSourceButton,
                                 (juce::Component*) &ips7Key, (juce::Component*) &ips15Key, (juce::Component*) &ips30Key, (juce::Component*) &variKey,
                                 (juce::Component*) &variKnob, (juce::Component*) &variPctLabel, (juce::Component*) &variStLabel,
@@ -2422,7 +2484,7 @@ void MainComponent::setupPanels()
     if (melville::isHosted())     // (MELVILLE's CLOCK has the tempo, click and timecode)
         for (juce::Component* c : { (juce::Component*) &clickKey, (juce::Component*) &tempoBox, (juce::Component*) &syncSourceButton })
             c->setVisible (false);
-    transportPanel.minW = 1390; transportPanel.minH = 86; transportPanel.maxH = 220;
+    transportPanel.minW = 1460; transportPanel.minH = 86; transportPanel.maxH = 220;
     transportPanel.onPaint  = [this] (juce::Graphics& g) { paintTransport (g); };
     transportPanel.onLayout = [this] { layoutTransport(); };
     transportPanel.onMouseMove = [this] (const juce::MouseEvent& e) { transportMouseMove (e); };
@@ -3509,6 +3571,15 @@ void MainComponent::layoutTransport()
         key (rtzKey, kw); key (rewKey, kw); key (ffwKey, kw); key (liftKey, kw);
         d.removeFromLeft (gap);
         key (stopKey, kwBig); key (revKey, kwBig); key (playKey, kwBig); key (recKey, kwBig);
+        if (allSafeKey.isVisible())      // the pair by REC, stacked like a remote's small keys
+        {
+            auto col = d.removeFromLeft (kwBig).reduced (0, 6);
+            d.removeFromLeft (6);
+            const int half = (col.getHeight() - 4) / 2;
+            allSafeKey.setBounds (col.removeFromTop (half));
+            col.removeFromTop (4);
+            allReadyKey.setBounds (col.removeFromTop (half));
+        }
         d.removeFromLeft (gap);
         key (markKey, kw);
         key (clickKey, kw);

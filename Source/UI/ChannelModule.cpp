@@ -15,8 +15,9 @@ ChannelModule::ChannelModule (int i) : index (i), meter ("Track " + juce::String
     armButton.setWantsKeyboardFocus (false);
     armButton.setColour (juce::TextButton::buttonOnColourId, Colours::red);
     armButton.setColour (juce::TextButton::textColourOnId, Colours::text);
-    armButton.setTooltip ("Record ready (arm)");
-    armButton.onClick = [this] { if (onArm) onArm (index, ! isArmed); };
+    armButton.setTooltip ("Record ready (arm). Drag along the row to arm several tracks at once.");
+    // acts on the press, like a machine's key - and so a drag along the row can carry on from it
+    // (the press is handled by the bridge, which follows the drag across the other modules)
     addAndMakeVisible (armButton);
 }
 

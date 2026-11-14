@@ -30,6 +30,11 @@ public:
     void setNr (int system, int mode, int lamp);
 
     std::function<void (int track, bool arm)>                 onArm;
+    /** The ARM key, so the bridge can follow a drag along the row, and this track's state. */
+    juce::Button& armKey() { return armButton; }
+    bool armed() const { return isArmed; }
+    /** Arm or safe this track (the bridge, dragging across the row). */
+    void arm (bool on) { if (onArm) onArm (index, on); }
     std::function<void (int track)>                           onRenameRequest;
     std::function<void (int track)>                           onMenuRequest;     // right-click: import / export
     std::function<void (int track, int mode)>                 onNrMode;

@@ -57,8 +57,19 @@ public:
     int layoutForWidth (int width, int minHeight);
     void paint (juce::Graphics&) override;
 
+    /** Press an ARM key and drag along the row: every track you cross takes the state the first
+        one went to, so one swipe arms (or safes) a block of tracks, as on a console. */
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp   (const juce::MouseEvent&) override;
+    /** Called when the modules are rebuilt, to listen to their ARM keys. */
+    void listenToArmKeys();
+
 private:
+    int moduleAt (juce::Point<int>) const;
     std::vector<juce::Rectangle<int>> rowPanels;
+    bool armDragging = false, armDragState = false;
+    std::vector<char> armDragDone;
 };
 
 //==============================================================================
@@ -258,6 +269,8 @@ private:
                  inputKey { "INPUT", "INPUT: armed tracks always play their inputs, so you hear what you're recording while the tape plays "
                                      "(drums from THOREAU, say). Off: auto input, as on tape - armed tracks hear their input when stopped or "
                                      "recording, and the tape on playback.", Colours::mustard },
+                 allSafeKey  { "ALL SAFE",  "Every track out of record-ready in one press, as on a machine's remote. Locked while a take is rolling.", Colours::mustard },
+                 allReadyKey { "ALL READY", "Arm every track at once. Locked while a take is rolling.", Colours::red },
                  liftKey { "CUE", "Lifter defeat: keep the tape on the heads while it spools, so you hear it wind (the chatter) - on the meters and outputs, never recorded.", Colours::mustard };
 
     juce::Viewport bridgeView;
