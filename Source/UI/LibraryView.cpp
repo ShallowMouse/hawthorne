@@ -645,6 +645,11 @@ void LibraryView::updateSelection()
     deleteButton.setEnabled (s != nullptr && (r != nullptr ? ! isOnDeck (r->file) : s->reels.empty()));
     deleteButton.setButtonText (r == nullptr && s != nullptr ? "DELETE SESSION" : "DELETE");
     backButton.setVisible (getLoadedReel != nullptr && getLoadedReel() != juce::File());
+    // (a key that can't be pressed yet looks it: LOAD REEL loses its colour, and all of them fade)
+    loadButton.setColour (juce::TextButton::buttonColourId, loadButton.isEnabled() ? theme().accent : theme().panel);
+    loadButton.setColour (juce::TextButton::textColourOffId, loadButton.isEnabled() ? theme().onAccent : theme().textDim);
+    for (auto* b : { &loadButton, &newReelButton, &revealButton, &colourButton, &archiveButton, &deleteButton })
+        b->setAlpha (b->isEnabled() ? 1.0f : 0.4f);
 
     shelves->repaint();
     box->repaint();
@@ -1033,11 +1038,9 @@ void LibraryView::applyTheme()
         {
             if (safe != nullptr) safe->wizardGallery (juce::File (dir));
         });
-    for (auto* b : { &newSessionButton, &loadButton })
-    {
-        b->setColour (juce::TextButton::buttonColourId, theme().accent);
-        b->setColour (juce::TextButton::textColourOffId, theme().onAccent);
-    }
+    newSessionButton.setColour (juce::TextButton::buttonColourId, theme().accent);
+    newSessionButton.setColour (juce::TextButton::textColourOffId, theme().onAccent);
+    updateSelection();
     repaint();
 }
 
