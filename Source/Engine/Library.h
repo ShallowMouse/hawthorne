@@ -19,6 +19,7 @@ struct ReelSummary
     double ips = 15.0;                // speed it was recorded at
     int tapeStock = 0;                // tape::Stock
     int machine = 0;                  // multitrack machine model
+    juce::String machineName;         // (a custom machine's comes from the reel)
     int noiseReduction = 0;           // nr::System
     juce::uint32 colour = 0;          // its own box colour (ARGB), 0 = the session's
     std::vector<TakeEntry> takes;

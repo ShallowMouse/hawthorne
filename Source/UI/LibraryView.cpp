@@ -422,7 +422,7 @@ public:
         if (! reel->masters.isEmpty())
             field ("MASTERS", reel->masters.joinIntoString (",  "));
         field ("SPEED", Reel::formatIps (reel->ips) + " ips");
-        field ("MACHINE", tape::multitrackMachine (reel->machine).name);
+        field ("MACHINE", reel->machineName);
         field ("TAPE", juce::StringArray { tape::info ((tape::Stock) reel->tapeStock).label, reel->info["EQ"], reel->info["Noise Reduction"] }
                             .joinIntoString ("  ").trim());
 
@@ -920,7 +920,7 @@ void LibraryView::newReel()
     start.tracks  = s->reels.empty() ? kDefaultTracks : s->reels.back().numTracks;
     start.ips     = s->reels.empty() ? 15.0 : s->reels.back().ips;
     start.stock   = s->reels.empty() ? 1 : s->reels.back().tapeStock;
-    start.machine = s->reels.empty() ? 0 : s->reels.back().machine;
+    start.machine = s->reels.empty() || s->reels.back().machine == tape::customMachine ? 0 : s->reels.back().machine;
     start.nr      = s->reels.empty() ? 0 : s->reels.back().noiseReduction;
     const auto sessionFile = s->file;
 

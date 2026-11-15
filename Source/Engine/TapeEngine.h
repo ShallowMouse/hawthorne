@@ -479,15 +479,19 @@ private:
     int tapeSharedStock = -1;
     std::unique_ptr<std::array<tape::RecordChannel, kMaxTracks>> tapeRec;
     std::unique_ptr<std::array<tape::PlaybackChannel, kMaxTracks>> tapePlay;
-    tape::WowFlutter wowFlutter;
+    tape::Flutter flutter, masterFlutter;               // each machine's own transport
     double wfPrev = 1.0;
-    juce::HeapBlock<float> tapeRecBuf;
+    juce::HeapBlock<float> tapeRecBuf, flutterFast, flutterScrape, masterFast, masterScrape;
+    bool flutterOn = false, masterFlutterOn = false;    // this block
+    int customSeen = -1, customMasterSeen = -1;         // tape::customSlot versions
 public:
     /** The record path's added latency for this reel's stock (compensated when recording). */
-    int getTapeLatency() const noexcept { return tapeStock.load() != 0 && machineA.load() != tape::noMultitrackMachine ? tape::HalfBand::latency : 0; }
+    int getTapeLatency() const noexcept { return tapeStock.load() != 0 && machineA.load() != tape::noMultitrackMachine ? tape::recordLatency : 0; }
     /** Machine models (changeable): the multitrack, and the 2-track for the master. */
     void setMachine (int multitrackMachine);
     void setMasterMachine (int twoTrackMachine);
+    /** Puts a machine built by the user on the deck (the reel keeps its own copy of the parts). */
+    void setCustomMachine (bool twoTrack, const tape::MachineParts& parts, const juce::String& name);
     /** Noise reduction (nr::System) for the reel, and each track's NR switch (nr::Mode). */
     void setNoiseReduction (int system);
     int  getNoiseReduction() const noexcept { return nrSystemA.load(); }

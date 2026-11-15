@@ -1065,7 +1065,9 @@ static void testTapeStock()
             }
             if (! hard)
             {
-                CHECK (bestLag == 0 && best < -30.0, "%s -30 dBFS: lag %d, residual %.1f dB", si.name, bestLag, best);
+                // (the record head prints the transport's flutter, a fraction of a sample each way, so it no
+                //  longer nulls as deep as a steady tape did: on time to the sample, and within the flutter)
+                CHECK (bestLag == 0 && best < -20.0, "%s -30 dBFS: lag %d, residual %.1f dB", si.name, bestLag, best);
                 std::printf ("    %-20s -30 dBFS: aligned (lag %d), residual vs input %6.1f dB\n", si.name, bestLag, best);
             }
             else
@@ -2468,6 +2470,211 @@ static void testTapeDatasheets()
     }
 }
 
+static void testMachineSpecs()
+{
+    std::printf ("[28] the machines against their specifications: response, harmonics, hiss, flutter; machines built to order\n");
+    auto rms = [] (const std::vector<float>& v, size_t from) { double e = 0; for (size_t i = from; i < v.size(); ++i) e += (double) v[i] * v[i]; return std::sqrt (e / (double) (v.size() - from)); };
+    auto mag = [] (const std::vector<float>& y, double f, double sr, size_t from)
+    {
+        double c = 0, q = 0;
+        for (size_t i = from; i < y.size(); ++i) { c += y[i] * std::cos (6.283185307 * f * (double) i / sr); q += y[i] * std::sin (6.283185307 * f * (double) i / sr); }
+        return 2.0 * std::sqrt (c * c + q * q) / (double) (y.size() - from);
+    };
+    const double vu = std::pow (10.0, -18.0 / 20.0) * std::sqrt (2.0);
+    // record then play a tone, 20 dB under 0 VU: the level at f against 1 kHz
+    auto response = [&] (tape::Stock st, const tape::MachineInfo& mc, double ips, double sr, double f)
+    {
+        tape::Shared sh; sh.set (st, ips, sr, mc);
+        sh.hiss = 0.0f;
+        double out[2];
+        int k = 0;
+        for (double fr : { 1000.0, f })
+        {
+            tape::RecordChannel rc; rc.reset (1u);
+            tape::PlaybackChannel pc; pc.reset (2u);
+            std::vector<float> x ((size_t) (0.3 * sr)), y (x.size());
+            for (size_t i = 0; i < x.size(); ++i) x[i] = (float) (0.1 * vu * std::sin (6.283185307 * fr * (double) i / sr));
+            rc.process (sh, x.data(), y.data(), (int) x.size());
+            pc.process (sh, y.data(), (int) y.size());
+            out[k++] = mag (y, fr, sr, y.size() / 2);
+        }
+        return 20.0 * std::log10 (out[1] / out[0]);
+    };
+    const auto& a800 = tape::multitrackMachine (0);
+    const auto& a300 = tape::multitrackMachine (11);
+    const double r15 = response (tape::Stock::us456, a800, 15.0, 48000.0, 20000.0), r75 = response (tape::Stock::us456, a800, 7.5, 48000.0, 16000.0),
+                 r30 = response (tape::Stock::us456, a800, 30.0, 48000.0, 20000.0), b30 = response (tape::Stock::us456, a800, 30.0, 48000.0, 40.0),
+                 v15 = response (tape::Stock::scotch111, a300, 15.0, 48000.0, 15000.0);
+    CHECK (r15 > -2.6 && r15 < 0.0, "456 / A800 at 15 ips: 20 kHz within about 2 dB (%.1f)", r15);
+    CHECK (r75 > -3.0 && r75 < r15 + 0.5, "at 7.5 ips: 16 kHz within about 2 dB (%.1f)", r75);
+    CHECK (r30 > -1.5, "at 30 ips: 20 kHz within 1.5 dB (%.1f)", r30);
+    CHECK (b30 > -2.5, "at 30 ips: 40 Hz within about 2 dB (%.1f)", b30);
+    CHECK (v15 > -4.2 && v15 < -1.5, "Scotch 111 / Ampex 300-3: 15 kHz a few dB down (%.1f)", v15);
+    const double s44 = response (tape::Stock::us456, a800, 15.0, 44100.0, 15000.0), s48 = response (tape::Stock::us456, a800, 15.0, 48000.0, 15000.0),
+                 s96 = response (tape::Stock::us456, a800, 15.0, 96000.0, 15000.0);
+    CHECK (std::abs (s44 - s48) < 0.4 && std::abs (s96 - s48) < 0.4, "the top is the same at 44.1, 48 and 96 kHz (15 kHz: %.2f / %.2f / %.2f dB)", s44, s48, s96);
+    std::printf ("    456 / A800: 20 kHz %.1f dB at 15 ips, 16 kHz %.1f at 7.5, 20 kHz %.1f and 40 Hz %.1f at 30;  111 / 300-3: 15 kHz %.1f\n", r15, r75, r30, b30, v15);
+
+    // harmonics at 0 VU on a valve machine with standard tape: the third leads, about 1 %
+    {
+        tape::Shared sh; sh.set (tape::Stock::scotch111, 15.0, 48000.0, a300);
+        tape::RecordChannel rc; rc.reset (1u);
+        std::vector<float> x (24000), y (24000);
+        for (size_t i = 0; i < x.size(); ++i) x[i] = (float) (vu * std::sin (6.283185307 * 1000.0 * (double) i / 48000.0));
+        rc.process (sh, x.data(), y.data(), (int) x.size());
+        const double h1 = mag (y, 1000.0, 48000.0, 12000), h2 = 100.0 * mag (y, 2000.0, 48000.0, 12000) / h1, h3 = 100.0 * mag (y, 3000.0, 48000.0, 12000) / h1;
+        CHECK (h3 > 0.6 && h3 < 2.0 && h2 < 0.6 * h3 && h2 > 0.1, "valve machine at 0 VU: third harmonic about 1 %% and leading (H2 %.2f %%, H3 %.2f %%)", h2, h3);
+        std::printf ("    Scotch 111 / Ampex 300-3 at 0 VU: second harmonic %.2f %%, third %.2f %%\n", h2, h3);
+    }
+
+    // hiss: the stock's figure, A-weighted, at every sample rate; nothing printed into silence
+    for (double sr : { 44100.0, 48000.0, 96000.0 })
+    {
+        tape::Shared sh; sh.set (tape::Stock::us456, 15.0, sr, tape::neutralMachine);
+        tape::PlaybackChannel pc; pc.reset (3u);
+        std::vector<float> y ((size_t) (4.0 * sr), 0.0f);
+        pc.process (sh, y.data(), (int) y.size());
+        // A-weight it by a bank of tone measurements would be slow: weigh a spectrum estimate instead
+        double sum = 0.0;
+        const int bins = 400, len = 4096;
+        for (int b = 1; b < bins; ++b)
+        {
+            const double f = 20000.0 * b / bins;
+            double p = 0.0;
+            int blocks = 0;
+            for (size_t at = (size_t) sr; at + (size_t) len < y.size(); at += (size_t) len * 8, ++blocks)
+            {
+                double c = 0, q = 0;
+                for (int i = 0; i < len; ++i) { const double w = 0.5 - 0.5 * std::cos (6.283185307 * i / len); c += w * y[at + (size_t) i] * std::cos (6.283185307 * f * i / sr); q += w * y[at + (size_t) i] * std::sin (6.283185307 * f * i / sr); }
+                p += (c * c + q * q) / (0.375 * len) / (0.5 * sr);     // power per Hz
+            }
+            sum += p / blocks * tape::aWeight (f) * tape::aWeight (f) * (20000.0 / bins);
+        }
+        const double aw = 10.0 * std::log10 (sum) + 18.0;
+        CHECK (std::abs (aw - tape::info (tape::Stock::us456).hissDb) < 1.5, "456 hiss at %.0f Hz: %.1f dB A-weighted re 0 VU (its figure %.1f)", sr, aw, tape::info (tape::Stock::us456).hissDb);
+        if (sr == 48000.0) std::printf ("    456 hiss: %.1f dB A-weighted re 0 VU, %.1f dB under its 3 %% point (datasheet 76.6)\n", aw, tape::info (tape::Stock::us456).headroomDb - aw);
+    }
+    {
+        tape::Shared sh; sh.set (tape::Stock::us456, 15.0, 48000.0, a800);
+        tape::RecordChannel rc; rc.reset (1u);
+        std::vector<float> x (4800, 0.0f), y (4800);
+        rc.process (sh, x.data(), y.data(), 4800);
+        CHECK (rms (y, 0) == 0.0, "silence records as silence (modulation noise rides on the signal only)");
+    }
+
+    // flutter: the machine's figure, most of it above 2 Hz, and scrape on top; a steady record head is recordLatency late
+    {
+        tape::Flutter fl; fl.reset (5u);
+        const double sr = 48000.0;
+        std::vector<float> fast (64), scrape (64);
+        std::vector<double> speed;
+        double scrapeSq = 0.0, fastPeak = 0.0;
+        for (int b = 0; b < 30000; ++b)
+        {
+            speed.push_back (fl.next (15.0, sr, 64, 0.05, fast.data(), scrape.data()) - 1.0);
+            for (int i = 0; i < 64; ++i) { scrapeSq += (double) scrape[(size_t) i] * scrape[(size_t) i]; fastPeak = juce::jmax (fastPeak, (double) std::abs (fast[(size_t) i])); }
+        }
+        double e = 0, slow = 0, lp = 0;
+        const double a = 1.0 - std::exp (-6.283185307 * 2.0 * 64.0 / sr);
+        for (double v : speed) { e += v * v; lp += (v - lp) * a; slow += lp * lp; }
+        const double pct = 100.0 * std::sqrt (e / (double) speed.size()), slowShare = slow / e;
+        const double scrapeNs = 1.0e9 * std::sqrt (scrapeSq / (30000.0 * 64.0)) / sr;
+        CHECK (std::abs (pct - 0.05) < 0.008, "a 0.05 %% machine flutters 0.05 %% rms (%.3f)", pct);
+        CHECK (slowShare < 0.45, "most of it is flutter, above 2 Hz (%.0f %% below)", 100.0 * slowShare);
+        CHECK (scrapeNs > 5.0 && scrapeNs < 20.0 && fastPeak < 14.0, "scrape flutter: %.1f ns rms; the record head's error stays inside its delay (%.1f samples)", scrapeNs, fastPeak);
+        std::printf ("    0.05 %% machine: %.3f %% rms, %.0f %% of it below 2 Hz, scrape %.1f ns rms\n", pct, 100.0 * slowShare, scrapeNs);
+
+        tape::Shared sh; sh.set (tape::Stock::us456, 15.0, sr, a800);
+        for (int withFlutter = 0; withFlutter < 2; ++withFlutter)
+        {
+            tape::RecordChannel rc; rc.reset (1u);
+            tape::Flutter f2; f2.reset (9u);
+            std::vector<float> x (9600, 0.0f), y (9600);
+            x[4000] = 0.01f;
+            for (int at = 0; at < 9600; at += 64)
+            {
+                f2.next (15.0, sr, 64, 0.03, fast.data(), nullptr);
+                rc.process (sh, x.data() + at, y.data() + at, 64, withFlutter ? fast.data() : nullptr);
+            }
+            size_t peak = 0;
+            for (size_t i = 0; i < y.size(); ++i) if (std::abs (y[i]) > std::abs (y[peak])) peak = i;
+            CHECK (std::llabs ((int64) peak - (int64) (4000 + tape::recordLatency)) <= (withFlutter ? 1 : 0),
+                   "%s record head: a click lands %d samples late (recordLatency %d)", withFlutter ? "fluttering" : "steady", (int) peak - 4000, tape::recordLatency);
+        }
+    }
+
+    // machines built to order
+    {
+        tape::MachineParts valve;
+        valve.electronics = 0; valve.trackWidth = 3; valve.heads = 0; valve.contour = 2; valve.transport = 0;
+        tape::MachineParts modern;
+        modern.electronics = 3; modern.trackWidth = 0; modern.heads = 2; modern.contour = 0; modern.transport = 3;
+        const auto v = tape::buildMachine (valve), m = tape::buildMachine (modern);
+        CHECK (v.asymmetry > m.asymmetry && v.hissDb > m.hissDb + 6.0 && v.hfScale < m.hfScale && v.bumpScale > m.bumpScale
+               && v.wowFlutter > 3.0 * m.wowFlutter && v.headroomDb < m.headroomDb, "the parts add up: a valve machine against a modern one");
+        auto trimmed = modern;
+        trimmed.noise = 6.0; trimmed.wobble = 3.0; trimmed.level = -3.0; trimmed.topEnd = 0.8; trimmed.lowEnd = 1.5; trimmed.colour = 2.0;
+        const auto t = tape::buildMachine (trimmed);
+        CHECK (std::abs (t.hissDb - m.hissDb - 6.0) < 1e-9 && std::abs (t.wowFlutter - 3.0 * m.wowFlutter) < 1e-9 && std::abs (t.headroomDb - m.headroomDb + 3.0) < 1e-9
+               && t.hfScale < m.hfScale && t.bumpScale > m.bumpScale && t.asymmetry > m.asymmetry, "the trims move what they say");
+        tape::MachineParts wild; wild.electronics = 99; wild.noise = 400.0; wild.wobble = -3.0;
+        const auto w = tape::tidy (wild);
+        CHECK (w.electronics == 3 && w.noise == 6.0 && w.wobble == 0.25, "out-of-range parts are brought back in");
+
+        // on a reel: kept with it, back after a reload, and on the deck
+        juce::String err;
+        auto dir = makeTempDir ("custom");
+        auto reel = Reel::create (dir, "Custom", kSR, 4, err, 15.0, (int) tape::Stock::scotch111);
+        CHECK (reel != nullptr, "reel: %s", err.toRawUTF8());
+        if (reel != nullptr)
+        {
+            TapeEngine e;
+            prepareEngine (e, 256);
+            e.setReel (reel.get());
+            valve.look = 11; valve.colour = 1.5;
+            e.setCustomMachine (false, valve, "Basement 3-track");
+            e.setCustomMachine (true, modern, "Clean 2-track");
+            CHECK (reel->machine == tape::customMachine && reel->masterMachine == tape::customMachine, "the reel is on the built machines");
+            CHECK (juce::String (tape::multitrackMachine (reel->machine).name) == "Basement 3-track"
+                   && std::abs (tape::multitrackMachine (reel->machine).wowFlutter - 0.12) < 1e-9, "the deck's machine is the one built");
+            CHECK (juce::String (tape::masterMachine (reel->masterMachine).name) == "Clean 2-track", "and the 2-track's");
+            e.setReel (nullptr);
+            const auto file = reel->getFile();
+            reel.reset();
+            tape::customSlot (false).set ({}, "something else");
+            auto back = Reel::load (file, err);
+            CHECK (back != nullptr && back->machine == tape::customMachine && back->customMachine == tape::tidy (valve)
+                   && back->customMachineName == "Basement 3-track" && back->machineName() == "Basement 3-track"
+                   && back->masterMachine == tape::customMachine && back->customMaster == tape::tidy (modern), "the reel keeps its own copy of the parts");
+            CHECK (back != nullptr && back->tapeStock == (int) tape::Stock::scotch111, "and its tape (Scotch 111 comes back as Scotch 111)");
+            if (back != nullptr)
+            {
+                e.setReel (back.get());
+                CHECK (juce::String (tape::multitrackMachine (back->machine).name) == "Basement 3-track", "putting the reel on brings its machine with it");
+                e.setMachine (0);
+                CHECK (back->machine == 0 && back->customMachineName == "Basement 3-track", "moved to a real machine, the reel still has the one built for it");
+                e.setReel (nullptr);
+            }
+        }
+
+        // the shelf
+        auto shelfDir = makeTempDir ("shelf");
+        tape::MachineShelf::folderOverride() = shelfDir;
+        CHECK (tape::MachineShelf::list (false).empty(), "an empty shelf");
+        CHECK (tape::MachineShelf::save ({ "Basement 3-track", valve, false }) && tape::MachineShelf::save ({ "Clean 2-track", modern, true })
+               && tape::MachineShelf::save ({ "Another", modern, false }), "machines go on the shelf");
+        const auto mts = tape::MachineShelf::list (false);
+        const auto mss = tape::MachineShelf::list (true);
+        CHECK (mts.size() == 2 && mss.size() == 1 && mss[0].name == "Clean 2-track" && mss[0].parts == tape::tidy (modern), "multitrack and 2-track machines are shelved apart");
+        bool found = false;
+        for (auto& k : mts) found = found || (k.name == "Basement 3-track" && k.parts == tape::tidy (valve));
+        CHECK (found, "and come back off it as they went on");
+        CHECK (tape::MachineShelf::remove ("Another", false) && tape::MachineShelf::list (false).size() == 1, "and can be taken off");
+        tape::MachineShelf::folderOverride() = juce::File();
+        std::printf ("    built to order: parts and trims add up, kept with the reel, shelved and taken back\n");
+    }
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -2485,6 +2692,7 @@ int main()
         if (only.contains ("25")) testReversePlay();
         if (only.contains ("26")) testReverseRecord();
         if (only.contains ("27")) testTapeDatasheets();
+        if (only.contains ("28")) testMachineSpecs();
         if (only.contains ("3"))  testTapeMachine();
         std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURE(S)\n", failures);
         return failures == 0 ? 0 : 1;
@@ -2512,6 +2720,7 @@ int main()
     testReversePlay();
     testReverseRecord();
     testTapeDatasheets();
+    testMachineSpecs();
    #if JUCE_LINUX || JUCE_MAC
     testCrashRecovery();
    #endif

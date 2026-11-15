@@ -422,7 +422,7 @@ public:
                 const auto& ms = MachineSkin::currentMaster();
                 auto top = getLocalBounds().toFloat().reduced (10.0f, 6.0f).removeFromTop (16.0f);
                 caption (g, top, "MASTER");
-                caption (g, top, juce::String (ms.brand).toUpperCase() + "  " + juce::String (ms.model).toUpperCase(), juce::Justification::centredRight);
+                caption (g, top, (juce::String (ms.brand).toUpperCase() + "  " + juce::String (ms.model).toUpperCase()).trim(), juce::Justification::centredRight);
             }
             const auto& sk = skin();
             g.setColour (sk.deckText);
@@ -620,7 +620,7 @@ public:
             g.drawFittedText ((deck.session != nullptr ? deck.session->getName() + "  -  " : juce::String()) + reel->getName(),
                               r.removeFromTop (nameH).toNearestInt(), juce::Justification::centredLeft, 1, 0.6f);
             juce::StringArray lines;
-            lines.add (juce::String (tape::multitrackMachine (reel->machine).name) + "   " + tape::info ((tape::Stock) reel->tapeStock).label);
+            lines.add (reel->machineName() + "   " + tape::info ((tape::Stock) reel->tapeStock).label);
             lines.add (Reel::formatIps (reel->ips) + " IPS   " + juce::String (reel->numTracks) + " TRACKS   "
                        + juce::String (reel->sampleRate / 1000.0, 1) + " kHz"
                        + (reel->noiseReduction != nr::none ? juce::String ("   ") + nr::info (reel->noiseReduction).label : juce::String()));

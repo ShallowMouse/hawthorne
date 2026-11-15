@@ -38,8 +38,30 @@ struct MachineSkin
     juce::Colour badge, badgeText;
 
     //--------------------------------------------------------------------------
+    /** A machine built by the user wears the look of the machine it was given (MachineParts::look),
+        with its own name on the badge. */
+    static const MachineSkin& custom (bool twoTrack)
+    {
+        static MachineSkin skins[2] = { multitrack (0), master (0) };
+        static std::string names[2];
+        static int seen[2] = { -1, -1 };
+        auto& slot = tape::customSlot (twoTrack);
+        const int k = twoTrack ? 1 : 0, v = slot.version.load();
+        if (seen[k] != v)
+        {
+            seen[k] = v;
+            const int look = slot.parts.look;
+            skins[k] = twoTrack ? master (look == tape::customMachine ? 0 : look) : multitrack (look == tape::customMachine ? 0 : look);
+            names[k] = slot.get().label;
+            skins[k].brand = "";
+            skins[k].model = names[k].c_str();
+        }
+        return skins[k];
+    }
+
     static const MachineSkin& multitrack (int i)
     {
+        if (i == tape::customMachine) return custom (false);
         using C = juce::Colour;
         static const MachineSkin s[] = {
             // Studer A800: brushed-silver deck on an anthracite cabinet, dark keys with orange lamps,
@@ -152,6 +174,7 @@ struct MachineSkin
     /** The master meters, after the 2-track machine. */
     static const MachineSkin& master (int i)
     {
+        if (i == tape::customMachine) return custom (true);
         using C = juce::Colour;
         static const MachineSkin s[] = {
             // Ampex ATR-102: black meter panel, orange-backlit VU meters

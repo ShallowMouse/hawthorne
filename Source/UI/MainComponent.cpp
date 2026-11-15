@@ -859,6 +859,7 @@ MainComponent::MainComponent (juce::ApplicationProperties& p) : props (p)
         {
             loadReel (juce::File (open));
             if (juce::SystemStats::getEnvironmentVariable ("HAWTHORNE_OPEN_ALIGN", {}).isNotEmpty()) showAlignment();
+            if (juce::SystemStats::getEnvironmentVariable ("HAWTHORNE_MACHINE_GALLERY", {}).isNotEmpty()) showMachines();
         });
 
     counterMode = juce::jlimit (0, 2, props.getUserSettings()->getIntValue ("counterMode", 0));
@@ -2142,13 +2143,49 @@ void MainComponent::recordTones()
 void MainComponent::showMachines()
 {
     if (reel == nullptr || engine.isRecording()) return;
-    auto* picker = new MachinePicker (reel->machine, reel->masterMachine, [this] (int mt, int ms)
+    // (a reel that has had a machine built for it keeps it, in use or not)
+    MachinePicker::Custom cmt { reel->customMachine, reel->customMachineName, reel->customMachineName.isNotEmpty() || reel->machine == tape::customMachine };
+    MachinePicker::Custom cms { reel->customMaster, reel->customMasterName, reel->customMasterName.isNotEmpty() || reel->masterMachine == tape::customMachine };
+    auto* picker = new MachinePicker (reel->machine, reel->masterMachine, cmt, cms, [this] (int mt, int ms)
     {
         if (reel == nullptr || engine.isRecording()) return;
-        engine.setMachine (mt);
-        engine.setMasterMachine (ms);
+        if (mt != reel->machine)       engine.setMachine (mt);
+        if (ms != reel->masterMachine) engine.setMasterMachine (ms);
+        applySkin();
+    },
+    [this] (bool twoTrack, const tape::MachineParts& parts, const juce::String& name)
+    {
+        if (reel == nullptr || engine.isRecording()) return;
+        engine.setCustomMachine (twoTrack, parts, name);
         applySkin();
     });
+    if (const auto dir = juce::SystemStats::getEnvironmentVariable ("HAWTHORNE_MACHINE_GALLERY", {}); dir.isNotEmpty())
+    {
+        // pictures of the picker and the builder, for checking the look
+        auto shot = [dir] (juce::Component& c, const char* file)
+        {
+            juce::FileOutputStream out (juce::File (dir).getChildFile (file));
+            out.setPosition (0); out.truncate();
+            juce::PNGImageFormat().writeImageToStream (c.createComponentSnapshot (c.getLocalBounds()), out);
+        };
+        picker->setSize (980, 760);
+        shot (*picker, "machines.png");
+        picker->build (false, true);
+        shot (*picker, "machine-builder.png");
+        tape::MachineParts valve; valve.electronics = 0; valve.trackWidth = 0; valve.heads = 0; valve.contour = 2; valve.transport = 0; valve.look = 11; valve.colour = 1.4;
+        engine.setCustomMachine (false, valve, "Basement 3-track");
+        delete picker;
+        MachinePicker::Custom mine { reel->customMachine, reel->customMachineName, true };
+        MachinePicker again (reel->machine, reel->masterMachine, mine, cms, {}, {});
+        again.setSize (980, 760);
+        shot (again, "machines-custom.png");
+        again.build (false, false);
+        shot (again, "machine-builder-valve.png");
+        again.build (true, true);
+        shot (again, "machine-builder-2track.png");
+        applySkin();
+        return;
+    }
    #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
     if (melville::isHosted())
     {
@@ -3386,7 +3423,7 @@ void MainComponent::paintTransport (juce::Graphics& g)
         // the maker's badge
         {
             g.setFont (juce::Font (juce::FontOptions ("Arial", 15.0f, juce::Font::bold)));
-            const juce::String badgeText = juce::String (sk.brand) + "  " + sk.model;
+            const juce::String badgeText = (juce::String (sk.brand) + "  " + sk.model).trim();
             const int bw = juce::jmin (reelInfoArea.getWidth(), (int) juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), badgeText) + 22);
             auto badge = juce::Rectangle<int> (bw, 22).withPosition (reelInfoArea.getRight() - bw, deckBand.getY() + 8);
             deckBadgeArea = badge;
@@ -3425,7 +3462,7 @@ void MainComponent::paintMaster (juce::Graphics& g)
     {
         // the 2-track the master is on
         const auto& ms = MachineSkin::currentMaster();
-        const juce::String t = juce::String (ms.brand) + "  " + ms.model;
+        const juce::String t = (juce::String (ms.brand) + "  " + ms.model).trim();
         g.setFont (juce::Font (juce::FontOptions ("Arial", 11.0f, juce::Font::bold)));
         const int bw = (int) juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), t) + 14;
         auto badge = juce::Rectangle<int> (masterLabelArea.getRight() - bw, masterLabelArea.getCentreY() - 9, bw, 18);

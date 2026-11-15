@@ -4,6 +4,7 @@
 #include "MachineSkin.h"
 #include "HawthorneLookAndFeel.h"
 #include "../Engine/TapeStock.h"
+#include "MachineBuilder.h"
 
 namespace hawthorne
 {
@@ -191,7 +192,7 @@ inline void drawMachinePreview (juce::Graphics& g, juce::Rectangle<float> r, con
     g.fillRoundedRectangle (deck, 4.0f);
     auto d = deck.reduced (8.0f, 8.0f);
     // the badge on the right (its room kept, so the keys never run under it)
-    const juce::String t = juce::String (sk.brand) + " " + sk.model;
+    const juce::String t = (juce::String (sk.brand) + " " + sk.model).trim();
     const juce::Font badgeFont (juce::FontOptions ("Arial", 11.0f, juce::Font::bold));
     const float bw = juce::GlyphArrangement::getStringWidth (badgeFont, t) + 12.0f;
     auto badgeRoom = d.removeFromRight (bw);
@@ -231,13 +232,27 @@ inline void drawMachinePreview (juce::Graphics& g, juce::Rectangle<float> r, con
 }
 
 //==============================================================================
-/** Pick the multitrack and the 2-track: a card per machine with its look, story and sound. */
+/** Pick the multitrack and the 2-track: a card per machine with its look, story and sound -
+    and, at the top of each column, the machine you build yourself (MachineBuilder). */
 class MachinePicker : public juce::Component
 {
 public:
-    MachinePicker (int multitrack, int master, std::function<void (int, int)> onPick)
-        : mt (multitrack), ms (master), pick (std::move (onPick))
+    /** A reel's own custom machine (has = one has been built for it). */
+    struct Custom
     {
+        tape::MachineParts parts;
+        juce::String name;
+        bool has = false;
+    };
+
+    MachinePicker (int multitrack, int master, Custom customMultitrack, Custom customMaster,
+                   std::function<void (int, int)> onPick,
+                   std::function<void (bool, const tape::MachineParts&, const juce::String&)> onCustomMachine)
+        : mt (multitrack), ms (master), pick (std::move (onPick)), useCustom (std::move (onCustomMachine))
+    {
+        custom[0] = customMultitrack;
+        custom[1] = customMaster;
+        for (int k = 0; k < 2; ++k) content.addAndMakeVisible (customCards.add (new CustomCard (*this, k == 1)));
         for (int i = 0; i < tape::numMultitrackMachines; ++i) cards.add (new Card (*this, false, i));
         for (int i = 0; i < tape::numMasterMachines; ++i)     cards.add (new Card (*this, true, i));
         for (auto* c : cards) content.addAndMakeVisible (c);
@@ -252,11 +267,13 @@ public:
     void resized() override
     {
         viewport.setBounds (getLocalBounds());
+        if (builder != nullptr) builder->setBounds (getLocalBounds());
         const int w = getWidth() - viewport.getScrollBarThickness() - 16;
         const int colW = (w - 16) / 2, cardH = 300;
         const int top = 42;
-        // multitrack on the left, the 2-track master on the right
-        int rows[2] = { 0, 0 };
+        // multitrack on the left, the 2-track master on the right; your own machine first
+        int rows[2] = { 1, 1 };
+        for (int k = 0; k < 2; ++k) customCards[k]->setBounds (8 + k * (colW + 16), top, colW, cardH);
         auto place = [&] (bool master, int index)
         {
             for (auto* c : cards)
@@ -276,7 +293,60 @@ public:
         content.colW = colW;
     }
 
+    /** Opens the builder for the multitrack or the 2-track (fresh = start from a plain machine). */
+    void build (bool twoTrack, bool fresh)
+    {
+        const int k = twoTrack ? 1 : 0;
+        before = custom[k];
+        beforeIndex = twoTrack ? ms : mt;
+        auto start = fresh || ! custom[k].has ? tape::MachineParts() : custom[k].parts;
+        if (fresh || ! custom[k].has)
+        {
+            // (wearing the look of the machine the reel is on now, if it is a real one)
+            const int now = twoTrack ? ms : mt;
+            start.look = now != tape::customMachine && now != (twoTrack ? tape::noMasterMachine : tape::noMultitrackMachine) ? now
+                                                                                                                             : (twoTrack ? 1 : 0);
+        }
+        builder = std::make_unique<MachineBuilder> (twoTrack, start, fresh || ! custom[k].has ? juce::String() : custom[k].name);
+        builder->onChange = [this, twoTrack] (const tape::MachineParts& p, const juce::String& n) { putOn (twoTrack, p, n); };
+        builder->onClose = [this, twoTrack] (bool keep)
+        {
+            if (! keep)
+            {
+                // back to how it was
+                custom[twoTrack ? 1 : 0] = before;
+                if (beforeIndex == tape::customMachine) putOn (twoTrack, before.parts, before.name);
+                else
+                {
+                    (twoTrack ? ms : mt) = beforeIndex;
+                    if (pick) pick (mt, ms);
+                }
+            }
+            juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<MachinePicker> (this)]
+            {
+                if (safe == nullptr) return;
+                safe->builder.reset();
+                safe->content.repaint();
+                for (auto* c : safe->customCards) c->refresh();
+            });
+        };
+        addAndMakeVisible (*builder);
+        builder->setBounds (getLocalBounds());
+        putOn (twoTrack, builder->getParts(), builder->name());
+    }
+
+    MachineBuilder* getBuilder() const { return builder.get(); }
+
 private:
+    void putOn (bool twoTrack, const tape::MachineParts& p, const juce::String& n)
+    {
+        custom[twoTrack ? 1 : 0] = { p, n, true };
+        (twoTrack ? ms : mt) = tape::customMachine;
+        if (useCustom) useCustom (twoTrack, p, n);
+        for (auto* c : cards) c->repaint();
+        for (auto* c : customCards) c->repaint();
+    }
+
     struct Content : juce::Component
     {
         int colW = 400;
@@ -287,6 +357,141 @@ private:
             g.drawText ("MULTITRACK  -  deck, transport, track meters", 10, 6, colW, 30, juce::Justification::centredLeft);
             g.drawText ("2-TRACK  -  the master", 8 + colW + 18, 6, colW, 30, juce::Justification::centredLeft);
         }
+    };
+
+    /** The machine built for this reel (or the invitation to build one), and the shelf of saved ones. */
+    struct CustomCard : juce::Component
+    {
+        CustomCard (MachinePicker& o, bool m) : owner (o), master (m)
+        {
+            buildButton.onClick = [this] { owner.build (master, ! owner.custom[master ? 1 : 0].has); };
+            newButton.onClick = [this] { owner.build (master, true); };
+            newButton.setTooltip ("Starts again from a plain machine.");
+            shelfBox.setTextWhenNothingSelected ("Take one from the shelf...");
+            shelfBox.setTextWhenNoChoicesAvailable ("The shelf is empty: SAVE a machine as you build it");
+            shelfBox.onChange = [this]
+            {
+                const int k = shelfBox.getSelectedItemIndex();
+                if (juce::isPositiveAndBelow (k, (int) shelf.size())) owner.putOn (master, shelf[(size_t) k].parts, shelf[(size_t) k].name);
+                shelfBox.setSelectedId (0, juce::dontSendNotification);
+                refresh();
+            };
+            for (auto* b : { &buildButton, &newButton })
+            {
+                b->setColour (juce::TextButton::buttonColourId, Colours::panelLight);
+                b->setColour (juce::TextButton::textColourOffId, Colours::text);
+                addAndMakeVisible (b);
+            }
+            addAndMakeVisible (shelfBox);
+            refresh();
+        }
+
+        void refresh()
+        {
+            const bool has = owner.custom[master ? 1 : 0].has;
+            buildButton.setButtonText (has ? "CHANGE IT..." : "BUILD ONE...");
+            newButton.setVisible (has);
+            shelf = tape::MachineShelf::list (master);
+            shelfBox.clear (juce::dontSendNotification);
+            int id = 1;
+            for (auto& m : shelf) shelfBox.addItem (m.name, id++);
+            resized();
+            repaint();
+        }
+
+        void resized() override
+        {
+            auto row = getLocalBounds().reduced (12).removeFromBottom (28);
+            buildButton.setBounds (row.removeFromLeft (120));
+            row.removeFromLeft (6);
+            if (newButton.isVisible()) { newButton.setBounds (row.removeFromLeft (120)); row.removeFromLeft (6); }
+            shelfBox.setBounds (row);
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            const auto& c = owner.custom[master ? 1 : 0];
+            const bool chosen = (master ? owner.ms : owner.mt) == tape::customMachine;
+            auto r = getLocalBounds().toFloat();
+            g.setColour (Colours::panel);
+            g.fillRoundedRectangle (r, 6.0f);
+            g.setColour (chosen ? Colours::mustard : (isMouseOver() && c.has ? Colours::edge.brighter (0.4f) : Colours::edge));
+            g.drawRoundedRectangle (r.reduced (1.0f), 6.0f, chosen ? 2.5f : 1.0f);
+
+            auto a = getLocalBounds().reduced (12);
+            a.removeFromBottom (36);
+            auto pic = a.removeFromTop (110).toFloat();
+            a.removeFromTop (8);
+            auto title = a.removeFromTop (22);
+            g.setFont (monoFont (11.0f, true));
+            if (chosen) { g.setColour (Colours::mustard); g.drawText ("IN USE", title, juce::Justification::centredRight); }
+            if (c.has)
+            {
+                auto sk = master ? MachineSkin::master (c.parts.look) : MachineSkin::multitrack (c.parts.look);
+                const auto label = c.name.toUpperCase().toStdString();
+                sk.brand = "";
+                sk.model = label.c_str();
+                drawMachinePreview (g, pic, sk);
+                g.setColour (Colours::text);
+                g.setFont (uiFont (16.0f, true));
+                g.drawText (c.name, title.withTrimmedRight (60), juce::Justification::centredLeft);
+                g.setColour (Colours::textDim);
+                g.setFont (monoFont (11.0f, true));
+                g.drawText ("Built to order  -  for this reel", a.removeFromTop (16), juce::Justification::centredLeft);
+                a.removeFromTop (4);
+                const auto t = tape::tidy (c.parts);
+                juce::String partsLine;
+                for (int k = 0; k < tape::numPartKinds; ++k)
+                    partsLine << (k > 0 ? "   -   " : "") << juce::String (tape::partKindName (k)).toLowerCase() << ": " << tape::partChoice (k, tape::partOf (t, k)).name;
+                g.setColour (Colours::text.withAlpha (0.9f));
+                g.setFont (uiFont (13.0f));
+                g.drawFittedText (partsLine, a.removeFromTop (38), juce::Justification::topLeft, 2, 0.85f);
+                g.setColour (Colours::mustard.brighter (0.2f));
+                g.setFont (uiFont (13.0f, true));
+                g.drawFittedText (MachineBuilder::summary (c.parts).fromFirstOccurrenceOf ("ADDS UP TO:  ", false, false), a, juce::Justification::topLeft, 3, 0.85f);
+            }
+            else
+            {
+                g.setColour (Colours::black);
+                g.fillRoundedRectangle (pic, 4.0f);
+                g.setColour (Colours::edge.brighter (0.3f));
+                const float dash[] = { 6.0f, 5.0f };
+                juce::Path outline;
+                outline.addRoundedRectangle (pic.reduced (6.0f), 4.0f);
+                juce::Path dashed;
+                juce::PathStrokeType (1.2f).createDashedStroke (dashed, outline, dash, 2);
+                g.fillPath (dashed);
+                g.setColour (Colours::mustard);
+                g.setFont (monoFont (18.0f, true));
+                g.drawText ("BUILD YOUR OWN", pic, juce::Justification::centred);
+                g.setColour (Colours::text);
+                g.setFont (uiFont (16.0f, true));
+                g.drawText (master ? "Your own 2-track" : "Your own multitrack", title.withTrimmedRight (60), juce::Justification::centredLeft);
+                g.setColour (Colours::textDim);
+                g.setFont (monoFont (11.0f, true));
+                g.drawText ("Built to order", a.removeFromTop (16), juce::Justification::centredLeft);
+                a.removeFromTop (4);
+                g.setColour (Colours::text.withAlpha (0.9f));
+                g.setFont (uiFont (13.0f));
+                g.drawFittedText ("Put a machine together from parts - valve or transistor electronics, wide or narrow tracks, the heads and "
+                                  "their bump, an early or a servo transport - then trim its headroom, colour, low end, top end, hiss and "
+                                  "wow & flutter. Give it a name and the look of any machine here, and keep it on the shelf for other reels.",
+                                  a, juce::Justification::topLeft, 6, 0.9f);
+            }
+        }
+        void mouseEnter (const juce::MouseEvent&) override { repaint(); }
+        void mouseExit (const juce::MouseEvent&) override  { repaint(); }
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            const auto& c = owner.custom[master ? 1 : 0];
+            if (e.mouseWasClicked() && c.has) owner.putOn (master, c.parts, c.name);
+        }
+
+        MachinePicker& owner;
+        const bool master;
+        std::vector<tape::NamedMachine> shelf;
+        juce::TextButton buildButton { "BUILD ONE..." }, newButton { "NEW..." };
+        juce::ComboBox shelfBox;
     };
 
     struct Card : juce::Component
@@ -350,6 +555,7 @@ private:
             if (master) owner.ms = index; else owner.mt = index;
             if (owner.pick) owner.pick (owner.mt, owner.ms);
             for (auto* c : owner.cards) c->repaint();
+            for (auto* c : owner.customCards) c->repaint();
         }
         juce::Rectangle<int> photosArea;
         MachinePicker& owner;
@@ -358,10 +564,15 @@ private:
     };
 
     int mt, ms;
+    Custom custom[2], before;
+    int beforeIndex = 0;
     std::function<void (int, int)> pick;
+    std::function<void (bool, const tape::MachineParts&, const juce::String&)> useCustom;
     juce::Viewport viewport;
     Content content;
     juce::OwnedArray<Card> cards;
+    juce::OwnedArray<CustomCard> customCards;
+    std::unique_ptr<MachineBuilder> builder;
 };
 
 } // namespace hawthorne

@@ -3,6 +3,7 @@
 #include <juce_core/juce_core.h>
 #include <array>
 #include <vector>
+#include "CustomMachine.h"
 
 namespace hawthorne
 {
@@ -146,6 +147,18 @@ public:
     int    tapeStock = 0;          // tape::Stock, chosen when the reel is made, fixed for life (0 = clean)
     int    machine = 0;            // multitrack machine model (tape::multitrackMachine), changeable
     int    masterMachine = 0;      // 2-track machine model for the master (tape::masterMachine), changeable
+    // A machine built by the user (machine / masterMachine == tape::customMachine): the reel's own copy
+    tape::MachineParts customMachine, customMaster;
+    juce::String customMachineName, customMasterName;
+    /** The machine's name, whichever reel is on the deck (a custom machine's comes from the reel). */
+    juce::String machineName() const       { return machine == tape::customMachine ? (customMachineName.isNotEmpty() ? customMachineName : juce::String ("Custom machine")) : juce::String (tape::multitrackMachine (machine).name); }
+    juce::String masterMachineName() const { return masterMachine == tape::customMachine ? (customMasterName.isNotEmpty() ? customMasterName : juce::String ("Custom machine")) : juce::String (tape::masterMachine (masterMachine).name); }
+    /** Puts this reel's custom machines on the deck (tape::customSlot). */
+    void loadCustomMachines() const
+    {
+        if (machine == tape::customMachine)       tape::customSlot (false).set (customMachine, customMachineName.toStdString());
+        if (masterMachine == tape::customMachine) tape::customSlot (true).set (customMaster, customMasterName.toStdString());
+    }
     int    alignLevel = 0;         // alignment: operating level, dB over 185 nWb/m (0 / 3 / 6 / 9)
     double alignBias = 3.0;        // alignment: record bias, dB of overbias at 10 kHz
     int    noiseReduction = 0;     // nr::System for the reel (0 = none), changeable

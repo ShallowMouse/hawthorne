@@ -772,7 +772,7 @@ void SessionSheet::printSheets()
     h << "<h1>" << esc (s != nullptr ? s->getName() : juce::String()) << "</h1>";
     h << "<div class='sub'>" << esc (r->getName()) << " &nbsp;|&nbsp; " << r->numTracks << " tracks &nbsp;|&nbsp; "
       << esc (Reel::formatIps (r->ips)) << " ips &nbsp;|&nbsp; " << esc (tape::info ((tape::Stock) r->tapeStock).name)
-      << " &nbsp;|&nbsp; " << esc (tape::multitrackMachine (r->machine).name) << " &nbsp;|&nbsp; "
+      << " &nbsp;|&nbsp; " << esc (r->machineName()) << " &nbsp;|&nbsp; "
       << juce::String (r->sampleRate / 1000.0, 1) << " kHz" << (r->flipped ? " &nbsp;|&nbsp; FLIPPED" : "") << "</div>";
 
     auto infoTable = [&] (const juce::String& title, const juce::StringArray& fields, const juce::String& notesKey, const juce::StringPairArray& info)

@@ -4,7 +4,9 @@
 
 #include <juce_core/juce_core.h>
 #include <array>
+#include <atomic>
 #include <cmath>
+#include <string>
 
 namespace hawthorne
 {
@@ -29,7 +31,7 @@ namespace hawthorne
         head bump and the dip above it, low-end roll-off, high-frequency loss
         (all by the speed the tape is actually running at) and tape hiss.
 
-    TRANSPORT: wow and flutter (a tiny speed wobble) while playing back.
+    TRANSPORT: wow, flutter and scrape flutter - on the transport playing back, printed by the record head recording.
 */
 namespace tape
 {
@@ -154,8 +156,8 @@ namespace tape
         const char* name;
         const char* label;
         const char* description;
-        double headroomDb;      // added to the stock's
-        double asymmetry;       // added (valve electronics: more even harmonics)
+        double headroomDb;      // added to the stock's (the tape overloads long before the electronics, so this is small)
+        double asymmetry;       // the electronics' even harmonics (valves the most)
         double bumpScale;       // head bump size
         double bumpFreq;        // head bump frequency
         double hfScale;         // high-frequency extension (corner multiplier)
@@ -166,6 +168,9 @@ namespace tape
     };
 
     inline constexpr MachineInfo neutralMachine { "None", "", "", 0, 0, 1, 1, 1, 0, 1, 0, 0.03 };
+
+    constexpr int customMachine = 63;                       // a machine built by the user (see CustomSlot)
+    const MachineInfo& customMachineInfo (bool master);
 
     constexpr int numMultitrackMachines = 13;    // 6 is "None": bit-perfect (later machines are added after it)
     constexpr int noMultitrackMachine = 6;
@@ -181,9 +186,9 @@ namespace tape
             { "Otari MTR-90", "OTARI MTR-90", "Neutral and solid: modern, honest and quiet, with a dependable transport. Colours the least.",
               1.0, -0.005, 0.9, 1.0,  1.0,  0.0,  1.0, -1.0, 0.033 },
             { "Studer J37 (EMI, valve 4-track)", "STUDER J37", "Abbey Road's 4-track from 1965 until 8-track arrived (Revolver, Sgt. Pepper). Valve electronics: thick, warm and slightly compressed, with soft valve grit, a gentle top and more hiss and wobble.",
-              -3.0, 0.05, 1.3,  1.0,  0.8,  1.5,  1.1,  3.0, 0.06 },
+              -1.0, 0.05, 1.3,  1.0,  0.8,  1.5,  1.1,  3.0, 0.06 },
             { "3M M23 (8-track)", "3M M23", "The Beatles' first 8-track at Abbey Road (1968-69, the White Album, Abbey Road). Early transistor: punchy and solid, a little darker and grainier than later machines.",
-              -1.5, 0.025, 1.2, 1.0,  0.95, 0.6,  1.0,  1.5, 0.04 },
+              -0.7, 0.025, 1.2, 1.0,  0.95, 0.6,  1.0,  1.5, 0.04 },
             { "None (bit-perfect)", "NO MACHINE", "No machine: nothing between you and the files. No tape sound, no hiss, no wow or flutter - bit-for-bit, whatever the tape on the reel.",
               0, 0, 1, 1, 1, 0, 1, 0, 0 },
             { "Scully 280 (8-track)", "SCULLY 280", "Scully's 1965 solid-state transport; the 1-inch 8-track came in 1966. Punchy and forward in the mids, a solid low end and a slightly soft top.",
@@ -195,11 +200,11 @@ namespace tape
             { "Tascam 80-8 (1/2\" 8-track)", "TASCAM 80-8", "TEAC's 1976 home-studio 8-track: eight narrow tracks on half-inch tape. Less headroom, a lighter low end, a softer top and more hiss.",
               -2.0, 0.02, 0.85, 1.1,  0.9,  0.8,  1.2,  4.0, 0.035 },
             { "Ampex 300-3 (1/2\" 3-track)", "AMPEX 300-3", "Ampex's valve 3-track of the mid 50s, on half-inch tape: thick, warm and compressed, with a dull top, a big low end, lots of hiss and an unsteady transport.",
-              -3.5, 0.055, 1.35, 0.95, 0.75, 1.8,  1.1,  3.5, 0.12 },
+              -1.0, 0.055, 1.35, 0.95, 0.75, 1.8,  1.1,  3.5, 0.12 },
             { "Ampex 300-8 (Sel-Sync 8-track)", "AMPEX 300-8", "The first Sel-Sync 8-track, on 1-inch tape (1957): valve electronics, warm and dense, soft on top with plenty of hiss and wobble.",
-              -3.0, 0.05,  1.3,  0.95, 0.78, 1.6,  1.1,  3.0, 0.12 },
+              -1.0, 0.05,  1.3,  0.95, 0.78, 1.6,  1.1,  3.0, 0.12 },
         };
-        return m[juce::jlimit (0, numMultitrackMachines - 1, i)];
+        return i == customMachine ? customMachineInfo (false) : m[juce::jlimit (0, numMultitrackMachines - 1, i)];
     }
 
     constexpr int numMasterMachines = 12;        // 5 is "None": bit-perfect (later machines are added after it)
@@ -214,9 +219,9 @@ namespace tape
             { "Otari MTR-12", "OTARI MTR-12", "Clean and neutral: an honest print of the mix.",
               1.0, 0.0,   0.85, 1.0,  1.0,  0.0,  1.0, -1.0, 0.03 },
             { "Ampex 351 (valve)", "AMPEX 351", "Vintage valve electronics: thick even-harmonic warmth, a softer top and more noise.",
-              -2.5, 0.05, 1.2,  0.95, 0.75, 1.5,  0.9,  3.0, 0.12 },
+              -1.0, 0.05, 1.2,  0.95, 0.75, 1.5,  0.9,  3.0, 0.12 },
             { "EMI BTR2 (valve)", "EMI BTR2", "EMI's valve 2-track: the Beatles' mono and stereo masters. Warm and round with gentle valve saturation and a soft top.",
-              -2.0, 0.04, 1.25, 0.95, 0.85, 1.0,  0.9,  2.0, 0.1 },
+              -0.7, 0.04, 1.25, 0.95, 0.85, 1.0,  0.9,  2.0, 0.1 },
             { "None (bit-perfect)", "NO MACHINE", "No machine: the master is recorded bit-for-bit, whatever its tape.",
               0, 0, 1, 1, 1, 0, 1, 0, 0 },
             { "Ampex AG-440", "AMPEX AG-440", "The solid-state Ampex of the late 60s and 70s, in studios and broadcasters everywhere. Warm and solid with a full low end.",
@@ -228,13 +233,181 @@ namespace tape
             { "Revox A77", "REVOX A77", "The home-studio reel-to-reel of the late 60s and 70s. A little less headroom and more hiss, with a friendly, slightly soft sound.",
               -1.5, 0.015, 0.95, 1.05, 0.9,  0.7,  1.1,  2.5, 0.04 },
             { "Ampex 300 (valve)", "AMPEX 300", "Ampex's 1949 studio recorder, the American standard of the early 50s. Valve warmth and grit, a dull top, a fat low end, plenty of hiss and some wobble.",
-              -3.0, 0.055, 1.25, 0.95, 0.72, 1.8,  0.95, 3.5, 0.1 },
+              -1.0, 0.055, 1.25, 0.95, 0.72, 1.8,  0.95, 3.5, 0.1 },
             { "Telefunken M5 (valve)", "TELEFUNKEN M5", "The German valve studio deck of 1954. Smoother and quieter than the American valve machines: a gentle, silky saturation and a soft top.",
-              -2.0, 0.04,  1.1,  1.0,  0.85, 1.0,  1.0,  2.0, 0.08 },
+              -0.7, 0.04,  1.1,  1.0,  0.85, 1.0,  1.0,  2.0, 0.08 },
         };
-        return m[juce::jlimit (0, numMasterMachines - 1, i)];
+        return i == customMachine ? customMachineInfo (true) : m[juce::jlimit (0, numMasterMachines - 1, i)];
     }
 
+
+    //==========================================================================
+    /** A machine built by the user: parts chosen as a machine was put together, then trimmed.
+        It is machine number customMachine (63) on a reel (multitrack and 2-track each have one), and
+        the reel keeps its own copy of the parts, so it always plays back the same. */
+    struct MachineParts
+    {
+        int electronics = 2;        // 0 valve, 1 early transistor, 2 discrete transistor, 3 op-amp
+        int trackWidth = 1;         // 0 wide, 1 standard, 2 narrow, 3 very narrow
+        int heads = 1;              // 0 wide gap, 1 standard, 2 narrow gap
+        int contour = 1;            // 0 small bump, 1 medium, 2 large
+        int transport = 2;          // 0 early, 1 synchronous motor and pinch roller, 2 servo capstan, 3 servo without a pinch roller
+        int look = 0;               // which machine's faceplate it wears
+        // trims
+        double level = 0.0;         // headroom, dB (-3 .. +3)
+        double colour = 1.0;        // even harmonics (0 .. 2)
+        double lowEnd = 1.0;        // head bump (0.5 .. 1.5)
+        double topEnd = 1.0;        // top-end extension (0.8 .. 1.2)
+        double noise = 0.0;         // hiss, dB (-6 .. +6)
+        double wobble = 1.0;        // wow and flutter (0.25 .. 3)
+
+        bool operator== (const MachineParts& o) const noexcept
+        {
+            return electronics == o.electronics && trackWidth == o.trackWidth && heads == o.heads && contour == o.contour
+                && transport == o.transport && look == o.look && level == o.level && colour == o.colour && lowEnd == o.lowEnd
+                && topEnd == o.topEnd && noise == o.noise && wobble == o.wobble;
+        }
+    };
+
+    struct PartChoice { const char* name; const char* note; };
+    enum PartKind { partElectronics = 0, partTrackWidth, partHeads, partContour, partTransport, numPartKinds };
+    inline const char* partKindName (int kind)
+    {
+        static const char* n[numPartKinds] = { "ELECTRONICS", "TRACK WIDTH", "HEADS", "HEAD CONTOUR", "TRANSPORT" };
+        return n[juce::jlimit (0, numPartKinds - 1, kind)];
+    }
+    inline int numPartChoices (int kind) { static const int n[numPartKinds] = { 4, 4, 3, 3, 4 }; return n[juce::jlimit (0, numPartKinds - 1, kind)]; }
+    inline const PartChoice& partChoice (int kind, int i)
+    {
+        static const PartChoice c[numPartKinds][4] = {
+            { { "Valve",                 "The 1950s: valves, with transformers in and out. Thick, the most second harmonic, a soft top and the most hiss." },
+              { "Early transistor",      "The mid 1960s: germanium and early silicon. Punchy and a little grainy, with some hiss." },
+              { "Discrete transistor",   "The 1970s: discrete silicon and transformers. Warm and solid - the classic studio machine." },
+              { "Op-amp, transformerless", "The 1980s: integrated circuits and no transformers. Clean, extended at both ends and quiet." } },
+            { { "Wide",                  "Full-track mono, 3 tracks on half-inch, 4 on one-inch. The quietest: the most tape under each head." },
+              { "Standard",              "2 tracks on quarter-inch, 8 on one-inch, 16 on two-inch." },
+              { "Narrow",                "24 tracks on two-inch. A little more hiss." },
+              { "Very narrow",           "8 tracks on half-inch, 16 on one-inch: the home-studio formats. The most hiss." } },
+            { { "Wide gap",              "Early heads: the top rolls away soonest." },
+              { "Standard",              "Flat to 20 kHz at 15 ips." },
+              { "Narrow gap",            "Later, finer heads: the most extended top.", },
+              { "", "" } },
+            { { "Small",                 "A small, tight head bump, a little higher up: a lean, controlled low end." },
+              { "Medium",                "The usual bump: about 60 Hz at 15 ips." },
+              { "Large",                 "A big, deep head bump: the fattest low end." },
+              { "", "" } },
+            { { "Early",                 "A 1950s transport: the most wow and flutter (0.12 %)." },
+              { "Synchronous motor",     "A mains-locked capstan motor and pinch roller, as through the 1960s (0.07 %)." },
+              { "Servo capstan",         "A servo-controlled capstan, as from the 1970s (0.035 %)." },
+              { "Servo, no pinch roller", "The steadiest: a large servo capstan with no pinch roller, or no capstan at all (0.022 %)." } },
+        };
+        return c[juce::jlimit (0, numPartKinds - 1, kind)][juce::jlimit (0, numPartChoices (kind) - 1, i)];
+    }
+    inline int& partOf (MachineParts& p, int kind)
+    {
+        switch (kind) { case partElectronics: return p.electronics; case partTrackWidth: return p.trackWidth; case partHeads: return p.heads;
+                        case partContour: return p.contour; default: return p.transport; }
+    }
+    inline int partOf (const MachineParts& p, int kind) { return partOf (const_cast<MachineParts&> (p), kind); }
+
+    /** The trims: name, range and resting value. */
+    struct TrimInfo { const char* name; const char* tip; double lo, hi, rest; const char* unit; };
+    constexpr int numTrims = 6;
+    inline const TrimInfo& trimInfo (int i)
+    {
+        static const TrimInfo t[numTrims] = {
+            { "HEADROOM",      "How hard the machine can be hit before it breaks up, against what its parts give.", -3.0, 3.0, 0.0, "dB" },
+            { "COLOUR",        "Even harmonics from the electronics: 0 none, 1 what the parts give, 2 twice that.", 0.0, 2.0, 1.0, "x" },
+            { "LOW END",       "The size of the head bump.", 0.5, 1.5, 1.0, "x" },
+            { "TOP END",       "How far the top extends.", 0.8, 1.2, 1.0, "x" },
+            { "HISS",          "More or less hiss than the parts give.", -6.0, 6.0, 0.0, "dB" },
+            { "WOW & FLUTTER", "How unsteady the transport is, against what it was built as.", 0.25, 3.0, 1.0, "x" },
+        };
+        return t[juce::jlimit (0, numTrims - 1, i)];
+    }
+    inline double& trimOf (MachineParts& p, int i)
+    {
+        switch (i) { case 0: return p.level; case 1: return p.colour; case 2: return p.lowEnd; case 3: return p.topEnd; case 4: return p.noise; default: return p.wobble; }
+    }
+    inline double trimOf (const MachineParts& p, int i) { return trimOf (const_cast<MachineParts&> (p), i); }
+
+    inline MachineParts tidy (MachineParts p)
+    {
+        for (int k = 0; k < numPartKinds; ++k) partOf (p, k) = juce::jlimit (0, numPartChoices (k) - 1, partOf (p, k));
+        for (int i = 0; i < numTrims; ++i) trimOf (p, i) = juce::jlimit (trimInfo (i).lo, trimInfo (i).hi, trimOf (p, i));
+        p.look = juce::jmax (0, p.look);
+        return p;
+    }
+
+    /** What the parts add up to (name, label and description are the caller's). */
+    inline MachineInfo buildMachine (const MachineParts& parts)
+    {
+        const auto p = tidy (parts);
+        //                           headroom  asym   hfSoft  lowCut  hiss
+        static const double el[4][5] = { { -1.0, 0.055, 1.6, 1.10,  3.0 },
+                                         { -0.7, 0.025, 0.6, 1.00,  1.5 },
+                                         { -0.3, 0.012, 0.3, 0.95,  0.5 },
+                                         {  0.5, 0.0,   0.0, 0.85, -1.0 } };
+        static const double widthHiss[4] = { -2.5, 0.0, 2.0, 4.5 };
+        static const double gap[3] = { 0.75, 1.0, 1.15 };
+        static const double bump[3][2] = { { 0.8, 1.1 }, { 1.0, 1.0 }, { 1.35, 0.9 } };
+        static const double wf[4] = { 0.12, 0.07, 0.035, 0.022 };
+        MachineInfo m = neutralMachine;
+        const auto& e = el[p.electronics];
+        m.headroomDb = e[0] + p.level;
+        m.asymmetry  = juce::jmax (0.0, e[1] * p.colour + 0.01 * (p.colour - 1.0));
+        m.hfSoftDb   = e[2] - (p.heads == 2 ? 0.3 : 0.0);
+        m.lowCut     = e[3];
+        m.hissDb     = e[4] + widthHiss[p.trackWidth] + p.noise;
+        m.hfScale    = gap[p.heads] * p.topEnd;
+        m.bumpScale  = bump[p.contour][0] * p.lowEnd;
+        m.bumpFreq   = bump[p.contour][1];
+        m.wowFlutter = wf[p.transport] * p.wobble;
+        return m;
+    }
+
+    /** The two custom machines in use (multitrack, 2-track): set from the reel when it goes on, and when
+        one is built or changed. The audio thread reads them through multitrackMachine / masterMachine. */
+    struct CustomSlot
+    {
+        CustomSlot() { set ({}, {}); }
+
+        void set (const MachineParts& p, const std::string& called)
+        {
+            const int next = 1 - active.load();
+            auto& b = built[next];
+            b.name = called.empty() ? std::string ("Custom machine") : called;
+            b.label = b.name.substr (0, 18);
+            for (auto& ch : b.label) ch = (char) std::toupper ((unsigned char) ch);
+            const auto t = tidy (p);
+            b.description = std::string ("Built to order: ") + partChoice (partElectronics, t.electronics).name + " electronics, "
+                          + partChoice (partTrackWidth, t.trackWidth).name + " tracks, " + partChoice (partHeads, t.heads).name + " heads, a "
+                          + partChoice (partContour, t.contour).name + " head bump and a " + partChoice (partTransport, t.transport).name + " transport.";
+            for (size_t i = 16; i < b.description.size(); ++i) b.description[i] = (char) std::tolower ((unsigned char) b.description[i]);
+            b.info = buildMachine (t);
+            b.info.name = b.name.c_str();
+            b.info.label = b.label.c_str();
+            b.info.description = b.description.c_str();
+            parts = t;
+            active = next;
+            ++version;
+        }
+        const MachineInfo& get() const noexcept { return built[active.load (std::memory_order_relaxed)].info; }
+
+        MachineParts parts;
+        std::atomic<int> version { 0 };
+
+    private:
+        struct Built { std::string name, label, description; MachineInfo info = neutralMachine; };
+        Built built[2];
+        std::atomic<int> active { 0 };
+    };
+    inline CustomSlot& customSlot (bool master) { static CustomSlot s[2]; return s[master ? 1 : 0]; }
+
+    inline const MachineInfo& customMachineInfo (bool master) { return customSlot (master).get(); }
+
+    inline int validMultitrack (int i) { return i == customMachine || (i >= 0 && i < numMultitrackMachines) ? i : 0; }
+    inline int validMaster (int i)     { return i == customMachine || (i >= 0 && i < numMasterMachines) ? i : 0; }
 
     //==========================================================================
     /** The machines in the order they're offered: oldest first, no machine (digital) last. */
@@ -287,6 +460,28 @@ namespace tape
             const double k = 2.0 * sr;
             const double a0 = 1.0 + k * t2;
             return { (1.0 + k * t1) / a0, (1.0 - k * t1) / a0, 0.0, (1.0 - k * t2) / a0, 0.0 };
+        }
+        /** The same shelf with its two corners (Hz) put exactly where they're asked for, whatever the sample rate. */
+        static Biquad shelfAt (double sr, double zeroHz, double poleHz)
+        {
+            const auto t = [sr] (double f) { return 1.0 / (2.0 * sr * std::tan (juce::MathConstants<double>::pi * juce::jmin (f, 0.49 * sr) / sr)); };
+            return firstOrder (sr, t (zeroHz), t (poleHz));
+        }
+        /** A head's top-end loss: two first-order roll-offs at fc (-6 dB there), each matched to the analogue
+            curve at 0 Hz and at half the sample rate - so it measures the same at 44.1, 48 and 96 kHz, and fc
+            may sit above half the sample rate. */
+        static Biquad gapLoss (double sr, double fc)
+        {
+            const double p = std::exp (-juce::MathConstants<double>::twoPi * fc / sr);
+            const double x = 0.5 * sr / fc, gN = 1.0 / std::sqrt (1.0 + x * x);
+            const double r = juce::jmin (0.999, gN * (1.0 + p) / (1.0 - p));
+            const double c = (1.0 - r) / (1.0 + r), g = (1.0 - p) / (1.0 + c);
+            return { g * g, 2.0 * g * g * c, g * g * c * c, -2.0 * p, p * p };
+        }
+        double gainAt (double f, double sr) const
+        {
+            const std::complex<double> zi = std::polar (1.0, -juce::MathConstants<double>::twoPi * f / sr);
+            return std::abs ((b0 + b1 * zi + b2 * zi * zi) / (1.0 + a1 * zi + a2 * zi * zi));
         }
     };
 
@@ -378,6 +573,19 @@ namespace tape
         int upPos = 0, downPos = 0;
     };
 
+    /** The record head's flutter is a small moving delay: it sits this far back (samples) so it can move both ways. */
+    constexpr int flutterDelay = 16;
+    /** The record path's fixed delay, which the recorder takes off so tracks stay sample-aligned. */
+    constexpr int recordLatency = HalfBand::latency + flutterDelay;
+
+    /** A-weighting (0 dB at 1 kHz). */
+    inline double aWeight (double f) noexcept
+    {
+        const double f2 = f * f;
+        return 1.2589 * 12194.0 * 12194.0 * f2 * f2
+             / ((f2 + 20.6 * 20.6) * std::sqrt ((f2 + 107.7 * 107.7) * (f2 + 737.9 * 737.9)) * (f2 + 12194.0 * 12194.0));
+    }
+
     //==========================================================================
     /** Settings shared by every track for the current stock and speed. */
     struct Shared
@@ -386,11 +594,42 @@ namespace tape
         double ips = 15.0, sr = 48000.0;
         // record
         Biquad preEmph, deEmph, lfPre, lfDe, biasEq;
-        float drive = 1.0f, bias = 0.0f, biasOut = 0.0f, modNoise = 0.0f;
+        float drive = 1.0f, bias = 0.0f, biasOut = 0.0f, modNoise = 0.0f, modCoef = 0.1f;
         // playback
         Biquad bump, dip, lowCut, hfLoss, hfSoft;
         float hiss = 0.0f;
-        Biquad hissHp, hissLp;
+        Biquad hissHp, hissEq;
+
+        /** The playback equalisation's treble corner (Hz) for a tape speed: NAB 50 us at 7.5 and 15 ips,
+            CCIR / IEC 35 us at 15 and 70 us at 7.5, AES 17.5 us at 30 ips for both, 90 us at 3.75. */
+        static double eqCorner (bool ccir, double tapeIps) noexcept
+        {
+            const double us = tapeIps >= 22.0 ? 17.5 : tapeIps >= 11.0 ? (ccir ? 35.0 : 50.0) : tapeIps >= 5.5 ? (ccir ? 70.0 : 50.0) : 90.0;
+            return 1.0e6 / (juce::MathConstants<double>::twoPi * us);
+        }
+        /** Hiss as it leaves the playback amplifier: flat through the mids, then rising with the amplifier's
+            treble lift (from the equalisation's corner) until the tape's own short-wavelength loss levels it off. */
+        static void hissShape (bool ccir, double tapeIps, double sampleRate, Biquad& hp, Biquad& eq)
+        {
+            hp = Biquad::highpass (sampleRate, ccir ? 50.0 : 80.0, 0.7);     // (NAB playback also cuts the very bottom)
+            const double corner = eqCorner (ccir, tapeIps);
+            eq = Biquad::shelfAt (sampleRate, corner, juce::jmax (1.2 * corner, 6400.0 * std::sqrt (tapeIps / 15.0)));
+        }
+        /** A-weighted level of white noise of +-1 through a pair of filters. */
+        static double aWeightedNoise (const Biquad& f1, const Biquad& f2, const Biquad& f3, double sampleRate)
+        {
+            const int steps = 72;
+            const double lo = std::log (20.0), hi = std::log (juce::jmin (0.5 * sampleRate, 22000.0));
+            double sum = 0.0, last = 0.0, lastF = 0.0;
+            for (int i = 0; i <= steps; ++i)
+            {
+                const double f = std::exp (lo + (hi - lo) * i / steps);
+                const double g = f1.gainAt (f, sampleRate) * f2.gainAt (f, sampleRate) * f3.gainAt (f, sampleRate) * aWeight (f);
+                if (i > 0) sum += 0.5 * (g * g + last) * (f - lastF);
+                last = g * g; lastF = f;
+            }
+            return std::sqrt (sum / (0.5 * sampleRate) / 3.0);
+        }
 
         bool isClean() const noexcept { return stock == Stock::clean; }
 
@@ -449,7 +688,10 @@ namespace tape
             // touch less) and 6 to 7.5 dB wider at 7.5 ips.
             const double d = biasOffset;
             const double biasHeadroom = d < 0.0 ? 2.0 * d : 0.6 * d - 0.15 * d * d;
-            bias = (float) (in.asymmetry + mc.asymmetry);
+            // Even harmonics come from the machine, not the tape (its curve is symmetrical): the electronics'
+            // own lopsidedness, and a little from the stock for the DC it tends to be left with. Scaled so a
+            // valve machine on standard tape gives about 0.3 % second harmonic at 0 VU, under the 1 % third.
+            bias = (float) (0.1 * in.asymmetry + 0.15 * mc.asymmetry);
             biasOut = sat (bias);
             double molAmp = 0.5, ceilingDb = 7.0, h3Ratio = 0.03;
             const auto gainAt = [this] (const Biquad& c, double f)
@@ -493,7 +735,14 @@ namespace tape
             const double peakAtHeadroom = std::pow (10.0, (-18.0 + in.headroomDb + mc.headroomDb - levelOffset + biasHeadroom) / 20.0) * std::sqrt (2.0);
             // (the record EQ's own gain at 1 kHz counts: the MOL is measured with it in)
             drive = (float) (molAmp / (peakAtHeadroom * gainAt (preEmph, 1000.0) * gainAt (lfPre, 1000.0)));
-            modNoise = (float) std::pow (10.0, (in.modNoiseDb + (d < 0.0 ? -2.5 * d : 0.0)) / 20.0);
+            // Modulation noise: the signal's own level wavering as the coating passes the head, so it sits
+            // close around each note (a noise band under a kilohertz wide) and is gone when the signal stops.
+            {
+                const double a = 1.0 - std::exp (-juce::MathConstants<double>::twoPi * 800.0 / sr), r = 1.0 - a;
+                modCoef = (float) a;
+                const double own = std::sqrt (a * a * a * a * (1.0 + r * r) / std::pow (1.0 - r * r, 3.0) / 3.0);   // (the two smoothings' own rms)
+                modNoise = (float) (std::pow (10.0, (in.modNoiseDb + (d < 0.0 ? -2.5 * d : 0.0)) / 20.0) / own);
+            }
             biasEq = Biquad::highShelf (sr, juce::jmin (0.4 * sr, 6000.0 * ips / 15.0), -1.5 * d);   // printed: over-bias dulls the top
 
             // Playback: the head bump moves with the tape speed
@@ -501,13 +750,22 @@ namespace tape
             const double speedFactor = std::log2 (15.0 / ips);       // slower tape = bigger bump, earlier top loss
             bump   = Biquad::peak (sr, fb, 1.1, in.bumpDb * mc.bumpScale * (1.0 + 0.25 * speedFactor) * (1.0 + 0.04 * d));
             dip    = Biquad::peak (sr, fb * 2.2, 1.4, -0.4 * in.bumpDb * mc.bumpScale);
-            lowCut = Biquad::highpass (sr, fb / 2.6 * mc.lowCut, 0.65);
-            const double hfCorner = juce::jmin (0.45 * sr, 18000.0 * ips / 15.0 * mc.hfScale);
-            hfLoss = Biquad::firstOrder (sr, 1.0 / (juce::MathConstants<double>::twoPi * hfCorner * 3.0), 1.0 / (juce::MathConstants<double>::twoPi * hfCorner));
-            hfSoft = Biquad::highShelf (sr, juce::jmin (0.4 * sr, 9000.0 * ips / 15.0), -(in.hfSoftDb + mc.hfSoftDb));
-            hiss = (float) (std::pow (10.0, (-18.0 + in.hissDb + mc.hissDb + 3.0 * speedFactor - levelOffset) / 20.0) * 1.7);
-            hissHp = Biquad::highpass (sr, 250.0, 0.7);
-            hissLp = Biquad::firstOrder (sr, 0.0, 1.0 / (juce::MathConstants<double>::twoPi * juce::jmin (0.45 * sr, 11000.0)));
+            // (at 30 ips the bump is up at 100 Hz or so, but the bass holds on below it: 40 Hz within 2 dB)
+            lowCut = Biquad::highpass (sr, fb / 2.6 * mc.lowCut * (ips > 15.0 ? std::sqrt (15.0 / ips) : 1.0), 0.65);
+            // The top: flat, then the head's loss - within 2 dB at 20 kHz at 15 ips on a modern machine, about
+            // 16 kHz at 7.5 ips and past 20 kHz at 30 (Studer A810: 20 Hz - 20 kHz, 20 Hz - 16 kHz and 40 Hz -
+            // 22 kHz, each +-2 dB; Ampex 300 / 351: to 15 kHz at 15 ips). The stock's softness is a gentle shelf.
+            hfLoss = Biquad::gapLoss (sr, 44000.0 * mc.hfScale * std::pow (ips / 15.0, 0.4));
+            hfSoft = Biquad::highShelf (sr, juce::jmin (0.4 * sr, 9000.0 * ips / 15.0), -0.3 * (in.hfSoftDb + mc.hfSoftDb));
+            // Hiss: the stock's figure is its A-weighted level at 15 ips (with its own equalisation); other
+            // speeds change both how much there is and its colour.
+            {
+                Biquad refHp, refEq;
+                hissShape (in.ccir, 15.0, sr, refHp, refEq);
+                hissShape (in.ccir, ips, sr, hissHp, hissEq);
+                const double want = std::pow (10.0, (-18.0 + in.hissDb + mc.hissDb + 1.5 * speedFactor - levelOffset) / 20.0);
+                hiss = (float) (want / aWeightedNoise (refHp, refEq, Biquad {}, sr));
+            }
         }
     };
 
@@ -517,11 +775,19 @@ namespace tape
         HalfBand os;
         BiquadState pre, de, lfPreSt, lfDeSt, biasSt;
         Noise noise;
-        float env = 0.0f;
+        float mod = 0.0f, mod2 = 0.0f;
+        std::array<float, 128> line {};      // the tape passing the record head, at the oversampled rate
+        int linePos = 0;
 
-        void reset (uint32_t seed) noexcept { os.reset(); pre.reset(); de.reset(); lfPreSt.reset(); lfDeSt.reset(); biasSt.reset(); env = 0.0f; noise.s = seed | 1u; }
+        void reset (uint32_t seed) noexcept
+        {
+            os.reset(); pre.reset(); de.reset(); lfPreSt.reset(); lfDeSt.reset(); biasSt.reset();
+            mod = mod2 = 0.0f; line.fill (0.0f); linePos = 0; noise.s = seed | 1u;
+        }
 
-        inline void process (const Shared& sh, const float* in, float* out, int n) noexcept
+        /** flutter: the transport's time error at the record head for each sample, in samples (see Flutter),
+            or none for a steady tape. Either way the output is recordLatency samples late. */
+        inline void process (const Shared& sh, const float* in, float* out, int n, const float* flutter = nullptr) noexcept
         {
             const float drive = sh.drive, inv = 1.0f / drive;
             for (int i = 0; i < n; ++i)
@@ -532,10 +798,31 @@ namespace tape
                 os.upsample (e, a, b);
                 a = (Shared::sat (a * drive + sh.bias) - sh.biasOut) * inv;
                 b = (Shared::sat (b * drive + sh.bias) - sh.biasOut) * inv;
+                // onto the moving tape
+                line[(size_t) linePos] = a;
+                line[(size_t) ((linePos + 1) & 127)] = b;
+                if (flutter == nullptr)
+                {
+                    a = line[(size_t) ((linePos - 2 * flutterDelay) & 127)];
+                    b = line[(size_t) ((linePos + 1 - 2 * flutterDelay) & 127)];
+                }
+                else
+                {
+                    const float back = 2.0f * ((float) flutterDelay + juce::jlimit (-14.0f, 14.0f, flutter[i]));
+                    const int whole = (int) back;
+                    const float f = back - (float) whole;      // read between [whole] and [whole + 1] samples back
+                    const float c0 = -f * (f - 1.0f) * (f - 2.0f) / 6.0f, c1 = (f + 1.0f) * (f - 1.0f) * (f - 2.0f) / 2.0f,
+                                c2 = -(f + 1.0f) * f * (f - 2.0f) / 2.0f, c3 = (f + 1.0f) * f * (f - 1.0f) / 6.0f;
+                    const auto at = [this] (int k) noexcept { return line[(size_t) (k & 127)]; };
+                    const int p = linePos - whole;
+                    a = c0 * at (p + 1) + c1 * at (p) + c2 * at (p - 1) + c3 * at (p - 2);
+                    b = c0 * at (p + 2) + c1 * at (p + 1) + c2 * at (p) + c3 * at (p - 1);
+                }
+                linePos = (linePos + 2) & 127;
                 float y = biasSt.process (sh.biasEq, lfDeSt.process (sh.lfDe, de.process (sh.deEmph, os.downsample (a, b))));
-                env += (std::abs (y) - env) * 0.002f;
-                y += noise.next() * env * sh.modNoise;
-                out[i] = y;
+                mod += (noise.next() - mod) * sh.modCoef;
+                mod2 += (mod - mod2) * sh.modCoef;
+                out[i] = y + y * mod2 * sh.modNoise;
             }
         }
     };
@@ -543,50 +830,109 @@ namespace tape
     /** The playback side of one track. */
     struct PlaybackChannel
     {
-        BiquadState bump, dip, lowCut, hfLoss, hfSoft, hissHp, hissLp;
+        BiquadState bump, dip, lowCut, hfLoss, hfSoft, hissHp, hissEq;
         Noise noise;
+        float last = 0.0f;
 
         void reset (uint32_t seed) noexcept
         {
-            for (auto* s : { &bump, &dip, &lowCut, &hfLoss, &hfSoft, &hissHp, &hissLp }) s->reset();
+            for (auto* s : { &bump, &dip, &lowCut, &hfLoss, &hfSoft, &hissHp, &hissEq }) s->reset();
             noise.s = seed | 1u;
+            last = 0.0f;
         }
 
-        inline void process (const Shared& sh, float* io, int n) noexcept
+        /** scrape: the tape's fast shiver over the head for each sample, as a time error in samples (see
+            Flutter) - far under a sample, so it is applied as that much of the signal's slope. */
+        inline void process (const Shared& sh, float* io, int n, const float* scrape = nullptr) noexcept
         {
             for (int i = 0; i < n; ++i)
             {
                 float y = io[i];
+                if (scrape != nullptr) { const float x = y; y += scrape[i] * (x - last); last = x; }
                 y = lowCut.process (sh.lowCut, y);
                 y = bump.process (sh.bump, y);
                 y = dip.process (sh.dip, y);
-                y = hfLoss.process (sh.hfLoss, y);
                 y = hfSoft.process (sh.hfSoft, y);
-                const float h = hissLp.process (sh.hissLp, hissHp.process (sh.hissHp, noise.next()));
-                io[i] = y + h * sh.hiss;
+                // (the hiss comes off the tape with the signal, so the head's top-end loss takes both)
+                y += hissEq.process (sh.hissEq, hissHp.process (sh.hissHp, noise.next())) * sh.hiss;
+                io[i] = hfLoss.process (sh.hfLoss, y);
             }
         }
     };
 
-    /** Transport wow (slow) and flutter (fast, irregular) as a speed multiplier: 1 % rms at 15 ips,
-        half wow and half flutter by power, for the engine to scale by the machine's spec. Slower
-        speeds wobble more - (15 / ips)^0.6, which fits the specs (Studer A800 0.04 % at 15 and 30 ips,
-        0.06 % at 7.5; MCI JH-24 0.04 % at 15, 0.03 % at 30). */
-    struct WowFlutter
+    /** A transport's wow and flutter. Everything turns with the tape speed, so the rates follow it:
+          wow       the reels and the tape path, around 0.6 and 1.1 Hz at 15 ips      (25 % of the power)
+          flutter   the pinch roller (2.4 Hz), the capstan (12 Hz) and its second
+                    harmonic, and an irregular part from 2 to 30 Hz                   (75 %)
+        which together make the machine's published figure (rms, at 15 ips; slower speeds wobble more -
+        (15 / ips)^0.6, which fits the specs: Studer A800 0.04 % at 15 and 30 ips, 0.06 % at 7.5).
+          scrape    the tape shivering along its length as it drags over the heads: a band of noise around
+                    4 kHz, half the published figure again. It is outside what a flutter meter weighs, and
+                    is what roughens high notes.
+        Playing back, the wow and flutter move the transport itself (next() returns its speed for the end
+        of the block) and the scrape goes to each track's repro side. Recording, the transport is held
+        on whole samples so tracks stay aligned, and the flutter and scrape are printed by the record
+        side as a moving delay (fast). */
+    struct Flutter
     {
-        double phase = 0.0, fl = 0.0, flState = 0.0;
+        double ph[5] = { 0.0, 1.3, 2.9, 0.7, 4.1 };
+        double n1 = 0.0, n2 = 0.0, nHp = 0.0, tau = 0.0;
+        BiquadState scrapeSt;
         Noise noise;
 
-        double next (double ips, double sr, int n) noexcept
+        void reset (uint32_t seed) noexcept { noise.s = seed | 1u; n1 = n2 = nHp = tau = 0.0; scrapeSt.reset(); }
+
+        /** percent: the machine's wow and flutter figure. fast / scrape (n samples each, either may be
+            null): the time error at the heads, in samples. Returns the transport's speed (1 = steady). */
+        double next (double ips, double sr, int n, double percent, float* fast, float* scrape) noexcept
         {
-            const double scale = std::pow (15.0 / juce::jlimit (3.0, 30.0, ips), 0.6);
-            phase += juce::MathConstants<double>::twoPi * 0.55 * n / sr;
-            if (phase > juce::MathConstants<double>::twoPi) phase -= juce::MathConstants<double>::twoPi;
-            // flutter: noise band-limited to a few Hz around 8 Hz, per block
-            const double a = 1.0 - std::exp (-juce::MathConstants<double>::twoPi * 8.0 * n / sr);
-            flState += (noise.next() - flState) * a;
-            fl += (flState - fl) * a;
-            return 1.0 + scale * (0.01 * std::sin (phase) + 0.00707 / 0.2152 * fl);   // (0.2152: the flutter noise's own rms)
+            const double k = juce::jlimit (3.0, 30.0, ips) / 15.0;
+            const double dev = 0.01 * percent * std::pow (1.0 / k, 0.6);
+            static constexpr double hz[5] = { 0.6, 1.1, 2.4, 12.0, 24.0 };
+            static constexpr double power[5] = { 0.15, 0.10, 0.10, 0.25, 0.05 };
+            double inc[5], amp[5];
+            for (int j = 0; j < 5; ++j)
+            {
+                inc[j] = juce::MathConstants<double>::twoPi * hz[j] * k / sr;
+                amp[j] = std::sqrt (2.0 * power[j]);
+            }
+            // the irregular part: noise held between 2 and 30 Hz (0.35 of the power)
+            const double aLp = 1.0 - std::exp (-juce::MathConstants<double>::twoPi * 30.0 / sr);
+            const double aHp = 1.0 - std::exp (-juce::MathConstants<double>::twoPi * 2.0 / sr);
+            const double noiseGain = std::sqrt (0.35) * 0.2754 * std::sqrt (sr);      // (measured: unit rms out of the filters)
+            const Biquad scrapeBand = bandpass (sr, juce::jmin (4000.0, 0.2 * sr), 1.2);
+            const double scrapeGain = 0.5 * dev * 4.07 * std::sqrt (sr / 48000.0) * std::sqrt (4000.0 / juce::jmin (4000.0, 0.2 * sr));
+            const double leak = 1.0 - juce::MathConstants<double>::twoPi * 0.4 / sr;     // (lets go of anything slower than the pinch roller)
+            // the scrape's time error: its speed error, integrated - at 4 kHz that is a division by 2 pi 4000 / sr
+            const double scrapeToTime = sr / (juce::MathConstants<double>::twoPi * juce::jmin (4000.0, 0.2 * sr));
+            double speed = 0.0;
+            for (int i = 0; i < n; ++i)
+            {
+                n1 += (noise.next() - n1) * aLp;
+                n2 += (n1 - n2) * aLp;
+                nHp += (n2 - nHp) * aHp;
+                const double irregular = (n2 - nHp) * noiseGain;
+                double wow = 0.0, fl = irregular;
+                for (int j = 0; j < 5; ++j)
+                {
+                    ph[j] += inc[j];
+                    if (ph[j] > juce::MathConstants<double>::twoPi) ph[j] -= juce::MathConstants<double>::twoPi;
+                    (j < 2 ? wow : fl) += amp[j] * std::sin (ph[j]);
+                }
+                const double s = scrapeSt.process (scrapeBand, noise.next()) * scrapeGain * scrapeToTime;
+                tau = tau * leak + dev * fl;
+                if (fast != nullptr)   fast[i] = (float) (tau + s);
+                if (scrape != nullptr) scrape[i] = (float) s;
+                speed = dev * (wow + fl);
+            }
+            return 1.0 + speed;
+        }
+
+        static Biquad bandpass (double sr, double f, double q)
+        {
+            const double w = juce::MathConstants<double>::twoPi * f / sr, alpha = std::sin (w) / (2.0 * q), c = std::cos (w);
+            const double a0 = 1.0 + alpha;
+            return { alpha / a0, 0.0, -alpha / a0, -2.0 * c / a0, (1.0 - alpha) / a0 };
         }
     };
 }

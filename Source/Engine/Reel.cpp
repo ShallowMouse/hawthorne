@@ -53,7 +53,7 @@ std::unique_ptr<Reel> Reel::create (const juce::File& parentFolder, const juce::
     s->sampleRate  = sampleRate > 0 ? sampleRate : 48000.0;
     s->numTracks   = juce::jlimit (1, kMaxTracks, numTracks);
     s->ips = s->deckIps = (ips == 7.5 || ips == 30.0) ? ips : 15.0;
-    s->tapeStock = juce::jlimit (0, 7, tapeStock);
+    s->tapeStock = juce::jlimit (0, tape::numStocks - 1, tapeStock);
     s->alignLevel = juce::jmin (9, tape::recommendedLevel ((tape::Stock) s->tapeStock));
     s->alignBias = tape::recommendedBias ((tape::Stock) s->tapeStock);
     initDefaultTracks (s->tracks);
@@ -281,7 +281,7 @@ void Reel::flipMetadata (juce::int64 length, bool swapTracks)
 
 int Reel::addMaster (const juce::String& name, int stock, int nr)
 {
-    masters.push_back ({ uniqueMasterName (name), juce::jlimit (0, 7, stock), juce::jlimit (0, 3, nr) });
+    masters.push_back ({ uniqueMasterName (name), juce::jlimit (0, tape::numStocks - 1, stock), juce::jlimit (0, 3, nr) });
     return (int) masters.size() - 1;
 }
 
@@ -344,6 +344,8 @@ std::unique_ptr<juce::XmlElement> Reel::toXml() const
     root->setAttribute ("stock", tapeStock);
     root->setAttribute ("machine", machine);
     root->setAttribute ("masterMachine", masterMachine);
+    if (machine == tape::customMachine)       tape::partsToXml (*root->createNewChildElement ("CustomMachine"), customMachine, customMachineName);
+    if (masterMachine == tape::customMachine) tape::partsToXml (*root->createNewChildElement ("CustomMaster"), customMaster, customMasterName);
     root->setAttribute ("flipped", flipped);
     root->setAttribute ("nr", noiseReduction);
     root->setAttribute ("alignLevel", alignLevel);
@@ -464,13 +466,17 @@ bool Reel::fromXml (const juce::XmlElement& root, juce::String& error)
     nextTake   = juce::jmax (1, root.getIntAttribute ("nextTake", 1));
 
     auto validIps = [] (double v) { return v == 7.5 || v == 15.0 || v == 30.0; };
-    tapeStock = juce::jlimit (0, 7, root.getIntAttribute ("stock", 0));   // older reels: clean
-    machine = juce::jlimit (0, tape::numMultitrackMachines - 1, root.getIntAttribute ("machine", 0));
+    tapeStock = juce::jlimit (0, tape::numStocks - 1, root.getIntAttribute ("stock", 0));   // older reels: clean
+    machine = tape::validMultitrack (root.getIntAttribute ("machine", 0));
+    if (auto* cm = root.getChildByName ("CustomMachine")) tape::partsFromXml (*cm, customMachine, customMachineName);
+    else if (machine == tape::customMachine) machine = 0;
+    if (auto* cm = root.getChildByName ("CustomMaster")) tape::partsFromXml (*cm, customMaster, customMasterName);
     flipped = root.getBoolAttribute ("flipped", false);
     noiseReduction = juce::jlimit (0, 3, root.getIntAttribute ("nr", 0));
     alignLevel = juce::jlimit (0, 9, root.getIntAttribute ("alignLevel", juce::jmin (9, tape::recommendedLevel ((tape::Stock) tapeStock))));
     alignBias = juce::jlimit (-1.0, 4.0, root.getDoubleAttribute ("alignBias", tape::recommendedBias ((tape::Stock) tapeStock)));
-    masterMachine = juce::jlimit (0, tape::numMasterMachines - 1, root.getIntAttribute ("masterMachine", 0));
+    masterMachine = tape::validMaster (root.getIntAttribute ("masterMachine", 0));
+    if (masterMachine == tape::customMachine && root.getChildByName ("CustomMaster") == nullptr) masterMachine = 0;
     ips = root.getDoubleAttribute ("ips", 0.0);
     if (! validIps (ips))
     {
@@ -570,7 +576,7 @@ bool Reel::fromXml (const juce::XmlElement& root, juce::String& error)
     if (auto* ms = root.getChildByName ("Masters"))
     {
         for (auto* e : ms->getChildWithTagNameIterator ("Mix"))
-            masters.push_back ({ e->getStringAttribute ("name"), juce::jlimit (0, 7, e->getIntAttribute ("stock", 0)),
+            masters.push_back ({ e->getStringAttribute ("name"), juce::jlimit (0, tape::numStocks - 1, e->getIntAttribute ("stock", 0)),
                                  juce::jlimit (0, 3, e->getIntAttribute ("nr", 0)) });
         activeMaster  = juce::jlimit (-1, (int) masters.size() - 1, ms->getIntAttribute ("active", masters.empty() ? -1 : 0));
         masterArmed   = ms->getBoolAttribute ("armed", false) && activeMaster >= 0;

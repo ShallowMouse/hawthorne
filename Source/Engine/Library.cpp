@@ -47,8 +47,10 @@ ReelSummary Library::summarise (const juce::File& reelFile)
 
     if (const auto v = xml->getDoubleAttribute ("ips"); v == 7.5 || v == 30.0)
         r.ips = v;
-    r.tapeStock = juce::jlimit (0, 7, xml->getIntAttribute ("stock", 0));
-    r.machine = juce::jlimit (0, tape::numMultitrackMachines - 1, xml->getIntAttribute ("machine", 0));
+    r.tapeStock = juce::jlimit (0, tape::numStocks - 1, xml->getIntAttribute ("stock", 0));
+    r.machine = tape::validMultitrack (xml->getIntAttribute ("machine", 0));
+    if (auto* cm = xml->getChildByName ("CustomMachine")) r.machineName = cm->getStringAttribute ("name");
+    if (r.machine != tape::customMachine) r.machineName = tape::multitrackMachine (r.machine).name;
     r.noiseReduction = juce::jlimit (0, 3, xml->getIntAttribute ("nr", 0));
 
     if (auto* ms = xml->getChildByName ("Masters"))

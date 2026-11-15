@@ -129,7 +129,7 @@ namespace transfer
         nrs.set (nrEncode, reelRate);
         std::vector<nr::Channel> enc ((size_t) outs);
         for (auto& e : enc) e.reset();
-        const int skip = print != nullptr ? tape::HalfBand::latency : 0;   // the print's delay, taken off
+        const int skip = print != nullptr ? tape::recordLatency : 0;   // the print's delay, taken off
         int toSkip = skip;
 
         const int chunk = 8192;

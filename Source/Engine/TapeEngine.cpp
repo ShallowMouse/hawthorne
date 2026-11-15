@@ -77,6 +77,7 @@ void TapeEngine::setReel (Reel* s)
     masterArmedFlag   = s != nullptr && s->masterArmed && s->activeMaster >= 0;
     targetRate = currentRate = s != nullptr ? s->getSpeedRatio() : 1.0;
     windCancel();
+    if (s != nullptr) s->loadCustomMachines();
     tapeStock = s != nullptr ? s->tapeStock : 0;
     machineA = s != nullptr ? s->machine : 0;
     nrSystemA = s != nullptr ? s->noiseReduction : 0;
@@ -140,6 +141,7 @@ void TapeEngine::prepare (double sampleRate, int maxBlockSize,
     vsOffset.calloc ((size_t) vsChunk);
     tapePosBuf.calloc ((size_t) vsChunk);
     tapeRecBuf.calloc ((size_t) juce::jmax (vsChunk, maxBlock));
+    for (auto* b : { &flutterFast, &flutterScrape, &masterFast, &masterScrape }) b->calloc ((size_t) juce::jmax (vsChunk, maxBlock));
     nrBuf.calloc ((size_t) juce::jmax (vsChunk, maxBlock));
     oscBuf.calloc ((size_t) juce::jmax (vsChunk, maxBlock));
     oscMonBuf.calloc ((size_t) juce::jmax (vsChunk, maxBlock));
@@ -444,8 +446,9 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         const double sr = juce::jmax (1000.0, deviceSampleRate.load (std::memory_order_relaxed));
         const double ips = reelIps.load (std::memory_order_relaxed) * juce::jmax (0.05, std::abs (isRolling ? r1 : targetRate.load (std::memory_order_relaxed)));
         const int mach = machineA.load (std::memory_order_relaxed);
+        const int customNow = mach == tape::customMachine ? tape::customSlot (false).version.load (std::memory_order_relaxed) : -1;
         const int key = stockNow * 64 + mach + 4096 * (alignVersion.load (std::memory_order_relaxed) & 0xffff);
-        if (key != tapeSharedStock || std::abs (ips - tapeSharedIps) > 0.003 * ips || tapeShared.sr != sr)
+        if (key != tapeSharedStock || customNow != customSeen || std::abs (ips - tapeSharedIps) > 0.003 * ips || tapeShared.sr != sr)
         {
             const auto st = (tape::Stock) stockNow;
             tapeShared.set (st, ips, sr, tape::multitrackMachine (mach),
@@ -453,35 +456,55 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
                             alignBiasA.load (std::memory_order_relaxed) - tape::recommendedBias (st));
             tapeSharedStock = key;
             tapeSharedIps = ips;
+            customSeen = customNow;
         }
-        if (isRolling && rp == nullptr)
+        // The transport's wow and flutter. Playing back, it moves the transport itself; recording, the
+        // transport stays on whole samples (so tracks stay aligned) and the record heads print it.
+        flutterOn = isRolling && n <= juce::jmax (vsChunk, maxBlock);
+        if (flutterOn)
         {
-            const double w1 = 1.0 + (wowFlutter.next (ips, sr, n) - 1.0) * tape::multitrackMachine (mach).wowFlutter;
-            r0 *= wfPrev;
-            r1 *= w1;
-            wfPrev = w1;
+            const double w1 = flutter.next (ips, sr, n, tape::multitrackMachine (mach).wowFlutter, flutterFast.get(), flutterScrape.get());
+            if (rp == nullptr)
+            {
+                r0 *= wfPrev;
+                r1 *= w1;
+                wfPrev = w1;
+            }
+            else
+                wfPrev = 1.0;
         }
         else
             wfPrev = 1.0;
     }
     else
+    {
         wfPrev = 1.0;
+        flutterOn = false;
+    }
 
     // The 2-track master: its own tape and machine
     const int mStock = masterStockA.load (std::memory_order_relaxed);
     const bool masterTapeOn = mStock != 0 && masterMachineA.load (std::memory_order_relaxed) != tape::noMasterMachine;
+    masterFlutterOn = false;
     if (masterTapeOn)
     {
         const double sr = juce::jmax (1000.0, deviceSampleRate.load (std::memory_order_relaxed));
         const double ips = reelIps.load (std::memory_order_relaxed) * juce::jmax (0.05, std::abs (isRolling ? r1 : targetRate.load (std::memory_order_relaxed)));
-        const int key = mStock * 64 + masterMachineA.load (std::memory_order_relaxed);
-        if (key != masterSharedKey || std::abs (ips - masterShared.ips) > 0.003 * ips || masterShared.sr != sr)
+        const int mMach = masterMachineA.load (std::memory_order_relaxed);
+        const int key = mStock * 64 + mMach;
+        const int customNow = mMach == tape::customMachine ? tape::customSlot (true).version.load (std::memory_order_relaxed) : -1;
+        if (key != masterSharedKey || customNow != customMasterSeen || std::abs (ips - masterShared.ips) > 0.003 * ips || masterShared.sr != sr)
         {
             if (masterSharedKey < 0)
                 for (int side = 0; side < 2; ++side) { masterRec[(size_t) side].reset (0x2468ACEu + (uint32_t) side); masterPlay[(size_t) side].reset (0x13579BDu + (uint32_t) side); }
-            masterShared.set ((tape::Stock) mStock, ips, sr, tape::masterMachine (key % 64));
+            masterShared.set ((tape::Stock) mStock, ips, sr, tape::masterMachine (mMach));
             masterSharedKey = key;
+            customMasterSeen = customNow;
         }
+        // (the 2-track's own transport: its flutter is printed as the mix goes down, and its scrape is heard off its tape)
+        masterFlutterOn = isRolling && n <= juce::jmax (vsChunk, maxBlock);
+        if (masterFlutterOn)
+            masterFlutter.next (ips, sr, n, tape::masterMachine (mMach).wowFlutter, masterFast.get(), masterScrape.get());
     }
     else
         masterSharedKey = -1;
@@ -712,7 +735,7 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
                 if (tapeOn)
                 {
                     // the tape's record side, printed into the file
-                    (*tapeRec)[(size_t) t].process (tapeShared, recIn, tapeRecBuf.get(), n);
+                    (*tapeRec)[(size_t) t].process (tapeShared, recIn, tapeRecBuf.get(), n, flutterOn ? flutterFast.get() : nullptr);
                     toTape = tapeRecBuf.get();
                 }
                 if (fading && ring != nullptr)
@@ -739,7 +762,7 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
             }
 
         if (hasTape && tapeOn)
-            (*tapePlay)[(size_t) t].process (tapeShared, tb, n);      // repro head: bump, top, hiss
+            (*tapePlay)[(size_t) t].process (tapeShared, tb, n, flutterOn ? flutterScrape.get() : nullptr);      // repro head: bump, top, hiss
         if (hasTape && nrSys != nr::none && nr::decodes (nrModeA[(size_t) t].load (std::memory_order_relaxed)))
         {
             if (! nrDecLive[(size_t) t]) (*nrDec)[(size_t) t].reset();
@@ -844,7 +867,7 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
             if (masterTapeOn)
             {
                 // the 2-track's record side, printed onto the master tape
-                masterRec[(size_t) side].process (masterShared, toTape, tapeRecBuf.get(), n);
+                masterRec[(size_t) side].process (masterShared, toTape, tapeRecBuf.get(), n, masterFlutterOn ? masterFast.get() : nullptr);
                 toTape = tapeRecBuf.get();
             }
             if (resampledRec)       rp->masterRs.push (side, toTape, n);
@@ -868,7 +891,7 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
             else
             {
                 if (masterTapeOn)
-                    masterPlay[(size_t) side].process (masterShared, tb, n);   // 2-track repro head
+                    masterPlay[(size_t) side].process (masterShared, tb, n, masterFlutterOn ? masterScrape.get() : nullptr);   // 2-track repro head
                 if (mNr != nr::none)
                 {
                     if (! masterDecLive[(size_t) side]) masterDec[(size_t) side].reset();
@@ -1753,7 +1776,7 @@ void TapeEngine::punchOutSmooth()
 
 void TapeEngine::setMachine (int m)
 {
-    machineA = juce::jlimit (0, tape::numMultitrackMachines - 1, m);
+    machineA = tape::validMultitrack (m);
     if (reel != nullptr) { reel->machine = machineA.load(); saveReel(); }
 }
 
@@ -1801,8 +1824,20 @@ void TapeEngine::setTrackNr (int track, int mode)
 
 void TapeEngine::setMasterMachine (int m)
 {
-    masterMachineA = juce::jlimit (0, tape::numMasterMachines - 1, m);
+    masterMachineA = tape::validMaster (m);
     if (reel != nullptr) { reel->masterMachine = masterMachineA.load(); saveReel(); }
+}
+
+void TapeEngine::setCustomMachine (bool twoTrack, const tape::MachineParts& parts, const juce::String& name)
+{
+    tape::customSlot (twoTrack).set (parts, name.toStdString());
+    if (reel != nullptr)
+    {
+        (twoTrack ? reel->customMaster : reel->customMachine) = tape::tidy (parts);
+        (twoTrack ? reel->customMasterName : reel->customMachineName) = name;
+    }
+    if (twoTrack) setMasterMachine (tape::customMachine);
+    else          setMachine (tape::customMachine);
 }
 
 void TapeEngine::setLifterDefeat (bool on)
@@ -2109,7 +2144,7 @@ juce::String TapeEngine::beginRecordPass (bool pendingStart, bool reverse)
     p->masterLatency = getMasterBusLatency()
                      + (juce::isPositiveAndBelow (reel->activeMaster, (int) reel->masters.size())
                           && reel->masters[(size_t) reel->activeMaster].stock != 0
-                          && reel->masterMachine != tape::noMasterMachine ? tape::HalfBand::latency : 0);
+                          && reel->masterMachine != tape::noMasterMachine ? tape::recordLatency : 0);
     p->reverse = reverse;
     p->rate = reverse ? -targetRate.load() : targetRate.load();
     p->crossfade = ! reverse && (pendingStart || playing.load());
