@@ -309,7 +309,8 @@ public:
         }
         builder = std::make_unique<MachineBuilder> (twoTrack, start, fresh || ! custom[k].has ? juce::String() : custom[k].name);
         builder->onChange = [this, twoTrack] (const tape::MachineParts& p, const juce::String& n) { putOn (twoTrack, p, n); };
-        builder->onClose = [this, twoTrack] (bool keep)
+        const juce::Component::SafePointer<MachinePicker> self (this);
+        builder->onClose = [this, self, twoTrack] (bool keep)
         {
             if (! keep)
             {
@@ -322,7 +323,7 @@ public:
                     if (pick) pick (mt, ms);
                 }
             }
-            juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<MachinePicker> (this)]
+            juce::MessageManager::callAsync ([safe = self]
             {
                 if (safe == nullptr) return;
                 safe->builder.reset();
