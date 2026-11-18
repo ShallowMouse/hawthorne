@@ -124,6 +124,8 @@ void TapeEngine::prepare (double sampleRate, int maxBlockSize,
 {
     maxBlock = juce::jmax (16, maxBlockSize);
     trackBuffers.setSize (kMaxTracks, maxBlock);
+    crosstalkBuffers.setSize (kMaxTracks, maxBlock);
+    crosstalkLow.fill (0.0f);
     trackBuffers.clear();
     mixBus.setSize (2, maxBlock);
     mixBus.clear();
@@ -704,16 +706,39 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
                              windPosA.load (std::memory_order_relaxed), windVelA.load (std::memory_order_relaxed),
                              juce::jmax (1000.0, deviceSampleRate.load (std::memory_order_relaxed)));
 
+    // --- Playback from tape, every track first (a punch crossfades against it, and each head
+    //     picks up a little of its neighbours). Tape is read even under a recording track so its
+    //     reader stays warm for a seamless punch-out.
+    std::array<bool, kMaxTracks> tapeHere {};
+    for (int t = 0; t < nt; ++t)
+        tapeHere[(size_t) t] = isRolling && g != nullptr && readTape (g->tracks[(size_t) t], t, trackBuffers.getWritePointer (t));
+
+    // Crosstalk: the neighbours' tape, off this track's head, before its playback amplifier - quiet
+    // (about -50 dB on 24 tracks), more so at low frequencies (fringing). Only off a real machine.
+    float xtGain = 0.0f, xtLowA = 0.0f, xtLowLift = 0.0f;
+    if (tapeOn && nt > 1 && isRolling && g != nullptr)
+    {
+        const double sr = juce::jmax (1000.0, deviceSampleRate.load (std::memory_order_relaxed));
+        xtGain = (float) juce::Decibels::decibelsToGain (tape::crosstalkDb (nt, tape::multitrackMachine (machineA.load (std::memory_order_relaxed))));
+        xtLowA = (float) (1.0 - std::exp (-juce::MathConstants<double>::twoPi * tape::crosstalkLowHz (tapeShared.ips) / sr));
+        xtLowLift = (float) (juce::Decibels::decibelsToGain (tape::crosstalkLowBoostDb) - 1.0);
+        for (int t = 0; t < nt; ++t)
+        {
+            float* x = crosstalkBuffers.getWritePointer (t);
+            juce::FloatVectorOperations::clear (x, n);
+            for (int nb : { t - 1, t + 1 })
+                if (juce::isPositiveAndBelow (nb, nt) && tapeHere[(size_t) nb])
+                    juce::FloatVectorOperations::add (x, trackBuffers.getReadPointer (nb), n);
+        }
+    }
+
     for (int t = 0; t < nt; ++t)
     {
         const float* src = osc > 0 ? oscBuf.get() : (rt != nullptr ? inputFor (rt->input[(size_t) t]) : nullptr);
         const bool isArmed = armed[(size_t) t].load (std::memory_order_relaxed);
 
-        // --- Playback from tape (read first: a punch crossfades against it)
-        // (Tape is read even under a recording track so its reader stays warm
-        //  for a seamless punch-out.)
         float* tb = trackBuffers.getWritePointer (t);
-        const bool hasTape = isRolling && g != nullptr && readTape (g->tracks[(size_t) t], t, tb);
+        const bool hasTape = tapeHere[(size_t) t];
         float* ring = rawRing != nullptr ? rawRing.get() + (size_t) t * (size_t) ringLen : nullptr;
         if (ringOk && ring != nullptr)
             for (int k = 0; k < n; ++k)
@@ -761,6 +786,18 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
                 else if (pushCount > 0) stream->push (toTape, pushCount);
             }
 
+        if (hasTape && tapeOn && xtGain > 0.0f)
+        {
+            // the neighbours, picked up by this track's head
+            const float* x = crosstalkBuffers.getReadPointer (t);
+            float lp = crosstalkLow[(size_t) t];
+            for (int k = 0; k < n; ++k)
+            {
+                lp += (x[k] - lp) * xtLowA;
+                tb[k] += xtGain * (x[k] + xtLowLift * lp);
+            }
+            crosstalkLow[(size_t) t] = lp;
+        }
         if (hasTape && tapeOn)
             (*tapePlay)[(size_t) t].process (tapeShared, tb, n, flutterOn ? flutterScrape.get() : nullptr);      // repro head: bump, top, hiss
         if (hasTape && nrSys != nr::none && nr::decodes (nrModeA[(size_t) t].load (std::memory_order_relaxed)))

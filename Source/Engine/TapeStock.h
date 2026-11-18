@@ -165,7 +165,23 @@ namespace tape
         double lowCut;          // low roll-off frequency multiplier
         double hissDb;          // added hiss
         double wowFlutter;      // wow and flutter, rms % at 15 ips (published specs; DIN peak-weighted figures / 1.5)
+        double crosstalkDb = 0.0;   // added to the crosstalk between neighbouring tracks (see crosstalkDb())
     };
+
+    /** How much of each neighbouring track a head picks up, at 1 kHz, against the track's own level:
+        the narrower the tracks (the more of them on the tape), the more. About -50 dB on 24 tracks on
+        2-inch - "a crosstalk figure of 50 dB can be reached in practice and is generally considered
+        acceptable" (Revox's service manual); the 16-track version is better (sellers of Studer A800s);
+        the home formats about -40 to -45 dB (Fostex, Sound on Sound). Below a few hundred hertz it
+        rises: long wavelengths spread out past the track's edge (fringing) - see crosstalkLowBoostDb. */
+    inline double crosstalkDb (int tracks, const MachineInfo& m)
+    {
+        const double base = tracks <= 2 ? -62.0 : tracks <= 4 ? -60.0 : tracks <= 8 ? -57.0 : tracks <= 16 ? -54.0 : tracks <= 24 ? -50.0 : -46.0;
+        return base + m.crosstalkDb;
+    }
+    constexpr double crosstalkLowBoostDb = 9.0;
+    /** Where the low-frequency rise begins: a wavelength, so it moves with the tape speed. */
+    inline double crosstalkLowHz (double ips) { return 140.0 * juce::jlimit (3.0, 30.0, ips) / 15.0; }
 
     inline constexpr MachineInfo neutralMachine { "None", "", "", 0, 0, 1, 1, 1, 0, 1, 0, 0.03 };
 
@@ -363,6 +379,8 @@ namespace tape
         m.bumpScale  = bump[p.contour][0] * p.lowEnd;
         m.bumpFreq   = bump[p.contour][1];
         m.wowFlutter = wf[p.transport] * p.wobble;
+        static const double widthXt[4] = { -4.0, 0.0, 3.0, 6.0 };   // (wide tracks have wide guard bands between them)
+        m.crosstalkDb = widthXt[p.trackWidth];
         return m;
     }
 

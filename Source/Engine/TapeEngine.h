@@ -576,6 +576,8 @@ private:
     juce::int64 deviceClock = 0, pingSentAt = -1;
     int maxBlock = 0;
     juce::AudioBuffer<float> trackBuffers, zeros;
+    juce::AudioBuffer<float> crosstalkBuffers;          // what each track's head picks up from its neighbours (this block)
+    std::array<float, kMaxTracks> crosstalkLow {};      // each one's low-frequency rise (a one-pole low-pass state)
 
     std::atomic<juce::int64> droppedTotal { 0 }, droppedBeforePass { 0 }, playbackUnderruns { 0 };
     std::atomic<float> diskBufferPeak { 0.0f };

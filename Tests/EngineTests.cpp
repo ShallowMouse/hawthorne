@@ -2672,7 +2672,72 @@ static void testMachineSpecs()
         CHECK (tape::MachineShelf::remove ("Another", false) && tape::MachineShelf::list (false).size() == 1, "and can be taken off");
         tape::MachineShelf::folderOverride() = juce::File();
         std::printf ("    built to order: parts and trims add up, kept with the reel, shelved and taken back\n");
+
+        // crosstalk between neighbouring tracks: more the narrower the tracks, more on very narrow built ones, rising at low frequencies
+        const auto& a800 = tape::multitrackMachine (0);
+        CHECK (std::abs (tape::crosstalkDb (24, a800) + 50.0) < 1e-9 && tape::crosstalkDb (16, a800) < tape::crosstalkDb (24, a800)
+               && tape::crosstalkDb (4, a800) < tape::crosstalkDb (8, a800), "crosstalk: about -50 dB on 24 tracks, less on fewer");
+        tape::MachineParts narrow; narrow.trackWidth = 3;
+        tape::MachineParts wide;   wide.trackWidth = 0;
+        CHECK (tape::crosstalkDb (8, tape::buildMachine (narrow)) > tape::crosstalkDb (8, tape::buildMachine (wide)) + 8.0, "narrow tracks leak more than wide ones");
+        CHECK (tape::crosstalkLowHz (30.0) > tape::crosstalkLowHz (15.0), "the low rise moves with the tape speed");
     }
+}
+
+//==============================================================================
+/** Plays a 24-track reel with a tone on track 1 only and returns the tone's level (dB) heard on `listen`. */
+static double crosstalkHeard (double freq, int listen, int tracks, int machine)
+{
+    juce::String err;
+    auto reel = Reel::create (makeTempDir ("xtalk"), "XT", kSR, tracks, err, 15.0, 1);
+    for (int t = 0; t < 5; ++t)
+        writeSineTape (reel->getTapeFile (t), freq, 4.0, t == 0 ? 0.5f : 0.0f);
+    TapeEngine e;
+    e.setReel (reel.get());
+    prepareEngine (e, 256, tracks);
+    e.setMachine (machine);
+    for (int t = 0; t < tracks; ++t) e.setTrackToMix (t, t == listen);
+    const int n = 256;
+    juce::AudioBuffer<float> in (tracks, n), out (4, n);
+    in.clear();
+    e.locate (24000);
+    e.process (in.getArrayOfReadPointers(), tracks, out.getArrayOfWritePointers(), 4, n);
+    e.play();
+    std::vector<float> got;
+    for (int b = 0; b < (int) (kSR * 2.0) / n; ++b)
+    {
+        e.process (in.getArrayOfReadPointers(), tracks, out.getArrayOfWritePointers(), 4, n);
+        got.insert (got.end(), out.getReadPointer (0), out.getReadPointer (0) + n);
+        juce::Thread::sleep (1);
+    }
+    e.stop();
+    e.setReel (nullptr);
+    // the tone's level in the last second (a narrow measurement: the hiss barely counts)
+    const size_t from = got.size() - (size_t) kSR, len = (size_t) kSR;
+    double re = 0, im = 0;
+    for (size_t k = 0; k < len; ++k)
+    {
+        const double w = 0.5 - 0.5 * std::cos (6.283185307 * (double) k / (double) len), ph = 6.283185307 * freq * (double) k / kSR;
+        re += w * got[from + k] * std::cos (ph); im += w * got[from + k] * std::sin (ph);
+    }
+    return 20.0 * std::log10 (juce::jmax (1.0e-12, 4.0 * std::sqrt (re * re + im * im) / (double) len));
+}
+
+static void testCrosstalk()
+{
+    std::printf ("[29] crosstalk: each head hears a little of its neighbours\n");
+    const double own = crosstalkHeard (1000.0, 0, 24, 0);
+    const double next = crosstalkHeard (1000.0, 1, 24, 0) - own, far = crosstalkHeard (1000.0, 3, 24, 0) - own;
+    const double nextLow = crosstalkHeard (80.0, 1, 24, 0) - crosstalkHeard (80.0, 0, 24, 0);
+    const double next8 = crosstalkHeard (1000.0, 1, 8, 0) - crosstalkHeard (1000.0, 0, 8, 0);
+    const double none = crosstalkHeard (1000.0, 1, 24, tape::noMultitrackMachine) - crosstalkHeard (1000.0, 0, 24, tape::noMultitrackMachine);
+    std::printf ("    24 tracks: next track %.1f dB at 1 kHz, %.1f dB at 80 Hz; two tracks away %.1f dB; 8 tracks %.1f dB; no machine %.1f dB\n",
+                 next, nextLow, far, next8, none);
+    CHECK (next > -53.0 && next < -47.0, "neighbour at 1 kHz %.1f dB (about -50)", next);
+    CHECK (nextLow > next + 4.0, "more at low frequencies (%.1f vs %.1f)", nextLow, next);
+    CHECK (far < next - 25.0, "two tracks away barely heard (%.1f)", far);
+    CHECK (next8 < next - 4.0, "8 tracks leak less than 24 (%.1f)", next8);
+    CHECK (none < -100.0, "no machine: no crosstalk (%.1f)", none);
 }
 
 int main()
@@ -2693,6 +2758,7 @@ int main()
         if (only.contains ("26")) testReverseRecord();
         if (only.contains ("27")) testTapeDatasheets();
         if (only.contains ("28")) testMachineSpecs();
+        if (only.contains ("29")) testCrosstalk();
         if (only.contains ("3"))  testTapeMachine();
         std::printf (failures == 0 ? "\nALL TESTS PASSED\n" : "\n%d FAILURE(S)\n", failures);
         return failures == 0 ? 0 : 1;
@@ -2721,6 +2787,7 @@ int main()
     testReverseRecord();
     testTapeDatasheets();
     testMachineSpecs();
+    testCrosstalk();
    #if JUCE_LINUX || JUCE_MAC
     testCrashRecovery();
    #endif

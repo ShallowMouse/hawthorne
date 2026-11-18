@@ -19,7 +19,9 @@ struct NewReelChoice
     int tracks = 24;
     double ips = 15.0;
     int stock = 1;
-    int machine = 0;
+    int machine = 0;               // (tape::customMachine: one built by the user, below)
+    tape::MachineParts customParts;
+    juce::String customName;
     int nr = 0;
     double bpm = 120.0;            // 0: no tempo (Hawthorne on its own)
     int beatsPerBar = 4;
@@ -172,6 +174,7 @@ public:
                    std::function<void (const NewReelChoice&)> create)
         : choice (start), look (lk), forSession (sessionName), onCreate (std::move (create)), list (*this)
     {
+        shelf = tape::MachineShelf::list (false);
         if (withSession) steps.push_back (Step::session);
         for (auto s : { Step::machine, Step::tape, Step::nr, Step::tempo }) steps.push_back (s);
        #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
@@ -243,10 +246,30 @@ public:
             juce::FileOutputStream out (dir.getChildFile ("wizard-" + juce::String (i + 1) + ".png"));
             if (out.openedOk()) { out.setPosition (0); out.truncate(); png.writeImageToStream (w.createComponentSnapshot (w.getLocalBounds()), out); }
         }
+        // a machine off the shelf: its card, the label on the box, and the builder over the wizard
+        auto snap = [&w, &dir] (const juce::String& name)
+        {
+            juce::PNGImageFormat png;
+            juce::FileOutputStream out (dir.getChildFile (name));
+            if (out.openedOk()) { out.setPosition (0); out.truncate(); png.writeImageToStream (w.createComponentSnapshot (w.getLocalBounds()), out); }
+        };
+        tape::MachineParts p; p.look = 3; p.trackWidth = 2; p.electronics = 1;
+        w.shelf = { { "Night Shift", p, false } };
+        const int mstep = (int) (std::find (w.steps.begin(), w.steps.end(), Step::machine) - w.steps.begin());
+        w.go (mstep);
+        w.pickCard (shelfCard);
+        w.go (mstep);                                   // (scrolled to it)
+        snap ("wizard-own-machine.png");
+        w.go ((int) w.steps.size() - 1);
+        snap ("wizard-own-ready.png");
+        w.go (mstep);
+        w.openBuilder();
+        snap ("wizard-builder.png");
     }
 
     bool keyPressed (const juce::KeyPress& k) override
     {
+        if (builder != nullptr) return false;           // (the builder has the keys)
         if (k == juce::KeyPress::returnKey) { next(); return true; }
         if (k == juce::KeyPress::escapeKey) { close(); return true; }
         if (k == juce::KeyPress::leftKey && index > 0) { go (index - 1); return true; }
@@ -255,6 +278,7 @@ public:
 
     void resized() override
     {
+        if (builder != nullptr) builder->setBounds (getLocalBounds());
         auto foot = getLocalBounds().removeFromBottom (70).reduced (30, 16);
         cancelButton.setBounds (foot.removeFromLeft (110));
         nextButton.setBounds (foot.removeFromRight (150));
@@ -319,6 +343,90 @@ public:
 
 private:
     enum class Step { session, machine, tape, nr, tempo, desk, wiring, ready };
+
+    // the machine step's own machines: the builder's card, then the shelf's (cards' values, past the machine room's)
+    static constexpr int buildCard = 900, shelfCard = 1000;
+    std::vector<tape::NamedMachine> shelf;
+    int customCard = -1;                              // the own-machine card chosen (buildCard / shelfCard + i)
+    std::unique_ptr<MachineBuilder> builder;
+    tape::MachineParts built;                         // what the builder made (while it's open, and after)
+    juce::String builtName;
+    bool hasBuilt = false;
+
+    /** BUILD A MACHINE: the machine room's builder, over the wizard. USE puts it on the new reel
+        (and SHELVE in the builder keeps it for other reels too). */
+    void openBuilder()
+    {
+        auto start = hasBuilt ? built : tape::MachineParts();
+        if (! hasBuilt) start.look = choice.machine != tape::customMachine && choice.machine != tape::noMultitrackMachine ? choice.machine : 0;
+        builder = std::make_unique<MachineBuilder> (false, start, hasBuilt ? builtName : juce::String());
+        builder->hint = "The new reel will be on this machine, and keeps its own copy of it. SAVE puts it on your shelf for other reels too.";
+        builder->onClose = [this, self = juce::Component::SafePointer<NewReelWizard> (this)] (bool keep)
+        {
+            if (keep && builder != nullptr)
+            {
+                built = builder->getParts();
+                builtName = builder->name();
+                hasBuilt = true;
+                choice.machine = tape::customMachine;
+                choice.customParts = built;
+                choice.customName = builtName;
+                customCard = buildCard;
+            }
+            juce::MessageManager::callAsync ([self]
+            {
+                if (self == nullptr) return;
+                self->builder.reset();
+                self->shelf = tape::MachineShelf::list (false);     // (it may have been shelved)
+                self->layoutStep();
+                self->repaint();
+            });
+        };
+        addAndMakeVisible (*builder);
+        builder->setBounds (getLocalBounds());
+        builder->toFront (true);
+    }
+
+    /** The builder's card (BUILD A MACHINE, or the one built) and a shelf machine's card. */
+    void paintOwnMachineCard (juce::Graphics& g, juce::Rectangle<int> a, int value, bool chosen) const
+    {
+        const bool building = value == buildCard;
+        const tape::NamedMachine* m = nullptr;
+        tape::NamedMachine mine { builtName, built, false };
+        if (building && hasBuilt) m = &mine;
+        else if (! building && juce::isPositiveAndBelow (value - shelfCard, (int) shelf.size())) m = &shelf[(size_t) (value - shelfCard)];
+
+        auto pic = a.removeFromTop (106);
+        if (m != nullptr)
+        {
+            auto sk = MachineSkin::multitrack (m->parts.look);
+            const auto badge = m->name.toUpperCase().toStdString();
+            sk.brand = "";
+            sk.model = badge.c_str();
+            drawMachinePreview (g, pic.toFloat(), sk);
+        }
+        else
+        {
+            // an empty bay, waiting for a machine
+            const auto r = pic.toFloat().reduced (30.0f, 6.0f);
+            g.setColour (look.dim.withAlpha (0.5f));
+            juce::Path p; p.addRoundedRectangle (r, 6.0f);
+            const float dash[] = { 6.0f, 5.0f };
+            juce::PathStrokeType (1.5f).createDashedStroke (p, p, dash, 2);
+            g.fillPath (p);
+            g.setFont (font (34.0f, false));
+            g.drawText ("+", r, juce::Justification::centred);
+        }
+        a.removeFromTop (8);
+        if (building && ! hasBuilt)
+            cardText (g, a, chosen, "BUILD A MACHINE", "Your own, part by part",
+                      "Pick the electronics, the heads, the track width and the transport, then trim it by ear. "
+                      "The reel keeps its own copy; SAVE it to your shelf to use it on other reels too.", {}, 5);
+        else
+            cardText (g, a, chosen, m != nullptr ? m->name : juce::String(), building ? "Built for this reel (click to change it)" : "Off your shelf",
+                      m != nullptr ? MachineBuilder::summary (m->parts).fromFirstOccurrenceOf ("ADDS UP TO:  ", false, false).replace ("   -   ", ", ") : juce::String(),
+                      {}, 5);
+    }
 
     //--------------------------------------------------------------------------
     /** The cards of a step, in a scrolling list (like the machine room). */
@@ -417,7 +525,7 @@ private:
         switch (steps[(size_t) index])
         {
             case Step::session: return "A session holds the reels for one job: an album, a single, a client.";
-            case Step::machine: return "Oldest first. The machine can be changed later; the track count can't.";
+            case Step::machine: return "Your own first (build one, or one off your shelf), then oldest first. The machine can be changed later; the track count can't.";
             case Step::tape:    return "Oldest first. The tape stays with the reel for life. Slower tape: bigger low bump, darker top, more hiss.";
             case Step::nr:      return "None first, then oldest first. Hiss reduction across the whole reel: can be changed later, and switched per track.";
             case Step::tempo:   return wizardAsksStudio() ? "The song's tempo and bar: the click, THOREAU and the bar counter follow it. Can be changed later."
@@ -494,7 +602,14 @@ private:
     std::vector<int> valuesFor (Step s) const
     {
         std::vector<int> v;
-        if (s == Step::machine) return tape::multitrackOrder();
+        if (s == Step::machine)
+        {
+            // first a machine of your own: build one, or one off the shelf; then the machine room's, oldest first
+            v.push_back (buildCard);
+            for (int i = 0; i < (int) shelf.size(); ++i) v.push_back (shelfCard + i);
+            for (int m : tape::multitrackOrder()) v.push_back (m);
+            return v;
+        }
         if (s == Step::tape) return stocksFor (tape::forMultitrack);             // (oldest first, clean last)
         if (s == Step::nr) for (int k = 0; k < nr::numSystems; ++k) v.push_back (nr::order()[k]);
        #if defined (MELVILLE_HOSTED) && MELVILLE_HOSTED
@@ -508,7 +623,8 @@ private:
     {
         switch (steps[(size_t) index])
         {
-            case Step::machine: return choice.machine == value;
+            case Step::machine: return value >= buildCard ? (choice.machine == tape::customMachine && customCard == value)
+                                                          : choice.machine == value;
             case Step::tape:    return choice.stock == value;
             case Step::nr:      return choice.nr == value;
             case Step::desk:    return choice.desk == value;
@@ -521,7 +637,21 @@ private:
     {
         switch (steps[(size_t) index])
         {
-            case Step::machine: choice.machine = value; break;
+            case Step::machine:
+                if (value == buildCard) { openBuilder(); break; }
+                if (value >= shelfCard)
+                {
+                    if (! juce::isPositiveAndBelow (value - shelfCard, (int) shelf.size())) break;
+                    const auto& m = shelf[(size_t) (value - shelfCard)];
+                    choice.machine = tape::customMachine;
+                    choice.customParts = m.parts;
+                    choice.customName = m.name;
+                    customCard = value;
+                    break;
+                }
+                choice.machine = value;
+                customCard = -1;
+                break;
             case Step::tape:    choice.stock = value; break;
             case Step::nr:      choice.nr = value; break;
             case Step::desk:    choice.desk = value; break;
@@ -645,6 +775,11 @@ private:
         {
             case Step::machine:
             {
+                if (value >= buildCard)
+                {
+                    paintOwnMachineCard (g, a, value, chosen);
+                    break;
+                }
                 drawMachinePreview (g, a.removeFromTop (106).toFloat(), MachineSkin::multitrack (value));
                 a.removeFromTop (8);
                 const auto& st = multitrackStory (value);
@@ -808,7 +943,13 @@ private:
     {
         // the box, the machine and the rack, and the label on the box
         drawTapeBox (g, { 40.0f, 140.0f, 300.0f, 300.0f }, choice.stock, font (20.0f, true));
-        drawMachinePreview (g, { 380.0f, 140.0f, 300.0f, 130.0f }, MachineSkin::multitrack (choice.machine));
+        {
+            const bool own = choice.machine == tape::customMachine;
+            auto sk = MachineSkin::multitrack (own ? choice.customParts.look : choice.machine);
+            const auto badge = choice.customName.toUpperCase().toStdString();
+            if (own) { sk.brand = ""; sk.model = badge.c_str(); }
+            drawMachinePreview (g, { 380.0f, 140.0f, 300.0f, 130.0f }, sk);
+        }
         drawNrUnit (g, { 380.0f, 300.0f, 300.0f, 90.0f }, choice.nr, font (12.0f, true));
 
         auto label = juce::Rectangle<float> (720.0f, 140.0f, (float) getWidth() - 760.0f, 400.0f);
@@ -844,7 +985,7 @@ private:
             g.setFont (font (15.0f, true));
             g.drawFittedText (v, r.toNearestInt(), juce::Justification::bottomLeft, 1, 0.7f);
         };
-        row ("MACHINE", tape::multitrackMachine (choice.machine).name);
+        row ("MACHINE", choice.machine == tape::customMachine ? choice.customName + " (built)" : juce::String (tape::multitrackMachine (choice.machine).name));
         row ("TRACKS", juce::String (choice.tracks));
         row ("TAPE", tape::info ((tape::Stock) choice.stock).name);
         row ("SPEED", choice.ips == 7.5 ? juce::String (juce::CharPointer_UTF8 ("7\xc2\xbd ips")) : juce::String ((int) choice.ips) + " ips");

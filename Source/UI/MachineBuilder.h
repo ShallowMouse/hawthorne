@@ -126,6 +126,7 @@ public:
         loadShelf();
     }
 
+    juce::String hint;              // (the line at the foot, when there's no news to show)
     juce::String name() const { const auto n = nameBox.getText().trim(); return n.isNotEmpty() ? n : juce::String (twoTrack ? "My 2-track" : "My machine"); }
     const tape::MachineParts& getParts() const { return parts; }
 
@@ -187,6 +188,7 @@ public:
         g.setColour (Colours::textDim);
         g.setFont (uiFont (12.5f));
         g.drawFittedText (note.isNotEmpty() ? note
+                              : hint.isNotEmpty() ? hint
                               : juce::String ("The reel is on this machine while you build it: play the tape and listen. Headroom and colour are printed "
                                               "as you record; everything else is the playback side, so it changes tape already recorded."),
                           noteArea, juce::Justification::centredLeft, 2, 0.9f);

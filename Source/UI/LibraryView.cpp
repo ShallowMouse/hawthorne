@@ -726,6 +726,7 @@ void LibraryView::newSession()
         auto reel = s->createReel (c.tracks, getSampleRate ? getSampleRate() : 48000.0, err, c.ips, c.stock);
         if (reel == nullptr) { showError ("New Session", err); return; }
         reel->machine = c.machine;
+        if (c.machine == tape::customMachine) { reel->customMachine = c.customParts; reel->customMachineName = c.customName; }
         applyNr (*reel, c.nr);
         applyTempo (*reel, c);
         reel->save (err);
@@ -936,6 +937,7 @@ void LibraryView::newReel()
         auto reel = session != nullptr ? session->createReel (c.tracks, getSampleRate ? getSampleRate() : 48000.0, err, c.ips, c.stock) : nullptr;
         if (reel == nullptr) { showError ("New Reel", err); return; }
         reel->machine = c.machine;
+        if (c.machine == tape::customMachine) { reel->customMachine = c.customParts; reel->customMachineName = c.customName; }
         applyNr (*reel, c.nr);
         applyTempo (*reel, c);
         reel->save (err);
