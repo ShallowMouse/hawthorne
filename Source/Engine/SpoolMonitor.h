@@ -26,7 +26,7 @@ class SpoolMonitor : private juce::Thread
 {
 public:
     static constexpr int decim = 32;
-    static constexpr int maxTracks = 96;
+    static constexpr int maxTracks = 96 + 2;      // (the tracks, then the 2-track's two sides)
     static constexpr int maxBlock = 4096;
 
     SpoolMonitor() : juce::Thread ("Hawthorne spool overview")

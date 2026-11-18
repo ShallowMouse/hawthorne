@@ -1,5 +1,6 @@
 #include "Layout.h"
 #include "MachineSkin.h"
+#include "NearestTooltips.h"
 
 namespace hawthorne
 {
@@ -190,7 +191,7 @@ struct LayoutManager::Floating : public juce::DocumentWindow
         setResizable (true, false);
         setResizeLimits (300, 200, 20000, 20000);
         host.addMouseListener (&host, true);
-        tips = std::make_unique<juce::TooltipWindow> (&host, 600);
+        tips = std::make_unique<NearestTooltips> (&host, 600);
     }
     ~Floating() override
     {

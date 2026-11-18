@@ -846,8 +846,6 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         }
     }
 
-    if (spoolOn) spool.endBlock();
-
     if (ringOk)
     {
         ringWrite = (ringWrite + n) & (ringLen - 1);
@@ -919,8 +917,11 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
         {
             float* tb = masterTapeBus.getWritePointer (side);
             const bool printing = recMaster;
-            if (! printing && ! (isRolling && g != nullptr && ! g->master[(size_t) side].empty()
-                                 && readTape (g->master[(size_t) side], kMaxTracks + side, tb)))
+            const bool tapeHeard = ! printing && isRolling && g != nullptr && ! g->master[(size_t) side].empty()
+                                   && readTape (g->master[(size_t) side], kMaxTracks + side, tb);
+            // spooling with the lifters defeated: the 2-track's own tape chatters past its head, too
+            const bool spoolHeard = ! printing && ! tapeHeard && spoolOn && spool.renderTrack (nt + side, tb, n);
+            if (! printing && ! tapeHeard && ! spoolHeard)
             {
                 juce::FloatVectorOperations::clear (tb, n);      // no tape here: silence
                 masterDecLive[(size_t) side] = false;
@@ -947,6 +948,8 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
             sendToOutputs (outSig, rt->masterOut[(size_t) side]);
         masterOutSig[(size_t) side] = outSig;
     }
+
+    if (spoolOn) spool.endBlock();      // (after the 2-track: its chatter comes from the same overview)
 
     if (recMaster && resampledRec)
     {
@@ -1895,6 +1898,8 @@ void TapeEngine::requestSpool()
     juce::Array<juce::File> files;
     for (int t = 0; t < reel->numTracks; ++t)
         files.add (reel->getTapeFile (t));        // one per track, in order (missing = silent)
+    for (int side = 0; side < 2; ++side)
+        files.add (reel->getMasterFile (reel->activeMaster, side));     // then the 2-track's: it chatters too
     spool.request (files);
 }
 
@@ -1992,6 +1997,7 @@ void TapeEngine::setActiveMaster (int index)
     if (reel->activeMaster < 0) setMasterArmed (false);
     saveReel();
     rebuildPlaybackGraph();
+    if (lifterDefeat.load()) requestSpool();        // (the chatter is off this master now)
 }
 
 void TapeEngine::setMasterArmed (bool on)

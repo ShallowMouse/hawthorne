@@ -1851,6 +1851,37 @@ static void testLifterDefeat()
         std::printf ("    lifter %-4s: %s\n", lifter ? "out" : "in", lifter ? juce::String::formatted ("chatter %.1f dB rms, average pitch ~%.0f Hz (100 Hz tone sped up)", db, avgHz).toRawUTF8() : "silent while spooling");
     }
     e.setReel (nullptr);
+
+    // the 2-track chatters too: only a master on this reel, heard off its tape, spooled
+    auto mreel = Reel::create (makeTempDir ("lifter2"), "Lifter2", kSR, 8, err);
+    mreel->masters.push_back ({ "Mix 1", 1, 0 });
+    mreel->activeMaster = 0;
+    for (int side = 0; side < 2; ++side)
+        writeSineTape (mreel->getMasterFile (0, side), 100.0, 90.0, 0.5f);
+    TapeEngine m;
+    m.setReel (mreel.get());
+    prepareEngine (m, 512, 8);
+    m.setWindPhysics (true);
+    m.setMasterAlwaysTape (true);
+    m.setLifterDefeat (true);
+    const auto t1 = juce::Time::getMillisecondCounter();
+    while (! m.isSpoolOverviewReady() && juce::Time::getMillisecondCounter() - t1 < 20000) juce::Thread::sleep (20);
+    m.windTo ((juce::int64) (60 * kSR));
+    juce::AudioBuffer<float> in (8, 512), out (4, 512);
+    in.clear();
+    double ss = 0; juce::int64 count = 0;
+    const auto t2 = juce::Time::getMillisecondCounter();
+    while (m.getWindDirection() != 0 && juce::Time::getMillisecondCounter() - t2 < 20000)
+    {
+        m.process (in.getArrayOfReadPointers(), 8, out.getArrayOfWritePointers(), 4, 512);
+        m.tick();
+        for (int k = 0; k < 512; ++k) { const float v = out.getSample (0, k); ss += (double) v * v; ++count; }
+        juce::Thread::sleep (10);
+    }
+    const double mdb = 10.0 * std::log10 (juce::jmax (1.0e-30, ss / juce::jmax ((juce::int64) 1, count)));
+    CHECK (mdb > -40.0, "the 2-track chatters while spooling (%.1f dB)", mdb);
+    std::printf ("    2-track   : chatter %.1f dB rms off the master tape\n", mdb);
+    m.setReel (nullptr);
 }
 
 //==============================================================================

@@ -16,6 +16,7 @@
 #include "../Updater.h"
 #include "Layout.h"
 #include "Icons.h"
+#include "NearestTooltips.h"
 
 namespace hawthorne
 {
@@ -241,7 +242,7 @@ private:
     //==========================================================================
     juce::ApplicationProperties& props;
     HawthorneLookAndFeel lnf;
-    juce::TooltipWindow tooltips { this, 600 };
+    NearestTooltips tooltips { this, 600 };
 
     // Hawthorne Link. Inside MELVILLE the receiver is MELVILLE's (its NETWORK panel); Hawthorne
     // still tells the senders where the tape is and takes their tempo changes.
