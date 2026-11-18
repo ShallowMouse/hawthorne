@@ -45,6 +45,7 @@ public:
         bias.setColour (juce::Slider::rotarySliderFillColourId, Colours::mustard);
         bias.setColour (juce::Slider::thumbColourId, Colours::text);
         bias.setEnabled (tape);
+        bias.setTooltip ("Bias: overbias past the peak, in dB (double-click for this tape's recommended setting)");
         bias.onValueChange = [this] { engine.setAlignment (reel.alignLevel, bias.getValue()); refresh(); };
         addAndMakeVisible (bias);
 

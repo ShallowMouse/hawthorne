@@ -116,7 +116,7 @@ void VUMeter::resized()
 
 void VUMeter::renderFace()
 {
-    const float scale = 2.0f; // render at 2x so it stays crisp on HiDPI
+    const float scale = juce::jmax (2.0f, faceScale);   // (as many pixels as the screen has: crisp at 150, 200, 300 %)
     const int w = juce::roundToInt ((float) getWidth() * scale);
     const int h = juce::roundToInt ((float) getHeight() * scale);
 
@@ -367,6 +367,14 @@ void VUMeter::paintLed (juce::Graphics& g)
 
 void VUMeter::paint (juce::Graphics& g)
 {
+    // a screen with more pixels per point than the face was drawn for (a high-DPI screen, or the
+    // window moved to one): draw it again for this one
+    const float screenScale = g.getInternalContext().getPhysicalPixelScaleFactor();
+    if (screenScale > faceScale + 0.01f)
+    {
+        faceScale = screenScale;
+        renderFace();
+    }
     if (faceCache.isValid())
         g.drawImage (faceCache, getLocalBounds().toFloat());
     const auto& sk = skin();

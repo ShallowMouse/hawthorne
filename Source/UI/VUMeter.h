@@ -51,6 +51,7 @@ private:
 
     juce::String label;
     juce::Image faceCache;
+    float faceScale = 2.0f;           // the screen's pixels per point the face was drawn for
 
     MachineSkin skin() const { return MachineSkin::forMeters (isMaster ? MachineSkin::currentMaster() : MachineSkin::current(), style); }
     int style = -1;
