@@ -2156,8 +2156,23 @@ void MainComponent::showMachines()
     [this] (bool twoTrack, const tape::MachineParts& parts, const juce::String& name)
     {
         if (reel == nullptr || engine.isRecording()) return;
-        engine.setCustomMachine (twoTrack, parts, name);
-        applySkin();
+        // While the builder's knobs move: heard at once, but the reel is saved and the machine on
+        // the deck redrawn (every meter's face with it) only once they've been still a moment -
+        // and redrawn at all only if what it looks like (its look, its name) has changed.
+        const bool wasCustom = (twoTrack ? reel->masterMachine : reel->machine) == tape::customMachine;
+        const auto& before = twoTrack ? reel->customMaster : reel->customMachine;
+        const auto& beforeName = twoTrack ? reel->customMasterName : reel->customMachineName;
+        const bool looksNew = ! wasCustom || before.look != parts.look || beforeName != name;
+        engine.setCustomMachine (twoTrack, parts, name, false);
+        machineSettle.reskin = machineSettle.reskin || looksNew;
+        machineSettle.fn = [this, twoTrack, parts, name]
+        {
+            if (reel == nullptr || engine.isRecording()) return;
+            engine.setCustomMachine (twoTrack, parts, name);      // (now saved with the reel)
+            if (machineSettle.reskin) applySkin();
+            machineSettle.reskin = false;
+        };
+        machineSettle.startTimer (250);
     });
     if (const auto dir = juce::SystemStats::getEnvironmentVariable ("HAWTHORNE_MACHINE_GALLERY", {}); dir.isNotEmpty())
     {

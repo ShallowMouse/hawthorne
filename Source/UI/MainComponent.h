@@ -121,6 +121,14 @@ public:
 
 private:
     void timerCallback() override;
+
+    /** A built machine's save and redraw, put off until the builder's knobs are still. */
+    struct Settle : juce::Timer
+    {
+        std::function<void()> fn;
+        bool reskin = false;
+        void timerCallback() override { stopTimer(); if (fn) fn(); }
+    } machineSettle;
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
 
     // Audio device

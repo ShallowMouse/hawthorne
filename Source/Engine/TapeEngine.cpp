@@ -1865,13 +1865,19 @@ void TapeEngine::setMasterMachine (int m)
     if (reel != nullptr) { reel->masterMachine = masterMachineA.load(); saveReel(); }
 }
 
-void TapeEngine::setCustomMachine (bool twoTrack, const tape::MachineParts& parts, const juce::String& name)
+void TapeEngine::setCustomMachine (bool twoTrack, const tape::MachineParts& parts, const juce::String& name, bool save)
 {
     tape::customSlot (twoTrack).set (parts, name.toStdString());
     if (reel != nullptr)
     {
         (twoTrack ? reel->customMaster : reel->customMachine) = tape::tidy (parts);
         (twoTrack ? reel->customMasterName : reel->customMachineName) = name;
+    }
+    if (! save)
+    {
+        if (twoTrack) { masterMachineA = tape::customMachine; if (reel != nullptr) reel->masterMachine = tape::customMachine; }
+        else          { machineA = tape::customMachine;       if (reel != nullptr) reel->machine = tape::customMachine; }
+        return;
     }
     if (twoTrack) setMasterMachine (tape::customMachine);
     else          setMachine (tape::customMachine);

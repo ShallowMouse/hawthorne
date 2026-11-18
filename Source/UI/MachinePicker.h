@@ -341,11 +341,15 @@ public:
 private:
     void putOn (bool twoTrack, const tape::MachineParts& p, const juce::String& n)
     {
+        const bool wasOn = (twoTrack ? ms : mt) == tape::customMachine;
+        const bool looksNew = ! wasOn || custom[twoTrack ? 1 : 0].parts.look != p.look || custom[twoTrack ? 1 : 0].name != n;
         custom[twoTrack ? 1 : 0] = { p, n, true };
         (twoTrack ? ms : mt) = tape::customMachine;
         if (useCustom) useCustom (twoTrack, p, n);
-        for (auto* c : cards) c->repaint();
-        for (auto* c : customCards) c->repaint();
+        // (the machine room's cards only need drawing again when the choice moves to the built one;
+        //  the built one's card when it looks different - not on every turn of a trim knob)
+        if (! wasOn) for (auto* c : cards) c->repaint();
+        if (looksNew) for (auto* c : customCards) c->repaint();
     }
 
     struct Content : juce::Component

@@ -84,7 +84,7 @@ public:
             s->valueFromTextFunction = [] (const juce::String& text) { return text.retainCharacters ("0123456789.-").getDoubleValue(); };
             s->updateText();
             s->setTooltip (juce::String (t.tip) + "  Double-click to put it back.");
-            s->onValueChange = [this, i, s] { tape::trimOf (parts, i) = s->getValue(); changed(); };
+            s->onValueChange = [this, i, s] { tape::trimOf (parts, i) = s->getValue(); changed (false); };
             addAndMakeVisible (s);
         }
 
@@ -293,11 +293,19 @@ private:
         for (auto& m : shelf) shelfBox.addItem (m.name, id++);
     }
 
-    void changed()
+    /** Something was changed. A trim knob (`all` false) changes only what it adds up to - the
+        rest of the page (the machine's picture with it) stays as it is. */
+    void changed (bool all = true)
     {
+        const bool hadNote = note.isNotEmpty();
         note.clear();
         if (onChange) onChange (parts, name());
-        repaint();
+        if (all) repaint();
+        else
+        {
+            repaint (sumArea);
+            if (hadNote) repaint (noteArea);
+        }
     }
 
     const bool twoTrack;

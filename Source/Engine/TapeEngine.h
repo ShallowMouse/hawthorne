@@ -491,7 +491,9 @@ public:
     void setMachine (int multitrackMachine);
     void setMasterMachine (int twoTrackMachine);
     /** Puts a machine built by the user on the deck (the reel keeps its own copy of the parts). */
-    void setCustomMachine (bool twoTrack, const tape::MachineParts& parts, const juce::String& name);
+    /** Puts a built machine on the reel. `save` false: heard at once, but the reel isn't written
+        to disk (while a knob in the builder is still moving - the caller saves when it settles). */
+    void setCustomMachine (bool twoTrack, const tape::MachineParts& parts, const juce::String& name, bool save = true);
     /** Noise reduction (nr::System) for the reel, and each track's NR switch (nr::Mode). */
     void setNoiseReduction (int system);
     int  getNoiseReduction() const noexcept { return nrSystemA.load(); }
