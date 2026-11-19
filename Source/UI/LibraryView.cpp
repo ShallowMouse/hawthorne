@@ -269,7 +269,7 @@ public:
         g.drawText ((s.info["Artist"].isNotEmpty() ? s.info["Artist"] + " - " : juce::String()) + title,
                     rotated.removeFromTop (rotated.getHeight() * 0.55f), juce::Justification::centredLeft, true);
         g.setFont (Paper::type (10.0f));
-        g.drawText (r.name + "  " + juce::String (r.numTracks) + "T  " + reelLength (r), rotated,
+        g.drawText ((r.info["Title"].isNotEmpty() ? r.name + "  " + r.info["Title"] : r.name) + "  " + juce::String (r.numTracks) + "T  " + reelLength (r), rotated,
                     juce::Justification::centredLeft, true);
         g.restoreState();
 
@@ -415,7 +415,8 @@ public:
 
         const int reelNo = s->reels.empty() ? 0 : (int) (std::find_if (s->reels.begin(), s->reels.end(),
                                 [&] (auto& x) { return x.file == reel->file; }) - s->reels.begin()) + 1;
-        field ("REEL", juce::String (reelNo) + " of " + juce::String ((int) s->reels.size()) + (reel->archived ? "   (archived)" : ""));
+        field ("REEL", juce::String (reelNo) + " of " + juce::String ((int) s->reels.size())
+                       + (reel->info["Title"].isNotEmpty() ? "   " + reel->info["Title"] : juce::String()) + (reel->archived ? "   (archived)" : ""));
         field ("TRACKS", juce::String (reel->numTracks) + "   " + juce::String (reel->sampleRate / 1000.0, 1) + " kHz / 24-bit");
         field ("LENGTH", reelLength (*reel));
         field ("DATE", reel->info["Date"]);
@@ -729,6 +730,7 @@ void LibraryView::newSession()
         if (c.machine == tape::customMachine) { reel->customMachine = c.customParts; reel->customMachineName = c.customName; }
         applyNr (*reel, c.nr);
         applyTempo (*reel, c);
+        if (c.reelName.isNotEmpty()) reel->info.set ("Title", c.reelName);     // (its name on the box)
         reel->save (err);
 
         const auto file = reel->getFile();
@@ -940,6 +942,7 @@ void LibraryView::newReel()
         if (c.machine == tape::customMachine) { reel->customMachine = c.customParts; reel->customMachineName = c.customName; }
         applyNr (*reel, c.nr);
         applyTempo (*reel, c);
+        if (c.reelName.isNotEmpty()) reel->info.set ("Title", c.reelName);     // (its name on the box)
         reel->save (err);
 
         const auto file = reel->getFile();

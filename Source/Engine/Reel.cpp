@@ -128,7 +128,7 @@ std::unique_ptr<Reel> Reel::load (const juce::File& file, juce::String& error)
 //==============================================================================
 const juce::StringArray& Reel::infoFields()
 {
-    static const juce::StringArray fields { "Reel No.", "Date", "EQ",
+    static const juce::StringArray fields { "Title", "Reel No.", "Date", "EQ",
                                             "Alignment", "Noise Reduction", "Tones", "Time In", "Time Out", "Reel Notes" };
     return fields;
 }

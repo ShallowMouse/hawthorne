@@ -1796,8 +1796,37 @@ void MainComponent::showTrackMenu (int track)
     {
         juce::PopupMenu colours;
         const auto& pal = trackPalette();
+        // each colour as a swatch (a coloured item's colour is only its text: with no text, nothing showed)
+        struct Swatch : juce::PopupMenu::CustomComponent
+        {
+            Swatch (juce::Colour c, bool on) : juce::PopupMenu::CustomComponent (true), colour (c), ticked (on) {}
+            void getIdealSize (int& w, int& h) override { w = 150; h = 24; }
+            void paint (juce::Graphics& g) override
+            {
+                auto r = getLocalBounds().toFloat();
+                if (isItemHighlighted())
+                {
+                    g.setColour (juce::Colours::white.withAlpha (0.12f));
+                    g.fillRect (r);
+                }
+                auto tick = r.removeFromLeft (24.0f);
+                if (ticked)
+                {
+                    g.setColour (findColour (juce::PopupMenu::textColourId));
+                    g.fillEllipse (tick.withSizeKeepingCentre (7.0f, 7.0f));
+                }
+                const auto sw = r.reduced (2.0f, 4.0f).withTrimmedRight (10.0f);
+                g.setColour (colour);
+                g.fillRoundedRectangle (sw, 3.0f);
+                g.setColour (juce::Colours::black.withAlpha (0.5f));
+                g.drawRoundedRectangle (sw, 3.0f, 1.0f);
+            }
+            juce::Colour colour;
+            bool ticked;
+        };
         for (int i = 0; i < pal.size(); ++i)
-            colours.addColouredItem (300 + i, "  ", pal[i], true, reel->tracks[(size_t) track].colour == pal[i].getARGB());
+            colours.addCustomItem (300 + i, std::make_unique<Swatch> (pal[i], reel->tracks[(size_t) track].colour == pal[i].getARGB()), nullptr,
+                                   "Colour " + juce::String (i + 1));
         colours.addItem (399, "None", true, reel->tracks[(size_t) track].colour == 0);
         m.addSubMenu ("Colour", colours);
     }
@@ -3285,6 +3314,7 @@ void MainComponent::paint (juce::Graphics& g)
     g.setFont (monoFont (13.0f, true));
     g.setColour (accent);
     g.drawText (reel != nullptr ? (session != nullptr ? (session->getName() + dot).toUpperCase() : juce::String()) + reel->getName().toUpperCase()
+                                  + (reel->info["Title"].isNotEmpty() ? (dot + reel->info["Title"]).toUpperCase() : juce::String())
                                 : juce::String ("NO REEL ON THE DECK"),
                 status.withHeight (status.getHeight() / 2).translated (0, 4), juce::Justification::centredLeft, true);
     g.setColour (Colours::textDim);

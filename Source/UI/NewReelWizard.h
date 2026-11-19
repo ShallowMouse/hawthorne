@@ -16,6 +16,7 @@ namespace hawthorne
 struct NewReelChoice
 {
     juce::String name, artist;     // (a new session only)
+    juce::String reelName;         // the reel's own name (its title on the box): empty for just its number
     int tracks = 24;
     double ips = 15.0;
     int stock = 1;
@@ -190,7 +191,7 @@ public:
        #endif
         steps.push_back (Step::ready);
 
-        for (auto* e : { &nameEd, &artistEd, &bpmEd })
+        for (auto* e : { &nameEd, &artistEd, &bpmEd, &reelEd })
         {
             e->setFont (font (20.0f, false));
             e->setColour (juce::TextEditor::backgroundColourId, look.panel);
@@ -210,6 +211,18 @@ public:
         bpmEd.setFont (font (34.0f, true));
         bpmEd.setText (choice.bpm > 0.0 ? juce::String (choice.bpm, choice.bpm == std::floor (choice.bpm) ? 0 : 1) : juce::String ("120"), false);
         bpmEd.onTextChange = [this] { readBpm(); repaint(); };
+        reelEd.setText (choice.reelName, false);
+        reelEd.setTextToShowWhenEmpty ("The song, or leave it for just the number", look.dim);
+        reelEd.setInputRestrictions (60);
+        reelEd.onTextChange = [this] { choice.reelName = reelEd.getText().trim(); repaint(); };
+
+        // tap tempo: tap the key (or T) on the beat
+        tapButton.setColour (juce::TextButton::buttonColourId, look.panel);
+        tapButton.setColour (juce::TextButton::textColourOffId, look.text);
+        tapButton.setTooltip ("Tap on the beat (or press T): the tempo follows your taps. Four or more taps settle it");
+        tapButton.setWantsKeyboardFocus (false);
+        tapButton.onClick = [this] { tap(); };
+        addChildComponent (tapButton);
 
         view.setViewedComponent (&list, false);
         view.setScrollBarsShown (true, false);
@@ -237,7 +250,7 @@ public:
     static void gallery (const juce::File& dir, const Look& lk)
     {
         NewReelChoice c;
-        c.name = "Sea Shanties"; c.artist = "The Pequod Crew"; c.stock = 8; c.machine = 4; c.nr = 1; c.ips = 15.0; c.tracks = 24;
+        c.name = "Sea Shanties"; c.artist = "The Pequod Crew"; c.reelName = "Leave Her, Johnny"; c.stock = 8; c.machine = 4; c.nr = 1; c.ips = 15.0; c.tracks = 24;
         NewReelWizard w (true, c, lk, {}, nullptr);
         for (int i = 0; i < (int) w.steps.size(); ++i)
         {
@@ -272,6 +285,11 @@ public:
         if (builder != nullptr) return false;           // (the builder has the keys)
         if (k == juce::KeyPress::returnKey) { next(); return true; }
         if (k == juce::KeyPress::escapeKey) { close(); return true; }
+        if (steps[(size_t) index] == Step::tempo && choice.bpm > 0.0 && (k.getTextCharacter() == 't' || k.getTextCharacter() == 'T'))
+        {
+            tap();
+            return true;
+        }
         if (k == juce::KeyPress::leftKey && index > 0) { go (index - 1); return true; }
         return false;
     }
@@ -287,6 +305,8 @@ public:
         nameEd.setBounds (60, 210, getWidth() - 120, 44);
         artistEd.setBounds (60, 320, getWidth() - 120, 44);
         bpmEd.setBounds (60, 210, 200, 64);
+        tapButton.setBounds (60, 292, 200, 48);
+        reelEd.setBounds (380, 440, 300, 44);
         layoutStep();
     }
 
@@ -545,8 +565,12 @@ private:
         const bool tempo = steps[(size_t) index] == Step::tempo;
         nameEd.setVisible (session);
         artistEd.setVisible (session);
+        const bool ready = steps[(size_t) index] == Step::ready;
         bpmEd.setVisible (tempo && choice.bpm > 0.0);
-        if (session) nameEd.grabKeyboardFocus(); else if (bpmEd.isVisible()) bpmEd.grabKeyboardFocus(); else grabKeyboardFocus();
+        tapButton.setVisible (tempo && choice.bpm > 0.0);
+        reelEd.setVisible (ready);
+        taps.clear();
+        if (session) nameEd.grabKeyboardFocus(); else if (ready) reelEd.grabKeyboardFocus(); else if (bpmEd.isVisible()) bpmEd.grabKeyboardFocus(); else grabKeyboardFocus();
         backButton.setEnabled (index > 0);
         nextButton.setButtonText (index == (int) steps.size() - 1 ? "CREATE" : "NEXT");
         hoverChip = -1;
@@ -585,6 +609,7 @@ private:
             }
         }
         if (index < (int) steps.size() - 1) { go (index + 1); return; }
+        choice.reelName = reelEd.getText().trim();
 
         const auto made = choice;
         auto create = onCreate;
@@ -707,11 +732,11 @@ private:
             if (! wizardAsksStudio()) { labels.add ("NO TEMPO"); values.push_back (0); }
             add (labels, values, choice.bpm > 0.0 ? choice.beatsPerBar : 0, 74, [this] (int v)
             {
-                if (v == 0) { choice.bpm = 0.0; bpmEd.setVisible (false); }
+                if (v == 0) { choice.bpm = 0.0; bpmEd.setVisible (false); tapButton.setVisible (false); }
                 else
                 {
                     choice.beatsPerBar = v;
-                    if (choice.bpm <= 0.0) { choice.bpm = 120.0; bpmEd.setVisible (true); readBpm(); }
+                    if (choice.bpm <= 0.0) { choice.bpm = 120.0; bpmEd.setVisible (true); tapButton.setVisible (true); readBpm(); }
                 }
             });
             if (! wizardAsksStudio() && ! chips.empty()) chips.back().r.setWidth (110);
@@ -932,6 +957,25 @@ private:
         }
     }
 
+    /** One tap: the tempo is the average of the last few gaps (a pause of two seconds starts again). */
+    void tap()
+    {
+        const double now = juce::Time::getMillisecondCounterHiRes();
+        if (! taps.empty() && now - taps.back() > 2000.0) taps.clear();
+        taps.push_back (now);
+        if (taps.size() > 8) taps.erase (taps.begin());
+        tapButton.setButtonText (taps.size() < 2 ? "TAP ..." : "TAP  (" + juce::String ((int) taps.size()) + ")");
+        if (taps.size() < 2) return;
+        const double beat = (taps.back() - taps.front()) / (double) (taps.size() - 1);
+        if (beat <= 0.0) return;
+        const double bpm = juce::jlimit (20.0, 400.0, 60000.0 / beat);
+        // to a tenth, but whole when it's close (taps are never exact)
+        const double shown = std::abs (bpm - std::round (bpm)) < 0.35 ? std::round (bpm) : std::round (bpm * 10.0) / 10.0;
+        bpmEd.setText (juce::String (shown, shown == std::floor (shown) ? 0 : 1), juce::dontSendNotification);
+        readBpm();
+        repaint();
+    }
+
     void readBpm()
     {
         const double v = bpmEd.getText().getDoubleValue();
@@ -951,6 +995,9 @@ private:
             drawMachinePreview (g, { 380.0f, 140.0f, 300.0f, 130.0f }, sk);
         }
         drawNrUnit (g, { 380.0f, 300.0f, 300.0f, 90.0f }, choice.nr, font (12.0f, true));
+        g.setColour (look.dim);
+        g.setFont (font (14.0f, true));
+        g.drawText ("NAME THIS REEL", 380, 414, 300, 20, juce::Justification::centredLeft);
 
         auto label = juce::Rectangle<float> (720.0f, 140.0f, (float) getWidth() - 760.0f, 400.0f);
         g.setColour (juce::Colour (0xfff1ead6));
@@ -970,7 +1017,10 @@ private:
         auto t2 = l.removeFromTop (24.0f);
         g.setColour (ink);
         g.setFont (font (13.0f, false));
-        g.drawText (forSession.isNotEmpty() ? juce::String ("NEW REEL") : (choice.artist.isNotEmpty() ? choice.artist : juce::String ("-")),
+        const auto reelLine = choice.reelName.isNotEmpty() ? choice.reelName : juce::String ("NEW REEL");
+        g.drawText (forSession.isNotEmpty() ? reelLine
+                                            : (choice.artist.isNotEmpty() ? choice.artist : juce::String ("-"))
+                                              + (choice.reelName.isNotEmpty() ? "  -  " + choice.reelName : juce::String()),
                     t2, juce::Justification::bottomLeft);
         ruled (t2);
         l.removeFromTop (4.0f);
@@ -1016,7 +1066,9 @@ private:
     int index = 0, hoverChip = -1;
     CardList list;
     juce::Viewport view;
-    juce::TextEditor nameEd, artistEd, bpmEd;
+    juce::TextEditor nameEd, artistEd, bpmEd, reelEd;
+    juce::TextButton tapButton { "TAP" };
+    std::vector<double> taps;           // (the last few taps' times, ms)
     juce::TextButton backButton { "BACK" }, nextButton { "NEXT" }, cancelButton { "CANCEL" };
 
     JUCE_DECLARE_NON_COPYABLE (NewReelWizard)
