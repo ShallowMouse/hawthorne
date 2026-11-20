@@ -448,6 +448,8 @@ void NetReceiver::handleControl (const juce::String& msg, const juce::String& fr
     net::Announce a;
     if (! net::parseAnnounce (msg, a))
         return;
+    if (a.senderId == ignoredSender.load())      // (our own sender: MELVILLE sending from this same copy)
+        return;
 
     const juce::ScopedLock sl (lock);
     SenderInfo* found = nullptr;

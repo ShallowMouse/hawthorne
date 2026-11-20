@@ -142,7 +142,7 @@ void NetworkPanel::paint (juce::Graphics& g)
 
     g.setColour (accent);
     g.setFont (monoFont (15.0f, true));
-    g.drawText (melville::isHosted() ? "MELVILLE LINK" : "HAWTHORNE LINK", 16, 12, 300, 24, juce::Justification::centredLeft);
+    g.drawText (melville::isHosted() ? "RECEIVE" : "HAWTHORNE LINK", 16, 12, 300, 24, juce::Justification::centredLeft);
 
     g.setColour (Colours::textDim);
     g.setFont (uiFont (13.0f));
@@ -150,8 +150,8 @@ void NetworkPanel::paint (juce::Graphics& g)
                           ? (melville::isHosted() ? "The network couldn't be opened (is another copy of MELVILLE or Hawthorne running?)."
                                                   : "The network couldn't be opened (is another copy of Hawthorne running?).")
                           : melville::isHosted()
-                              ? "Run the Link sender on the other PC (THOREAU, PEQUOD Host). Senders on this network appear below; connect one and its "
-                                "channels appear as jacks on the MELVILLE LINK patch panel. Link both interfaces with word clock for bit-perfect transfer."
+                              ? "RECEIVE: MELVILLE or MELVILLE Link sending on other PCs appear below; connect one and its channels appear as jacks "
+                                "on the MELVILLE LINK patch panel. Link both interfaces with word clock for bit-perfect transfer."
                               : "Run Hawthorne Link on the other PC. Senders on this network appear below; connect one and its "
                                 "channels appear as NET inputs in ROUTING. Link both MOTUs with word clock for bit-perfect transfer.",
                       helpArea, juce::Justification::topLeft, 3);

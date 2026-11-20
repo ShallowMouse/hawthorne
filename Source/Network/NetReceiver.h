@@ -60,6 +60,8 @@ public:
         juce::uint32 lastSeenMs = 0;
     };
     std::vector<SenderInfo> getSenders() const;
+    /** A sender never to list (MELVILLE's own, when it both sends and receives). */
+    void ignoreSender (uint32_t senderId) noexcept { ignoredSender = senderId; }
 
     /** Senders on another subnet / VLAN: asked for directly. */
     void setManualAddresses (const juce::StringArray& ips);
@@ -137,6 +139,7 @@ private:
     void sendSubscriptions();
 
     std::array<std::unique_ptr<Slot>, maxSlots> slots;
+    std::atomic<uint32_t> ignoredSender { 0 };
     std::atomic<double> sampleRate { 48000.0 }, targetLatencyMs { 3.0 };
 
     mutable juce::CriticalSection lock;          // senders + manual addresses + slot names
