@@ -116,7 +116,10 @@ void VUMeter::resized()
 
 void VUMeter::renderFace()
 {
-    const float scale = juce::jmax (2.0f, faceScale);   // (as many pixels as the screen has: crisp at 150, 200, 300 %)
+    // exactly as many pixels as the screen has (crisp at 150, 200, 300 %), so painting it each frame
+    // is a straight copy: drawing a bigger one scaled down, for every meter 30 times a second, was
+    // the work that made the meters stutter with many tracks up
+    const float scale = juce::jlimit (1.0f, 4.0f, faceScale);
     const int w = juce::roundToInt ((float) getWidth() * scale);
     const int h = juce::roundToInt ((float) getHeight() * scale);
 
@@ -370,7 +373,7 @@ void VUMeter::paint (juce::Graphics& g)
     // a screen with more pixels per point than the face was drawn for (a high-DPI screen, or the
     // window moved to one): draw it again for this one
     const float screenScale = g.getInternalContext().getPhysicalPixelScaleFactor();
-    if (screenScale > faceScale + 0.01f)
+    if (std::abs (screenScale - faceScale) > 0.01f)
     {
         faceScale = screenScale;
         renderFace();

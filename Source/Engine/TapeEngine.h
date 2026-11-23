@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstring>
+
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include "Reel.h"
@@ -535,25 +537,52 @@ private:
     std::array<std::atomic<float>, kMaxTracks> trackPeak;
     std::array<std::atomic<float>, 2> masterPeak;
 
+    /** Mean square since the UI last looked. The sum and the sample count travel together in one
+        atomic word, so the UI never takes a sum without its count (or the reverse) - the needle
+        jumping when the two got split. A look between two audio blocks (no new samples yet, as
+        happens whenever the screen runs faster than the audio blocks come - more often with many
+        tracks and a bigger buffer) keeps the last level instead of reading silence, so the needle
+        doesn't dip and flick back. */
     struct Energy
     {
-        std::atomic<float> sumSq { 0.0f };
-        std::atomic<int>   count { 0 };
+        std::atomic<juce::uint64> packed { 0 };     // high 32: samples; low 32: the float sum
+        float last = 0.0f;                          // (UI thread only)
+        int idle = 0;                               // looks in a row with nothing new (UI thread)
+
+        static juce::uint64 pack (float s, juce::uint32 n) noexcept
+        {
+            juce::uint32 bits; std::memcpy (&bits, &s, 4);
+            return ((juce::uint64) n << 32) | bits;
+        }
+        static void unpack (juce::uint64 v, float& s, juce::uint32& n) noexcept
+        {
+            const auto bits = (juce::uint32) (v & 0xffffffffu); std::memcpy (&s, &bits, 4);
+            n = (juce::uint32) (v >> 32);
+        }
 
         void add (const float* d, int n) noexcept   // audio thread
         {
             float s = 0.0f;
             if (d != nullptr)
                 for (int i = 0; i < n; ++i) s += d[i] * d[i];
-            sumSq.store (sumSq.load (std::memory_order_relaxed) + s, std::memory_order_relaxed);
-            count.store (count.load (std::memory_order_relaxed) + n, std::memory_order_relaxed);
+            auto cur = packed.load (std::memory_order_relaxed);
+            for (;;)                                 // (only ever races the UI's exchange: a retry at most)
+            {
+                float cs; juce::uint32 cn; unpack (cur, cs, cn);
+                if (cn > (1u << 30)) { cs = 0.0f; cn = 0; }   // the UI hasn't looked in a long while: start again
+                if (packed.compare_exchange_weak (cur, pack (cs + s, cn + (juce::uint32) n),
+                                                  std::memory_order_release, std::memory_order_relaxed))
+                    break;
+            }
         }
 
-        float pop() noexcept                       // UI thread
+        float pop() noexcept                        // UI thread
         {
-            const auto s = sumSq.exchange (0.0f);
-            const auto c = count.exchange (0);
-            return c > 0 ? std::sqrt (s / (float) c) : 0.0f;
+            float s; juce::uint32 n;
+            unpack (packed.exchange (0, std::memory_order_acquire), s, n);
+            if (n > 0) { last = std::sqrt (juce::jmax (0.0f, s) / (float) n); idle = 0; }
+            else if (++idle > 8) last = 0.0f;       // the audio has stopped altogether: fall back
+            return last;
         }
     };
     std::array<Energy, kMaxTracks> trackEnergy;
