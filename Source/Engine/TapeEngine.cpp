@@ -406,7 +406,9 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
     // Tape: the stock's settings for the speed the tape is really running at,
     // and transport wow & flutter while playing back (held steady while recording).
     const int stockNow = tapeStock.load (std::memory_order_relaxed);
-    const bool tapeOn = stockNow != 0 && machineA.load (std::memory_order_relaxed) != tape::noMultitrackMachine;   // no machine: bit-perfect
+    // a digital recorder (ADAT, DA-88) has no tape: just its word length, whatever stock is on the reel
+    const int digitalBits = tape::multitrackMachine (machineA.load (std::memory_order_relaxed)).digitalBits;
+    const bool tapeOn = stockNow != 0 && machineA.load (std::memory_order_relaxed) != tape::noMultitrackMachine && digitalBits == 0;   // no machine: bit-perfect
     if (tapeReset.exchange (false))
     {
         for (int t = 0; t < kMaxTracks; ++t)
@@ -762,6 +764,19 @@ void TapeEngine::processBlock (const float* const* inputs, int numInputs,
                     // the tape's record side, printed into the file
                     (*tapeRec)[(size_t) t].process (tapeShared, recIn, tapeRecBuf.get(), n, flutterOn ? flutterFast.get() : nullptr);
                     toTape = tapeRecBuf.get();
+                }
+                else if (digitalBits > 0 && recIn != nullptr)
+                {
+                    // a digital recorder: the converters' word length (with their own noise as dither)
+                    float* x = tapeRecBuf.get();
+                    const float q = (float) (1 << (digitalBits - 1));
+                    for (int k = 0; k < n; ++k)
+                    {
+                        ditherSeed = ditherSeed * 1664525u + 1013904223u;
+                        const float d = ((float) (ditherSeed >> 8) / 16777216.0f - 0.5f) / q;
+                        x[k] = std::round ((juce::jlimit (-1.0f, 1.0f, recIn[k]) + d) * q) / q;
+                    }
+                    toTape = x;
                 }
                 if (fading && ring != nullptr)
                 {

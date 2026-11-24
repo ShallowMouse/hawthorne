@@ -166,6 +166,7 @@ namespace tape
         double hissDb;          // added hiss
         double wowFlutter;      // wow and flutter, rms % at 15 ips (published specs; DIN peak-weighted figures / 1.5)
         double crosstalkDb = 0.0;   // added to the crosstalk between neighbouring tracks (see crosstalkDb())
+        int digitalBits = 0;        // a digital recorder (ADAT, DA-88): no tape at all, the word length it stores (0 = tape)
     };
 
     /** How much of each neighbouring track a head picks up, at 1 kHz, against the track's own level:
@@ -188,7 +189,7 @@ namespace tape
     constexpr int customMachine = 63;                       // a machine built by the user (see CustomSlot)
     const MachineInfo& customMachineInfo (bool master);
 
-    constexpr int numMultitrackMachines = 13;    // 6 is "None": bit-perfect (later machines are added after it)
+    constexpr int numMultitrackMachines = 18;    // 6 is "None": bit-perfect (later machines are added after it)
     constexpr int noMultitrackMachine = 6;
     inline const MachineInfo& multitrackMachine (int i)
     {
@@ -219,11 +220,21 @@ namespace tape
               -1.0, 0.055, 1.35, 0.95, 0.75, 1.8,  1.1,  3.5, 0.12 },
             { "Ampex 300-8 (Sel-Sync 8-track)", "AMPEX 300-8", "The first Sel-Sync 8-track, on 1-inch tape (1957): valve electronics, warm and dense, soft on top with plenty of hiss and wobble.",
               -1.0, 0.05,  1.3,  0.95, 0.78, 1.6,  1.1,  3.0, 0.12 },
+            { "3M M56 (16-track)", "3M M56", "3M's 2-inch 16-track of the late 60s, the first 16-track in many studios. Solid-state and punchy, a full low end and a slightly grainy top.",
+              -0.6, 0.02, 1.25, 1.0,  0.95, 0.5,  1.0,  1.5, 0.05 },
+            { "Telefunken M15A", "TELEFUNKEN M15A", "Telefunken's German studio machine of the 70s and 80s, in 24-track and 2-track. Clean, smooth and wide, with a solid, round low end and a gentle top.",
+              0.5, 0.005, 1.15, 0.95, 1.05, 0.2,  0.9, -0.5, 0.03 },
+            { "Sony APR-24", "SONY APR-24", "Sony's 24-track of the late 80s and 90s. Clean and precise, with a tight low end, a bright, extended top and a very steady transport.",
+              1.0, 0.0,   0.9,  1.05, 1.15, -0.3, 0.95, -1.0, 0.025 },
+            { "Alesis ADAT (digital)", "ALESIS ADAT", "Alesis' 1991 eight-track on an S-VHS tape: digital, 16-bit at 48 kHz. No tape sound at all, no hiss, no wobble: the 16-bit grain of the early 90s home studio.",
+              0, 0, 1, 1, 1, 0, 1, 0, 0, 0.0, 16 },
+            { "Tascam DA-88 (digital)", "TASCAM DA-88", "Tascam's 1993 eight-track on Hi8 tape: digital, 16-bit, the post-production and project-studio standard of the 90s. No tape sound, just 16 bits.",
+              0, 0, 1, 1, 1, 0, 1, 0, 0, 0.0, 16 },
         };
         return i == customMachine ? customMachineInfo (false) : m[juce::jlimit (0, numMultitrackMachines - 1, i)];
     }
 
-    constexpr int numMasterMachines = 12;        // 5 is "None": bit-perfect (later machines are added after it)
+    constexpr int numMasterMachines = 13;        // 5 is "None": bit-perfect (later machines are added after it)
     constexpr int noMasterMachine = 5;
     inline const MachineInfo& masterMachine (int i)
     {
@@ -252,6 +263,8 @@ namespace tape
               -1.0, 0.055, 1.25, 0.95, 0.72, 1.8,  0.95, 3.5, 0.1 },
             { "Telefunken M5 (valve)", "TELEFUNKEN M5", "The German valve studio deck of 1954. Smoother and quieter than the American valve machines: a gentle, silky saturation and a soft top.",
               -0.7, 0.04,  1.1,  1.0,  0.85, 1.0,  1.0,  2.0, 0.08 },
+            { "Telefunken M15A", "TELEFUNKEN M15A", "Telefunken's 70s and 80s studio 2-track: clean, smooth and wide, a round low end and a gentle top.",
+              0.8, 0.005, 1.2,  0.95, 1.05, 0.2,  0.85, -1.0, 0.03 },
         };
         return i == customMachine ? customMachineInfo (true) : m[juce::jlimit (0, numMasterMachines - 1, i)];
     }
@@ -432,15 +445,16 @@ namespace tape
     inline const std::vector<int>& multitrackOrder()
     {
         static const std::vector<int> o { 11 /*Ampex 300-3 mid 50s*/, 12 /*Ampex 300-8 1957*/, 4 /*J37 1964*/, 7 /*Scully 280 1965*/, 5 /*3M M23 1966*/, 8 /*3M M79 1972*/,
-                                          9 /*Stephens 821B 1974*/, 2 /*MM1200 1976*/, 10 /*Tascam 80-8 1976*/, 0 /*A800 1978*/,
-                                          3 /*MTR-90 1979*/, 1 /*JH-24 1980*/, noMultitrackMachine };
+                                          13 /*3M M56 late 60s*/, 9 /*Stephens 821B 1974*/, 2 /*MM1200 1976*/, 10 /*Tascam 80-8 1976*/, 14 /*M15A 1975*/,
+                                          0 /*A800 1978*/, 3 /*MTR-90 1979*/, 1 /*JH-24 1980*/, 15 /*APR-24 1987*/, 16 /*ADAT 1991*/, 17 /*DA-88 1993*/,
+                                          noMultitrackMachine };
         return o;
     }
 
     inline const std::vector<int>& masterOrder()
     {
         static const std::vector<int> o { 4 /*BTR2 late 1940s*/, 10 /*Ampex 300 1949*/, 11 /*Telefunken M5 1954*/, 3 /*Ampex 351 1958*/, 7 /*Scully 280 1965*/, 6 /*AG-440 1967*/, 9 /*Revox A77 1967*/,
-                                          1 /*A80 1970*/, 0 /*ATR-102 1976*/, 8 /*A810 1982*/, 2 /*MTR-12 1984*/, noMasterMachine };
+                                          1 /*A80 1970*/, 12 /*M15A 1975*/, 0 /*ATR-102 1976*/, 8 /*A810 1982*/, 2 /*MTR-12 1984*/, noMasterMachine };
         return o;
     }
 

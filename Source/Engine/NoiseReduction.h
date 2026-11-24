@@ -31,8 +31,8 @@ namespace hawthorne
 namespace nr
 {
     // Saved by number: only ever add to the end.
-    enum System { none = 0, dolbyA, dolbySR, dbx };
-    constexpr int numSystems = 4;
+    enum System { none = 0, dolbyA, dolbySR, dbx, telcom };
+    constexpr int numSystems = 5;
 
     enum Mode { normal = 0, encodeOnly, decodeOnly, bypass };
     constexpr int numModes = 4;
@@ -57,16 +57,19 @@ namespace nr
                                       "near-digital quiet while keeping the tape sound. The late-80s / 90s professional choice." },
             { "dbx Type I", "DBX", "Wideband 2:1 compression with emphasis: about 30 dB less hiss, but you can hear it "
                                    "breathe and pump on sparse material, and it exaggerates tape wobble. Popular on semi-pro 8 and 16 tracks." },
+            { "Telcom c4", "TELCOM C4", "Telefunken's four-band compander (1975): every band 1.5:1 at every level, so it doesn't "
+                                        "depend on line-up the way Dolby does, about 25 dB less hiss, and hardly any breathing. "
+                                        "Loved in Germany and by engineers who hated Dolby's mistracking." },
         };
         return i[juce::jlimit (0, numSystems - 1, s)];
     }
     /** The order they're offered in: none first, then oldest first (Dolby A 1966, dbx 1971, Dolby SR 1986). */
-    inline const int* order() { static const int o[numSystems] = { 0, 1, 3, 2 }; return o; }
+    inline const int* order() { static const int o[numSystems] = { 0, 1, 3, 4, 2 }; return o; }
     /** Where each came from, and when. */
     inline const char* era (int s)
     {
         static const char* e[numSystems] = { "No unit in the rack", "Dolby Laboratories  -  England  -  1966",
-                                             "Dolby Laboratories  -  1986", "dbx  -  USA  -  1971" };
+                                             "Dolby Laboratories  -  1986", "dbx  -  USA  -  1971", "Telefunken  -  Germany  -  1975" };
         return e[juce::jlimit (0, numSystems - 1, s)];
     }
 
@@ -109,6 +112,8 @@ namespace nr
         int numBands = 0;
         std::array<Band, 5> bands;
         float attack = 0, release = 0;
+        // Telcom c4: the band splits (215 Hz, 1.45 kHz, 4.8 kHz)
+        std::array<FirstOrder, 3> split;
         // dbx
         FirstOrder pre, de;
         float rmsCoef = 0, ref = 0.126f, gMax = 31.6f, gMin = 0.1f;
@@ -142,6 +147,11 @@ namespace nr
                 band (FirstOrder::highpass (sr, 3000), FirstOrder::thru(), 4.0f, -24);
                 band (FirstOrder::highpass (sr, 9000), FirstOrder::thru(), 6.0f, -24);     // ~ +24 dB at the top
             }
+            else if (system == telcom)
+            {
+                split = { FirstOrder::lowpass (sr, 215), FirstOrder::lowpass (sr, 1450), FirstOrder::lowpass (sr, 4800) };
+                rmsCoef = (float) (1.0 - std::exp (-1.0 / (0.012 * sr)));
+            }
             else if (system == dbx)
             {
                 const double t1 = 1.0 / (juce::MathConstants<double>::twoPi * 1600.0);
@@ -163,10 +173,30 @@ namespace nr
             env.fill (0.0f);
             power = 0.0f;
             emph = 0.0f;
+            tz.fill (0.0f);
+            tpow.fill (0.0f);
         }
 
         void encode (const Settings& s, const float* in, float* out, int n) noexcept
         {
+            if (s.system == telcom)
+            {
+                for (int i = 0; i < n; ++i)
+                {
+                    std::array<float, 4> b {};
+                    splitBands (s, in != nullptr ? in[i] : 0.0f, b);
+                    float y = 0.0f;
+                    for (int k = 0; k < 4; ++k)
+                    {
+                        // 1.5:1 in every band, at every level: the gain from the band's output so far
+                        const float v = b[(size_t) k] * telcomGain (k);
+                        tpow[(size_t) k] += (v * v - tpow[(size_t) k]) * s.rmsCoef;
+                        y += v;
+                    }
+                    out[i] = y;
+                }
+                return;
+            }
             if (s.system == dbx)
             {
                 for (int i = 0; i < n; ++i)
@@ -195,6 +225,23 @@ namespace nr
 
         void decode (const Settings& s, float* io, int n) noexcept
         {
+            if (s.system == telcom)
+            {
+                for (int i = 0; i < n; ++i)
+                {
+                    std::array<float, 4> b {};
+                    splitBands (s, io[i], b);
+                    float x = 0.0f;
+                    for (int k = 0; k < 4; ++k)
+                    {
+                        const float v = b[(size_t) k];
+                        x += v / telcomGain (k);
+                        tpow[(size_t) k] += (v * v - tpow[(size_t) k]) * s.rmsCoef;
+                    }
+                    io[i] = x;
+                }
+                return;
+            }
             if (s.system == dbx)
             {
                 for (int i = 0; i < n; ++i)
@@ -236,6 +283,25 @@ namespace nr
         std::array<State, 5> st {};
         std::array<float, 5> env {};
         float power = 0, emph = 0;
+        std::array<float, 3> tz {};
+        std::array<float, 4> tpow {};
+
+        /** Four bands that add back up to the input exactly (each split takes what's left above the last). */
+        inline void splitBands (const Settings& s, float x, std::array<float, 4>& b) noexcept
+        {
+            float rest = x;
+            for (int k = 0; k < 3; ++k)
+            {
+                b[(size_t) k] = section (s.split[(size_t) k], tz[(size_t) k], rest);
+                rest -= b[(size_t) k];
+            }
+            b[3] = rest;
+        }
+        /** Feedback compressor gain for 1.5:1: g = (ref / rms)^0.5, limited to +/-20 dB. */
+        inline float telcomGain (int k) const noexcept
+        {
+            return juce::jlimit (0.1f, 10.0f, std::sqrt (0.126f / std::sqrt (tpow[(size_t) k] + 1.0e-12f)));
+        }
 
         static inline float section (const FirstOrder& f, float& z, float x) noexcept
         {

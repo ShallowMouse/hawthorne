@@ -488,6 +488,7 @@ private:
     int customSeen = -1, customMasterSeen = -1;         // tape::customSlot versions
 public:
     /** The record path's added latency for this reel's stock (compensated when recording). */
+    juce::uint32 ditherSeed = 0x2545f491u;           // (audio thread: the digital recorders' dither)
     int getTapeLatency() const noexcept { return tapeStock.load() != 0 && machineA.load() != tape::noMultitrackMachine ? tape::recordLatency : 0; }
     /** Machine models (changeable): the multitrack, and the 2-track for the master. */
     void setMachine (int multitrackMachine);

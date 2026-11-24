@@ -84,6 +84,26 @@ inline const MachineStory& multitrackStory (int i)
           "in time with old ones. The first Sel-Sync machine, a 1-inch 8-track, went to Les Paul early in 1957 for $10,000. "
           "He called it the Octopus. Ampex built only a handful in the late 50s.",
           "Valve electronics: warm and dense, soft on top, with plenty of hiss and wobble. Overdubs without bouncing." },
+        { "3M  -  Minnesota, USA  -  late 1960s",
+          "3M's 2-inch 16-track, the first 16-track in many studios at the end of the 60s, before 24 tracks became the "
+          "standard. Solid-state electronics on 3M's own transport.",
+          "Punchy and solid with a full low end and a slightly grainy top." },
+        { "Telefunken  -  Germany  -  1975",
+          "Telefunken's studio machine of the 70s and 80s, made in 24-track and 2-track versions, the standard in German "
+          "studios and broadcasters and in many elsewhere.",
+          "Clean, smooth and wide, with a solid, round low end and a gentle top." },
+        { "Sony  -  Japan  -  late 1980s",
+          "Sony's analogue 24-track of the late 80s and 90s, a late flowering of the 2-inch machine alongside Sony's own "
+          "digital multitracks. Microprocessor transport, very low flutter.",
+          "Clean and precise: a tight low end, a bright, extended top, very steady." },
+        { "Alesis  -  USA  -  1991",
+          "The ADAT put eight digital tracks on an S-VHS cassette for a fraction of the price of a 2-inch machine; several "
+          "could be locked together for 16, 24 or more. It changed home and project studios in the 90s.",
+          "No tape at all: no hiss, no saturation, no wobble. 16 bits at 48 kHz - clean, with the 16-bit grain at the bottom." },
+        { "TEAC / Tascam  -  Japan  -  1993",
+          "Tascam's DTRS eight-track on Hi8 tape, the standard in post-production and in many project studios through the "
+          "90s, often chained to 24 or more tracks.",
+          "No tape sound: 16 bits, clean and flat." },
     };
     return s[juce::jlimit (0, tape::numMultitrackMachines - 1, i)];
 }
@@ -139,6 +159,9 @@ inline const MachineStory& masterStory (int i)
           "The Magnetophon was AEG's - tape recording began with it in Berlin in 1935. The M5 of 1954 was the valve studio "
           "and broadcast deck of post-war Germany, built in later versions for decades. Read on a peak meter, German style.",
           "Smoother and quieter than the American valve machines: a gentle, silky saturation and a soft top." },
+        { "Telefunken  -  Germany  -  1975",
+          "Telefunken's studio 2-track of the 70s and 80s, the German broadcast and mastering standard.",
+          "Clean, smooth and wide: a round low end and a gentle top." },
     };
     return s[juce::jlimit (0, tape::numMasterMachines - 1, i)];
 }

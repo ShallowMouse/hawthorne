@@ -167,6 +167,41 @@ struct MachineSkin
               Meter::vu, C (0xfff9e3ae), C (0xffe9bf62), C (0xff1d1a14), C (0xffa8231b), C (0xff5d6164), C (0xff4a4e51), C (0xffeee6cf), C (0xff1d1a14),
               C (0xff595e61), C (0xff4f5457), C (0xff3f4346),
               C (0xff1b1a18), C (0xffd9d9d4) },
+            // 3M M56: 3M's grey-blue cabinet, illuminated keys, a mechanical counter; cream VUs.
+            { "3M", "M56", C (0xff56636b), C (0xff4a565d), C (0xffa7adb1), C (0xffe9ecee), C (0xffa9b4bc), false,
+              Keys::illuminated, C (0xff2b2b2b), C (0xfff0f0ec),
+              Counter::drum, C (0xfff3eedc), C (0xff121212),
+              Meter::vu, C (0xfffbe3a2), C (0xffe6ad48), C (0xff1d1a14), C (0xffb3261e), C (0xff111111), C (0xff181818), C (0xfff0e6cc), C (0xff1d1a14),
+              C (0xff2a3136), C (0xff222a2e), C (0xff3a444a),
+              C (0xff1c2226), C (0xffe6e3da) },
+            // Telefunken M15A: pale grey-blue German cabinet, ivory keys, a red LED counter; peak meters.
+            { "TELEFUNKEN", "M15A", C (0xffb7c0c4), C (0xffa4adb1), C (0xff7b8488), C (0xff1a1f22), C (0xff4a5458), false,
+              Keys::ivory, C (0xfff1ead6), C (0xff1a1f22),
+              Counter::redLed, C (0xffff3b2e), C (0xff140605),
+              Meter::ppm, C (0xff151515), C (0xff0b0b0b), C (0xfff2f2ee), C (0xfff2f2ee), C (0xff5c666a), C (0xff2a2f31), C (0xfff1ead6), C (0xfff5f5f0),
+              C (0xff8e979b), C (0xff838c90), C (0xff6b7478),
+              C (0xff1a1f22), C (0xffe6ebed) },
+            // Sony APR-24: light grey 80s cabinet, square grey keys, a green fluorescent locator; LED bar meters.
+            { "SONY", "APR-24", C (0xffc8c9c6), C (0xffb6b7b4), C (0xff6d6e6b), C (0xff1b1c1d), C (0xff55575a), false,
+              Keys::square, C (0xff5a5c5f), C (0xffeef0f2),
+              Counter::greenVfd, C (0xff6dfbd9), C (0xff06110f),
+              Meter::ledBar, C (0xff0c0d0e), C (0xff0a0b0c), C (0xff6dfbd9), C (0xffff4a3a), C (0xff2a2c2e), C (0xff1a1b1c), C (0xffd9dbdc), C (0xff6dfbd9),
+              C (0xff2a2c2e), C (0xff222426), C (0xff3a3c3e),
+              C (0xff1b1c1d), C (0xffd9dbdc) },
+            // Alesis ADAT: a black 3U box, small black keys, a green fluorescent display with its bar meters.
+            { "ALESIS", "ADAT", C (0xff222324), C (0xff1b1c1d), C (0xff4a4c4e), C (0xffe5e7e8), C (0xff8c9094), false,
+              Keys::square, C (0xff2e3032), C (0xffe5e7e8),
+              Counter::greenVfd, C (0xff6dfbd9), C (0xff06110f),
+              Meter::ledBar, C (0xff0a0b0c), C (0xff07080a), C (0xff6dfbd9), C (0xffff4a3a), C (0xff1a1b1c), C (0xff141516), C (0xffd9dbdc), C (0xff6dfbd9),
+              C (0xff1a1b1c), C (0xff141516), C (0xff2a2b2c),
+              C (0xff141516), C (0xffd9dbdc) },
+            // Tascam DA-88: a black 4U box, grey keys, an amber display and its bar meters.
+            { "TASCAM", "DA-88", C (0xff1e1f20), C (0xff18191a), C (0xff45474a), C (0xffe6e7e8), C (0xff8d9094), false,
+              Keys::square, C (0xff3a3c3f), C (0xffe6e7e8),
+              Counter::amberLed, C (0xffffa53a), C (0xff140b04),
+              Meter::ledBar, C (0xff0a0b0c), C (0xff07080a), C (0xffffa53a), C (0xffff4a3a), C (0xff1a1b1c), C (0xff141516), C (0xffd9dbdc), C (0xffffa53a),
+              C (0xff1a1b1c), C (0xff141516), C (0xff2a2b2c),
+              C (0xff141516), C (0xffd9dbdc) },
         };
         return s[juce::jlimit (0, tape::numMultitrackMachines - 1, i)];
     }
@@ -237,6 +272,11 @@ struct MachineSkin
             // Telefunken M5: pale grey-blue German studio cabinet, ivory keys, a black-faced peak meter
             { "TELEFUNKEN", "M5", C (0xffb7c0c4), C (0xffa4adb1), C (0xff7b8488), C (0xff1a1f22), C (0xff4a5458), false,
               Keys::ivory, C (0xfff1ead6), C (0xff1a1f22), Counter::drum, C (0xfff3eedc), C (0xff121212),
+              Meter::ppm, C (0xff151515), C (0xff0b0b0b), C (0xfff2f2ee), C (0xfff2f2ee), C (0xff5c666a), C (0xff2a2f31), C (0xfff1ead6), C (0xfff5f5f0),
+              C (0xffa4adb1), C (0xff98a1a5), C (0xff7b8488), C (0xff1a1f22), C (0xffe6ebed) },
+            // Telefunken M15A: the same German grey-blue, ivory keys, peak meters
+            { "TELEFUNKEN", "M15A", C (0xffb7c0c4), C (0xffa4adb1), C (0xff7b8488), C (0xff1a1f22), C (0xff4a5458), false,
+              Keys::ivory, C (0xfff1ead6), C (0xff1a1f22), Counter::redLed, C (0xffff3b2e), C (0xff140605),
               Meter::ppm, C (0xff151515), C (0xff0b0b0b), C (0xfff2f2ee), C (0xfff2f2ee), C (0xff5c666a), C (0xff2a2f31), C (0xfff1ead6), C (0xfff5f5f0),
               C (0xffa4adb1), C (0xff98a1a5), C (0xff7b8488), C (0xff1a1f22), C (0xffe6ebed) },
         };
