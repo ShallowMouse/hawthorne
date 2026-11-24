@@ -121,8 +121,15 @@ inline void drawNrUnit (juce::Graphics& g, juce::Rectangle<float> r, int system,
         g.fillRect (ear);
         for (float y : { 0.25f, 0.75f })
         {
+            const juce::Point<float> c { ear.getCentreX(), ear.getY() + ear.getHeight() * y };
             g.setColour (juce::Colour (0xff1a1b1d));
-            g.fillEllipse (juce::Rectangle<float> (5.0f, 5.0f).withCentre ({ ear.getCentreX(), ear.getY() + ear.getHeight() * y }));
+            g.fillEllipse (juce::Rectangle<float> (5.0f, 5.0f).withCentre (c));
+            // the slot, turned however it was left
+            auto h = (uint32_t) (juce::roundToInt (c.x * 3.0f) * 73856093) ^ (uint32_t) (juce::roundToInt (c.y * 3.0f) * 19349663) ^ (uint32_t) (system * 2654435761u);
+            h ^= h >> 16; h *= 0x7feb352dU; h ^= h >> 15;
+            const float a = (float) (h & 0xffff) / 65536.0f * juce::MathConstants<float>::pi;
+            g.setColour (face.darker (0.6f));
+            g.drawLine (c.x - 1.8f * std::cos (a), c.y - 1.8f * std::sin (a), c.x + 1.8f * std::cos (a), c.y + 1.8f * std::sin (a), 0.9f);
         }
     }
     auto p = unit.reduced (unit.getWidth() * 0.08f, unit.getHeight() * 0.18f);
